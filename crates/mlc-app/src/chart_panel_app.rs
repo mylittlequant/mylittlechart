@@ -503,10 +503,14 @@ impl ChartPanelApp {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
         let is_expanded = self.panel_grid.is_expanded();
+        // Owner item 4: the bottom-toolbar "expand" (grid-level maximize)
+        // button is hidden outright when the active tab's grid has a
+        // single chart — nothing to expand into.
+        let grid_chart_count = self.panel_grid.docking().tree().leaf_count();
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, favorites_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false, mouse_pos, anim_time_s, anim_frame, clock_glitch_enabled, self.user_settings_state.account_signed_in, is_capturing_screenshot)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, grid_chart_count, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, favorites_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false, mouse_pos, anim_time_s, anim_frame, clock_glitch_enabled, self.user_settings_state.account_signed_in, is_capturing_screenshot)
     }
 
     /// Render the trading container's EMBEDDED header toolbar (owner spec
@@ -553,6 +557,7 @@ impl ChartPanelApp {
             false,                     // autosave_enabled
             None,                      // sync_flags
             false,                     // is_expanded
+            1,                         // grid_chart_count — no grid concept for an embedded header
             false,                     // split_without_group
             false,                     // is_mono_group
             Some(active_symbol),
@@ -624,6 +629,7 @@ impl ChartPanelApp {
             false,                     // autosave_enabled
             None,                      // sync_flags
             false,                     // is_expanded
+            1,                         // grid_chart_count — no grid concept for an embedded header
             false,                     // split_without_group
             false,                     // is_mono_group
             Some(active_symbol),

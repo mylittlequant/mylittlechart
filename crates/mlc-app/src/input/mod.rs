@@ -1205,6 +1205,23 @@ impl ChartApp {
                 self.persist_watchlists();
                 return;
             }
+            // leaf_tab:{leaf_id}:{sub_zone} — a double-click on the leaf's
+            // title/body toggles grid-level maximize (owner item 4). The
+            // `gear`/`color_tag` sub-zones are click targets of their own
+            // (settings menu / color picker) — a double-click there must
+            // not ALSO fire the grid toggle underneath.
+            if let Some(rest) = id_str.strip_prefix("leaf_tab:") {
+                if let Some((leaf_id_str, sub_zone)) = rest.split_once(':') {
+                    if sub_zone != "gear" && sub_zone != "color_tag" {
+                        if let Ok(raw) = leaf_id_str.parse::<u64>() {
+                            let leaf_id = uzor::panels::LeafId(raw);
+                            self.panel_app.panel_grid.set_active_leaf(leaf_id);
+                            self.panel_app.panel_grid.toggle_expand();
+                        }
+                    }
+                }
+                return;
+            }
             if let Some(rest) = id_str.strip_prefix("agent:leaf:") {
                 if let Some(id_part) = rest.strip_suffix(":focus_content") {
                     if let Ok(raw) = id_part.parse::<u64>() {
@@ -1296,6 +1313,25 @@ impl ChartApp {
         // Capture hit result before passing hit_tester into process_action.
         let hit = hit_tester.hit_test(x, y);
 
+        // Resolve the sub-pane's instance_id (if any) NOW, while `extended`
+        // is still borrowed — `process_output_actions` below takes `&mut
+        // self`, so `extended`'s borrow must not outlive it.
+        let sub_pane_hit_instance_id: Option<u64> =
+            if let mlc_core::engine::input::HitResult::SubPaneChart { pane_index } = hit {
+                extended.sub_panes.get(pane_index).map(|p| p.instance_id)
+            } else {
+                None
+            };
+
+        // Capture BEFORE process_output_actions can finish an in-progress
+        // multipoint drawing (the exact same `DrawingState::Creating`
+        // predicate `finish_multipoint` consumes) — "finish the line" and
+        // "toggle pane-expand" must never both fire off one double-click
+        // (owner item 3).
+        let was_drawing = self.panel_app.panel_grid.active_container()
+            .map(|w| w.current_tag_id)
+            .is_some_and(|bid| self.core.drawings().is_drawing(bid));
+
         let actions = self.input_handler.process_action(
             ChartInputAction::DoubleClick { x, y },
             &hit_tester,
@@ -1322,6 +1358,27 @@ impl ChartApp {
             let active_leaf_opt = self.panel_app.panel_grid.docking().active_leaf();
             if let (Some((view_start, bar_spacing)), Some(active_leaf)) = (viewport_state, active_leaf_opt) {
                 self.propagate_viewport_to_sync_group(active_leaf, view_start, bar_spacing, Some(ScaleMode::Auto));
+            }
+        }
+
+        // Chart / sub-pane double-click toggles that pane's exclusive
+        // expand state — same toggle the main/sub-pane overlay button's
+        // click uses (owner item 1: button == double-click, exactly).
+        // Skipped while a multipoint drawing is in progress (owner item 3's
+        // drawing-precedence rule, captured as `was_drawing` above).
+        if !was_drawing {
+            if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+                match hit {
+                    mlc_core::engine::input::HitResult::Chart => {
+                        self.toggle_main_pane_expand(cid);
+                    }
+                    mlc_core::engine::input::HitResult::SubPaneChart { .. } => {
+                        if let Some(iid) = sub_pane_hit_instance_id {
+                            self.toggle_sub_pane_expand(cid, iid);
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -6488,7 +6545,7 @@ impl ChartApp {
                 use mlc_core::input::ChartHitTester;
                 use mlc_core::engine::input::HitResult;
                 // Resolve the layout and overlay for the relevant leaf.
-                let (extended, overlays) = if let Some(hovered) = split_hovered_leaf {
+                let (extended, overlays, main_overlay) = if let Some(hovered) = split_hovered_leaf {
                     let leaf_rect_opt = self.get_leaf_absolute_rect(hovered);
                     let ext = self.frame_layouts.get(&hovered)
                         .cloned()
@@ -6496,17 +6553,24 @@ impl ChartApp {
                     let ovl = self.panel_app.panel_grid.container_for_leaf(hovered)
                         .map(|w| w.sub_pane_overlay_results.clone())
                         .unwrap_or_default();
-                    (ext, ovl)
+                    let main_ovl = self.panel_app.panel_grid.container_for_leaf(hovered)
+                        .and_then(|w| w.main_pane_overlay_result.clone());
+                    (ext, ovl, main_ovl)
                 } else {
                     let ext = self.active_frame_layout.clone()
                         .or_else(|| Some(self.build_extended_layout()));
                     let ovl = self.panel_app.panel_grid.active_container()
                         .map(|w| w.sub_pane_overlay_results.clone())
                         .unwrap_or_default();
-                    (ext, ovl)
+                    let main_ovl = self.panel_app.panel_grid.active_container()
+                        .and_then(|w| w.main_pane_overlay_result.clone());
+                    (ext, ovl, main_ovl)
                 };
                 let hit = if let Some(ext) = extended {
-                    let tester = ExtendedLayoutHitTester::new(&ext).with_overlays(&overlays);
+                    let mut tester = ExtendedLayoutHitTester::new(&ext).with_overlays(&overlays);
+                    if let Some(ref mo) = main_overlay {
+                        tester = tester.with_main_overlay(mo);
+                    }
                     tester.hit_test(x, y)
                 } else {
                     HitResult::None
@@ -6518,14 +6582,17 @@ impl ChartApp {
                         | HitResult::PriceScale
                         | HitResult::SubPanePriceScale { .. }
                 );
-                // Sub-pane overlay buttons and pane separators are NOT canvas
-                // (the crosshair must hide over them), but the hover pipeline
-                // below must still run: it drives button hover highlight and
-                // sub-pane overlay visibility. Early-returning for them left
-                // sub-pane buttons and separators permanently hover-dead.
+                // Sub-pane overlay buttons, the main-pane overlay button, and
+                // pane separators are NOT canvas (the crosshair must hide
+                // over them), but the hover pipeline below must still run:
+                // it drives button hover highlight and overlay visibility.
+                // Early-returning for them left sub-pane buttons and
+                // separators permanently hover-dead.
                 let over_subpane_widget = matches!(
                     hit,
-                    HitResult::SubPaneOverlayButton { .. } | HitResult::PaneSeparator { .. }
+                    HitResult::SubPaneOverlayButton { .. }
+                        | HitResult::PaneSeparator { .. }
+                        | HitResult::MainPaneOverlayButton { .. }
                 );
                 // A non-chart widget is explicitly hovered → trust that, suppress crosshair.
                 // An empty/stale hover (None) → trust the geometry instead.
@@ -6772,8 +6839,10 @@ impl ChartApp {
         let overlay_results_mm = self.panel_app.panel_grid.active_container()
             .map(|w| w.sub_pane_overlay_results.clone())
             .unwrap_or_default();
+        let main_overlay_result_mm = self.panel_app.panel_grid.active_container()
+            .and_then(|w| w.main_pane_overlay_result.clone());
         let hide_crosshair_for_overlay = self.panel_app.panel_grid
-            .update_sub_pane_overlay_hover(x as f64, y as f64, &extended, &overlay_results_mm);
+            .update_sub_pane_overlay_hover(x as f64, y as f64, &extended, &overlay_results_mm, main_overlay_result_mm.as_ref());
         // Suppress crosshair when the cursor is over an overlay button.
         if hide_crosshair_for_overlay {
             self.hide_crosshair();
@@ -8976,13 +9045,15 @@ impl ChartApp {
                 }
             })
             .unwrap_or_default();
-        // When a sub-pane is maximized, mirror the same override that
+        // When a pane is exclusively expanded, mirror the same override that
         // render_full_chart_panel applies so input hit-testing (clicks, hover,
-        // separator drag) operates on the correct fullscreen geometry.
-        let maximized_id = self.panel_app.panel_grid.active_container_id()
-            .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
-            .map(|(iid, _)| *iid)
-            .filter(|iid| sub_pane_ids.contains(iid));
+        // separator drag) operates on the correct collapsed-header geometry.
+        let expanded = self.panel_app.panel_grid.active_container_id()
+            .and_then(|cid| self.expanded_pane.get(&cid.0).copied())
+            .filter(|e| match e {
+                mlc_core::state::modal_data::ExpandedPane::Main => true,
+                mlc_core::state::modal_data::ExpandedPane::SubPane(iid) => sub_pane_ids.contains(iid),
+            });
 
         let empty_above = std::collections::HashSet::new();
         let above_main_ids: &std::collections::HashSet<u64> = self.panel_app.panel_grid
@@ -8990,8 +9061,15 @@ impl ChartApp {
             .map(|w| &w.sub_pane_above_main)
             .unwrap_or(&empty_above);
 
-        if let Some(max_iid) = maximized_id {
-            ExtendedFrameLayout::maximized(&content_rect, max_iid, &scale_settings)
+        if let Some(exp) = expanded {
+            ExtendedFrameLayout::pane_expanded(
+                &content_rect,
+                exp,
+                &sub_pane_ids,
+                &scale_settings,
+                mlc_core::types::PANE_HEADER_STRIP_HEIGHT,
+                above_main_ids,
+            )
         } else {
             ExtendedFrameLayout::from_proportions(
                 &content_rect,
@@ -9050,14 +9128,16 @@ impl ChartApp {
             (filtered_ids, Vec::new())
         };
         let main_proportion = all_props.first().copied().filter(|_| all_props.len() > 1);
-        // When a sub-pane is maximized, mirror the same override that
+        // When a pane is exclusively expanded, mirror the same override that
         // render_full_chart_panel applies so input hit-testing operates on
-        // the correct fullscreen geometry for this leaf.
+        // the correct collapsed-header geometry for this leaf.
         let container_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
-        let maximized_id = container_id
-            .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
-            .map(|(iid, _)| *iid)
-            .filter(|iid| sub_pane_ids.contains(iid));
+        let expanded = container_id
+            .and_then(|cid| self.expanded_pane.get(&cid.0).copied())
+            .filter(|e| match e {
+                mlc_core::state::modal_data::ExpandedPane::Main => true,
+                mlc_core::state::modal_data::ExpandedPane::SubPane(iid) => sub_pane_ids.contains(iid),
+            });
 
         let empty_above2 = std::collections::HashSet::new();
         let above_ids: &std::collections::HashSet<u64> = self.panel_app.panel_grid
@@ -9065,8 +9145,15 @@ impl ChartApp {
             .map(|w| &w.sub_pane_above_main)
             .unwrap_or(&empty_above2);
 
-        if let Some(max_iid) = maximized_id {
-            Some(ExtendedFrameLayout::maximized(leaf_rect, max_iid, scale_settings))
+        if let Some(exp) = expanded {
+            Some(ExtendedFrameLayout::pane_expanded(
+                leaf_rect,
+                exp,
+                &sub_pane_ids,
+                scale_settings,
+                mlc_core::types::PANE_HEADER_STRIP_HEIGHT,
+                above_ids,
+            ))
         } else {
             Some(ExtendedFrameLayout::from_proportions(
                 leaf_rect,

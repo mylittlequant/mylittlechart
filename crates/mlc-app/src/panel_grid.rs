@@ -2178,6 +2178,7 @@ impl ChartPanelGrid {
         screen_y: f64,
         extended: &mlc_core::ExtendedFrameLayout,
         overlay_results: &[mlc_core::state::sub_pane_overlay::SubPaneOverlayResult],
+        main_overlay_result: Option<&mlc_core::state::sub_pane_overlay::SubPaneOverlayResult>,
     ) -> bool {
         use mlc_core::state::modal_data::SubPaneButton;
 
@@ -2189,6 +2190,8 @@ impl ChartPanelGrid {
                 state.hovered_button = None;
                 state.hovered_left_button = None;
             }
+            window.main_pane_overlay_state.visible = false;
+            window.main_pane_overlay_state.hovered_button = None;
             // Show overlay for the pane the cursor is inside.
             for (layout_idx, pane_layout) in extended.sub_panes.iter().enumerate() {
                 if pane_layout.content.contains(screen_x, screen_y) {
@@ -2233,6 +2236,25 @@ impl ChartPanelGrid {
                         window.sub_pane_overlay_states[real_idx].hovered_left_button = hovered_left;
                     }
                     break; // cursor can only be in one pane
+                }
+            }
+
+            // Main pane's own overlay — only meaningful when the container
+            // has sub-panes (mirrors the render-side
+            // `main_pane_overlay_eligible` gate) and the cursor is inside
+            // the main chart's own rect.
+            if !extended.sub_panes.is_empty() && extended.main_chart.chart.contains(screen_x, screen_y) {
+                window.main_pane_overlay_state.visible = true;
+                if let Some(overlay) = main_overlay_result {
+                    let hovered = if overlay.expand_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                        Some(SubPaneButton::Expand)
+                    } else if overlay.restore_rect.as_ref().is_some_and(|r| r.contains(screen_x, screen_y)) {
+                        Some(SubPaneButton::Restore)
+                    } else {
+                        None
+                    };
+                    hide_crosshair = hide_crosshair || hovered.is_some();
+                    window.main_pane_overlay_state.hovered_button = hovered;
                 }
             }
         }

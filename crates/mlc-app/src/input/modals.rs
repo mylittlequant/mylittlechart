@@ -21,6 +21,31 @@ use mlc_app_layout::ui::selectable_text::{block_text, select_all, selection_text
 use mlc_core::state::modal_state::{OpenModal, IndicatorCategoryFilter};
 use uzor::WidgetId;
 
+/// Toggle `target` for container `cid` in `expanded_pane`: if `target` is
+/// already the expanded pane for `cid`, remove the entry (restore — exact
+/// ratios come back for free since `inner_docking`'s real proportions are
+/// never mutated while a pane is expanded); otherwise set it (mutually
+/// exclusive with whatever else was expanded — `HashMap::insert` just
+/// overwrites).
+///
+/// Shared by the main-pane overlay button's click handler and the
+/// chart-canvas double-click handler for both the main pane and a
+/// sub-pane — the owner's rule that the button does exactly what
+/// double-click does is true by construction: both call sites route
+/// through this one function via `toggle_main_pane_expand`/
+/// `toggle_sub_pane_expand`.
+pub(crate) fn toggle_expanded_pane(
+    expanded_pane: &mut std::collections::HashMap<u64, mlc_core::state::modal_data::ExpandedPane>,
+    cid: u64,
+    target: mlc_core::state::modal_data::ExpandedPane,
+) {
+    if expanded_pane.get(&cid) == Some(&target) {
+        expanded_pane.remove(&cid);
+    } else {
+        expanded_pane.insert(cid, target);
+    }
+}
+
 impl ChartApp {
     /// Handle a click on an inline primitive toolbar action.
     ///
@@ -1627,32 +1652,31 @@ impl ChartApp {
                 self.autosave_snapshot();
             }
             SubPaneButton::Expand => {
-                // Maximize this sub-pane so it fills the ENTIRE container area
-                // (main chart and other sub-panes hidden).
+                // Expand this sub-pane so it fills the freed height; every
+                // other slot (main chart + other sub-panes) collapses to a
+                // header strip instead of disappearing.
                 //
                 // The layout override happens in render_full_chart_panel and
-                // build_extended_layout[_for_leaf] when maximized_sub_panes
-                // contains the entry — no tree proportion manipulation needed.
-                // We save the current tree proportions here so Restore can
-                // put them back exactly.
+                // build_extended_layout[_for_leaf] when expanded_pane
+                // contains the entry — no tree proportion manipulation
+                // needed. `inner_docking`'s real proportions are never
+                // mutated while expanded, so Restore snaps back exactly by
+                // just removing the entry.
                 if let Some(cid) = target_cid {
                     let sub_count = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
                         .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
                         .unwrap_or(0);
                     if sub_count > 0 {
-                        let pre_props = target_cid.and_then(|c| self.panel_app.panel_grid.containers().get(&c))
-                            .map(|w| w.inner_docking.tree().root().proportions.clone())
-                            .unwrap_or_default();
-                        self.maximized_sub_panes.insert(cid.0, (instance_id, pre_props));
+                        self.expanded_pane.insert(cid.0, mlc_core::state::modal_data::ExpandedPane::SubPane(instance_id));
                     }
                 }
                 self.autosave_snapshot();
             }
             SubPaneButton::Restore => {
-                // Remove the maximized entry — layout reverts to normal tree
+                // Remove the expanded entry — layout reverts to normal tree
                 // proportions on the next frame automatically.
                 if let Some(cid) = target_cid {
-                    self.maximized_sub_panes.remove(&cid.0);
+                    self.expanded_pane.remove(&cid.0);
                 }
                 self.autosave_snapshot();
             }
@@ -1693,6 +1717,34 @@ impl ChartApp {
                 self.delete_indicator_instance(instance_id);
             }
         }
+    }
+
+    /// Toggle the main chart's own exclusive-expand state for `cid`. No-op
+    /// on a container with zero sub-panes (owner rule: nothing to expand
+    /// into). Called by BOTH the main-pane overlay button's click handler
+    /// and the main-chart double-click handler — see `toggle_expanded_pane`.
+    pub(crate) fn toggle_main_pane_expand(&mut self, cid: mlc_core::state::ChartId) {
+        let sub_count = self.panel_app.panel_grid.containers().get(&cid)
+            .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking).len())
+            .unwrap_or(0);
+        if sub_count == 0 {
+            return;
+        }
+        toggle_expanded_pane(&mut self.expanded_pane, cid.0, mlc_core::state::modal_data::ExpandedPane::Main);
+        self.autosave_snapshot();
+    }
+
+    /// Toggle a sub-pane's own exclusive-expand state for `cid`. Called by
+    /// BOTH the sub-pane double-click handler and (indirectly, via
+    /// `apply_sub_pane_overlay_button`'s Expand/Restore arms) the sub-pane
+    /// overlay bar's own button — see `toggle_expanded_pane`.
+    pub(crate) fn toggle_sub_pane_expand(&mut self, cid: mlc_core::state::ChartId, instance_id: u64) {
+        toggle_expanded_pane(
+            &mut self.expanded_pane,
+            cid.0,
+            mlc_core::state::modal_data::ExpandedPane::SubPane(instance_id),
+        );
+        self.autosave_snapshot();
     }
 
     /// Handle a click that landed on the chart canvas (not a widget).
@@ -1784,32 +1836,47 @@ impl ChartApp {
             let overlay_results_btn = self.panel_app.panel_grid.active_container()
                 .map(|w| w.sub_pane_overlay_results.clone())
                 .unwrap_or_default();
+            let main_overlay_btn = self.panel_app.panel_grid.active_container()
+                .and_then(|w| w.main_pane_overlay_result.clone())
+                .unwrap_or_default();
             let _fallback_btn;
             let extended_btn = match self.active_frame_layout.as_ref() {
                 Some(e) => e,
                 None => { _fallback_btn = self.build_extended_layout(); &_fallback_btn }
             };
             let tester_btn = ExtendedLayoutHitTester::new(extended_btn)
-                .with_overlays(&overlay_results_btn);
+                .with_overlays(&overlay_results_btn)
+                .with_main_overlay(&main_overlay_btn);
             use mlc_core::input::ChartHitTester;
-            if let mlc_core::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } = tester_btn.hit_test(x, y) {
-                // Resolve instance_id from overlay results (correct even when maximized).
-                let instance_id = overlay_results_btn.get(pane_index)
-                    .map(|o| o.instance_id)
-                    .unwrap_or(0);
-                if instance_id == 0 { return; }
+            match tester_btn.hit_test(x, y) {
+                mlc_core::engine::input::HitResult::SubPaneOverlayButton { pane_index, button } => {
+                    // Resolve instance_id from overlay results (correct even when maximized).
+                    let instance_id = overlay_results_btn.get(pane_index)
+                        .map(|o| o.instance_id)
+                        .unwrap_or(0);
+                    if instance_id == 0 { return; }
 
-                // Find the tree-order index for this instance_id.
-                let real_index = self.panel_app.panel_grid.active_container()
-                    .and_then(|w| {
-                        crate::chart_container::collect_inner_instance_ids(&w.inner_docking)
-                            .iter()
-                            .position(|&iid| iid == instance_id)
-                    });
+                    // Find the tree-order index for this instance_id.
+                    let real_index = self.panel_app.panel_grid.active_container()
+                        .and_then(|w| {
+                            crate::chart_container::collect_inner_instance_ids(&w.inner_docking)
+                                .iter()
+                                .position(|&iid| iid == instance_id)
+                        });
 
-                let target = self.panel_app.panel_grid.active_container_id();
-                self.apply_sub_pane_overlay_button(target, instance_id, real_index, button);
-                return;
+                    let target = self.panel_app.panel_grid.active_container_id();
+                    self.apply_sub_pane_overlay_button(target, instance_id, real_index, button);
+                    return;
+                }
+                mlc_core::engine::input::HitResult::MainPaneOverlayButton { .. } => {
+                    // Same toggle the main chart's own double-click uses
+                    // (owner rule: button == double-click, exactly).
+                    if let Some(cid) = self.panel_app.panel_grid.active_container_id() {
+                        self.toggle_main_pane_expand(cid);
+                    }
+                    return;
+                }
+                _ => {}
             }
         }
 
@@ -3307,5 +3374,80 @@ impl ChartApp {
         let Some(prim_id) = self.core.drawings().selected(bid) else { return };
         self.copy_selected_primitive_to_clipboard();
         self.delete_primitive_with_undo(bid, prim_id);
+    }
+}
+
+#[cfg(test)]
+mod toggle_expanded_pane_tests {
+    //! Owner items (1) and (3): the main/sub-pane overlay button's click and
+    //! the chart-canvas double-click both route through `toggle_expanded_pane`
+    //! (via `toggle_main_pane_expand`/`toggle_sub_pane_expand`), so proving
+    //! this one function toggles reliably proves both call sites do.
+    use super::toggle_expanded_pane;
+    use mlc_core::state::modal_data::ExpandedPane;
+    use std::collections::HashMap;
+
+    /// Owner item (3): "double-click expand/collapse must toggle reliably
+    /// any number of times" — 5 calls in a row must alternate
+    /// Some/None/Some/None/Some, never get stuck.
+    #[test]
+    fn toggle_main_alternates_reliably_across_five_calls() {
+        let mut map: HashMap<u64, ExpandedPane> = HashMap::new();
+        let cid = 42;
+        for i in 0..5 {
+            toggle_expanded_pane(&mut map, cid, ExpandedPane::Main);
+            let expected = if i % 2 == 0 { Some(ExpandedPane::Main) } else { None };
+            assert_eq!(map.get(&cid).copied(), expected, "toggle #{i} produced the wrong state");
+        }
+    }
+
+    /// Same reliability property for a sub-pane target (item 3 applies to
+    /// both the main chart and a sub-pane double-click).
+    #[test]
+    fn toggle_sub_pane_alternates_reliably_across_five_calls() {
+        let mut map: HashMap<u64, ExpandedPane> = HashMap::new();
+        let cid = 7;
+        let target = ExpandedPane::SubPane(99);
+        for i in 0..5 {
+            toggle_expanded_pane(&mut map, cid, target);
+            let expected = if i % 2 == 0 { Some(target) } else { None };
+            assert_eq!(map.get(&cid).copied(), expected, "toggle #{i} produced the wrong state");
+        }
+    }
+
+    /// Switching the expand TARGET (main -> a different sub-pane) replaces
+    /// the entry outright rather than toggling it off — mutual exclusivity
+    /// by construction (`HashMap::insert` overwrites).
+    #[test]
+    fn toggling_a_different_target_replaces_not_toggles_off() {
+        let mut map: HashMap<u64, ExpandedPane> = HashMap::new();
+        let cid = 1;
+        toggle_expanded_pane(&mut map, cid, ExpandedPane::Main);
+        assert_eq!(map.get(&cid).copied(), Some(ExpandedPane::Main));
+
+        toggle_expanded_pane(&mut map, cid, ExpandedPane::SubPane(5));
+        assert_eq!(
+            map.get(&cid).copied(),
+            Some(ExpandedPane::SubPane(5)),
+            "a different target must replace, not clear, the entry"
+        );
+
+        toggle_expanded_pane(&mut map, cid, ExpandedPane::SubPane(5));
+        assert_eq!(map.get(&cid), None, "toggling the NOW-current target clears it");
+    }
+
+    /// Two independent containers toggle independently — the map is keyed
+    /// by `cid`, not a single global flag.
+    #[test]
+    fn toggle_is_independent_per_container() {
+        let mut map: HashMap<u64, ExpandedPane> = HashMap::new();
+        toggle_expanded_pane(&mut map, 1, ExpandedPane::Main);
+        toggle_expanded_pane(&mut map, 2, ExpandedPane::SubPane(3));
+        assert_eq!(map.get(&1).copied(), Some(ExpandedPane::Main));
+        assert_eq!(map.get(&2).copied(), Some(ExpandedPane::SubPane(3)));
+
+        toggle_expanded_pane(&mut map, 1, ExpandedPane::Main);
+        assert_eq!(map.get(&1), None, "container 1 restored");
+        assert_eq!(map.get(&2).copied(), Some(ExpandedPane::SubPane(3)), "container 2 untouched");
     }
 }

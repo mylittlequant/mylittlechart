@@ -37,6 +37,11 @@ use mlc_app_layout::layout::{
 pub(crate) struct TradingCenterRenderOut {
     pub corner_zones: mlc_core::ScaleCornerHitZones,
     pub sub_pane_overlays: Vec<mlc_core::SubPaneOverlayResult>,
+    /// Main pane's own overlay button hit zone — always `None` today since
+    /// the aux chart never sets `expanded_pane` (see `ChartPanelRenderData`
+    /// construction below), carried through for parity with the split/single
+    /// render paths.
+    pub main_pane_overlay: Option<mlc_core::SubPaneOverlayResult>,
     pub ind_overlay: Option<mlc_app_layout::layout::render_frame::IndicatorOverlayResult>,
 }
 use mlc_app_panels::trading::trading::trading_container::CenterKind;
@@ -457,7 +462,8 @@ impl ChartApp {
             inner_proportions: &inner_proportions,
             inner_sub_instance_ids: &inner_sub_ids,
             data_error: window.data_error.as_deref(),
-            maximized_sub_pane_id: None,
+            expanded_pane: None,
+            main_pane_overlay_state: &window.main_pane_overlay_state,
             above_main_ids: Some(&window.sub_pane_above_main),
         };
 
@@ -555,6 +561,7 @@ impl ChartApp {
         Some(TradingCenterRenderOut {
             corner_zones: render_result.corner_zones,
             sub_pane_overlays: render_result.sub_pane_overlays,
+            main_pane_overlay: render_result.main_pane_overlay,
             ind_overlay,
         })
     }

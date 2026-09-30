@@ -140,6 +140,7 @@ impl ChartApp {
     /// cleared): unlike the Vault tab's own routes, success must NOT pop
     /// open User Settings — see [`Self::finish_credentials_unlock`]'s own
     /// `show_dm_vault_unlock_overlay` branch.
+    #[cfg(feature = "cloud")]
     pub(super) fn open_dm_vault_unlock_overlay(&mut self) {
         self.panel_app.credentials_state.pending_unlock_return = None;
         self.panel_app.user_settings_state.vault_unlock_error = None;
@@ -156,6 +157,7 @@ impl ChartApp {
     /// Close the DM vault-unlock overlay without unlocking — Cancel, Esc,
     /// the × or a dimmer click all land here (`panel_click.rs`'s
     /// `"dm_vault_unlock:"` chrome arm).
+    #[cfg(feature = "cloud")]
     pub(super) fn close_dm_vault_unlock_overlay(&mut self) {
         self.panel_app.user_settings_state.show_dm_vault_unlock_overlay = false;
         self.panel_app.user_settings_state.vault_unlock_error = None;
