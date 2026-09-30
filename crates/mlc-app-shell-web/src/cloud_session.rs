@@ -38,6 +38,8 @@ use mlc_cloud::{
     StoredToken, VersionManifest,
 };
 
+mod checkout;
+
 /// Notice shown once the vault is unlocked but the account is not paid.
 const DM_UNPAID_MESSAGE: &str = "Messages need a paid account";
 
@@ -388,6 +390,12 @@ struct Inner {
     /// (unrelated request streams) so neither tab's fetch can block or be
     /// blocked by the other's.
     dm_in_flight: bool,
+
+    // ── Checkout modal (billing) ────────────────────────────────────────
+    /// Answers to checkout requests, oldest first; applied to the modal by
+    /// `drive_checkout` (`checkout.rs`), the only place `&mut ChartApp` and
+    /// the modal's clock meet the mailbox.
+    checkout_events: std::collections::VecDeque<mlc_app_layout::ui::checkout::CheckoutEvent>,
 }
 
 pub struct CloudSession {
@@ -408,6 +416,8 @@ impl CloudSession {
     /// Build the session from localStorage + `window.MLC_BUILD`.
     /// `server_url` is "" (same-origin) in production.
     pub fn init(server_url: &str) -> Self {
+        // This shell drives the checkout, so its entry-point buttons may show.
+        mlc_app_layout::ui::checkout::set_entry_points_enabled(true);
         let token = load_token();
         let device_id = load_or_create_device_id();
         let attestation = read_build_attestation();
@@ -484,6 +494,7 @@ impl CloudSession {
                 dm_peer_keys: std::collections::HashMap::new(),
                 dm_backfill_queue: std::collections::VecDeque::new(),
                 dm_in_flight: false,
+                checkout_events: std::collections::VecDeque::new(),
             })),
         }
     }
@@ -1344,6 +1355,7 @@ impl CloudSession {
             self.account_label().unwrap_or_default();
         chart.panel_app.user_settings_state.account_provider =
             self.account_provider().unwrap_or_default();
+        self.drive_checkout(chart, now_ms);
 
         // ── Entitlements: boot + periodic background re-ask ────────────────
         // Deliberately its own block, ahead of and independent from the
