@@ -187,26 +187,57 @@ pub struct BillingCheckout {
     pub checkout_url: Option<String>,
 }
 
-/// Response body of `POST /api/billing/anon-checkout` (`201`).
-#[derive(Clone, PartialEq, Deserialize)]
+/// Response body of `POST /api/billing/anon-checkout` (`201`). It carries no
+/// key: the client drew the key itself and sent only the credential derived
+/// from it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct BillingAnonCheckout {
-    /// The whole credential of the new account. Shown once; never logged.
-    pub account_key: String,
     pub invoice_id: String,
     pub pay: Vec<PayOption>,
     #[serde(default)]
     pub checkout_url: Option<String>,
 }
 
-impl std::fmt::Debug for BillingAnonCheckout {
-    /// The account key is a credential: it must never reach a log line.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BillingAnonCheckout")
-            .field("account_key", &"<redacted>")
-            .field("invoice_id", &self.invoice_id)
-            .field("pay", &self.pay)
-            .finish()
+// =============================================================================
+// Request bodies that carry the credential
+// =============================================================================
+
+/// Whether `text` is a login credential: 64 hex characters (`hex(C)`).
+pub fn is_credential(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn checked_credential(credential: &str) -> Result<&str, CloudError> {
+    if is_credential(credential) {
+        Ok(credential)
+    } else {
+        Err(CloudError::Decode("the credential must be 64 hex characters".to_string()))
     }
+}
+
+fn json_body(value: serde_json::Value) -> Result<String, CloudError> {
+    serde_json::to_string(&value).map_err(|e| CloudError::Decode(e.to_string()))
+}
+
+/// Body of `POST /api/billing/anon-checkout`: the plan and `hex(C)`, nothing else.
+pub fn anon_checkout_body(plan_id: &str, credential: &str) -> Result<String, CloudError> {
+    json_body(serde_json::json!({ "plan_id": plan_id, "credential": checked_credential(credential)? }))
+}
+
+/// Body of `POST /api/auth/account-key` (and of `POST /api/account/key/rotate`):
+/// `hex(C)`, nothing else.
+pub fn credential_body(credential: &str) -> Result<String, CloudError> {
+    json_body(serde_json::json!({ "credential": checked_credential(credential)? }))
+}
+
+/// Body of `POST /api/auth/invite/redeem`: the invite code and `hex(C)`.
+pub fn invite_redeem_body(invite_code: &str, credential: &str) -> Result<String, CloudError> {
+    json_body(serde_json::json!({ "invite_code": invite_code, "credential": checked_credential(credential)? }))
+}
+
+/// Value of the `Authorization` header of `GET /api/billing/anon-invoice/{id}`.
+pub fn account_key_authorization(credential: &str) -> Result<String, CloudError> {
+    Ok(format!("AccountKey {}", checked_credential(credential)?))
 }
 
 /// The validity window of a paid quant period.
@@ -505,13 +536,42 @@ mod tests {
         assert!(started.checkout_url.is_none());
     }
 
+    const CRED: &str = "b94a08ef8cf6f09519d070ee44d3118a7d6e0dcc27968fb6885cd6ff7fa16302";
+
     #[test]
-    fn anon_checkout_redacts_the_key_in_debug_output() {
-        let body = r#"{"account_key":"0F4Z-AAAA-BBBB-CCCC-DDDD-EE","invoice_id":"grp_2","pay":[]}"#;
+    fn anon_checkout_answer_carries_no_key() {
+        let body = r#"{"invoice_id":"grp_2","pay":[],"checkout_url":"https://pay.example/c"}"#;
         let started: BillingAnonCheckout = serde_json::from_str(body).expect("anon decode");
-        assert_eq!(started.account_key, "0F4Z-AAAA-BBBB-CCCC-DDDD-EE");
-        let printed = format!("{started:?}");
-        assert!(!printed.contains("0F4Z"), "the key must never print: {printed}");
+        assert_eq!(started.invoice_id, "grp_2");
+        assert_eq!(started.checkout_url.as_deref(), Some("https://pay.example/c"));
+    }
+
+    #[test]
+    fn only_the_credential_goes_into_request_bodies() {
+        let anon: serde_json::Value = serde_json::from_str(&anon_checkout_body("plan", CRED).expect("anon")).expect("json");
+        assert_eq!(anon, serde_json::json!({"plan_id": "plan", "credential": CRED}));
+        let key: serde_json::Value = serde_json::from_str(&credential_body(CRED).expect("key")).expect("json");
+        assert_eq!(key, serde_json::json!({"credential": CRED}));
+        let invite: serde_json::Value =
+            serde_json::from_str(&invite_redeem_body("CODE-1", CRED).expect("invite")).expect("json");
+        assert_eq!(invite, serde_json::json!({"invite_code": "CODE-1", "credential": CRED}));
+        assert_eq!(account_key_authorization(CRED).expect("header"), format!("AccountKey {CRED}"));
+    }
+
+    #[test]
+    fn anything_that_is_not_a_credential_never_reaches_a_body() {
+        // The displayed key `K` (Crockford groups), a short hex, a non-hex string.
+        for bad in [
+            "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-ZHQJ",
+            &CRED[..63],
+            &CRED.replace('b', "z"),
+            "",
+        ] {
+            assert!(anon_checkout_body("p", bad).is_err(), "{bad:?}");
+            assert!(credential_body(bad).is_err(), "{bad:?}");
+            assert!(invite_redeem_body("c", bad).is_err(), "{bad:?}");
+            assert!(account_key_authorization(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

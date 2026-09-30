@@ -49,7 +49,8 @@ pub use wasm::{FetchTransport, FriendRoster};
 pub use billing::*;
 pub use models::*;
 pub use staff::{
-    staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffLedgerRow,
+    staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffInvite, StaffInviteIssued, StaffInviteList, StaffInviteRequest,
+    StaffInviteRevoked, StaffLedgerRow,
     StaffLifetimeGrant, StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked,
     StaffMintRequest, StaffMintResponse, StaffPaidDays, StaffPaidDaysRequest, StaffUser,
 };

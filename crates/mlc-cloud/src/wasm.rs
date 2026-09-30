@@ -14,7 +14,8 @@ use web_sys::{Headers, Request, RequestCache, RequestInit, RequestMode, Response
 use crate::billing::*;
 use crate::models::*;
 use crate::{
-    BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffLifetimeGrant,
+    BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffInvite, StaffInviteIssued,
+    StaffInviteList, StaffInviteRequest, StaffInviteRevoked, StaffLifetimeGrant,
     StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked, StaffMintRequest, StaffMintResponse,
     StaffPaidDays, StaffPaidDaysRequest, StaffUser,
 };
@@ -459,12 +460,16 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
-    /// `POST /api/billing/anon-checkout {plan_id}` — PUBLIC. Creates a pending
-    /// anonymous account and its invoice; the answer carries the account key,
-    /// shown exactly once.
-    pub async fn billing_anon_checkout(&self, plan_id: &str) -> Result<BillingAnonCheckout, CloudError> {
-        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
-            .map_err(|e| CloudError::Decode(e.to_string()))?;
+    /// `POST /api/billing/anon-checkout {plan_id, credential}` — PUBLIC.
+    /// Creates a pending anonymous account and its invoice for the credential
+    /// the client derived from its own key (`hex(C)`); the answer carries no
+    /// key.
+    pub async fn billing_anon_checkout(
+        &self,
+        plan_id: &str,
+        credential: &str,
+    ) -> Result<BillingAnonCheckout, CloudError> {
+        let payload = anon_checkout_body(plan_id, credential)?;
         let (status, body) = self
             .exchange_public("POST", "/api/billing/anon-checkout", Some(payload), &[])
             .await?;
@@ -472,14 +477,14 @@ impl FetchTransport {
     }
 
     /// `GET /api/billing/anon-invoice/{id}` — the pending anonymous account
-    /// reads its own invoice with `Authorization: AccountKey <key>`.
+    /// reads its own invoice with `Authorization: AccountKey <hex(C)>`.
     pub async fn billing_anon_invoice(
         &self,
         invoice_id: &str,
-        account_key: &str,
+        credential: &str,
     ) -> Result<BillingInvoice, CloudError> {
         let path = format!("/api/billing/anon-invoice/{}", encode_query_component(invoice_id));
-        let auth = format!("AccountKey {account_key}");
+        let auth = account_key_authorization(credential)?;
         let (status, body) = self
             .exchange_public("GET", &path, None, &[("Authorization", auth.as_str())])
             .await?;
@@ -488,15 +493,26 @@ impl FetchTransport {
 
     // ── account-key sign-in ─────────────────────────────────────────────
 
-    /// `POST /api/auth/account-key {account_key}` — PUBLIC. An ACTIVE
-    /// anonymous account's key becomes a cookie session (`Set-Cookie:
-    /// session_id`, `HttpOnly`); the same-origin browser stores it. A bad,
-    /// unknown or still-pending key all answer `401`.
-    pub async fn account_key_sign_in(&self, account_key: &str) -> Result<AccountKeySession, CloudError> {
-        let payload = serde_json::to_string(&serde_json::json!({ "account_key": account_key }))
-            .map_err(|e| CloudError::Decode(e.to_string()))?;
+    /// `POST /api/auth/account-key {credential}` — PUBLIC. An ACTIVE key
+    /// account's credential (`hex(C)`) becomes a cookie session
+    /// (`Set-Cookie: session_id`, `HttpOnly`); the same-origin browser stores
+    /// it. A bad, unknown or still-pending credential all answer `401`.
+    pub async fn account_key_sign_in(&self, credential: &str) -> Result<AccountKeySession, CloudError> {
+        let payload = credential_body(credential)?;
         let (status, body) = self
             .exchange_public("POST", "/api/auth/account-key", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/auth/invite/redeem {invite_code, credential}` — PUBLIC.
+    /// Spends a registration invite on a new key account whose credential
+    /// (`hex(C)`) the client derived; the answer is a cookie session, exactly
+    /// like [`Self::account_key_sign_in`].
+    pub async fn invite_redeem(&self, invite_code: &str, credential: &str) -> Result<AccountKeySession, CloudError> {
+        let payload = invite_redeem_body(invite_code, credential)?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/auth/invite/redeem", Some(payload), &[])
             .await?;
         self.decode_success(status, &body)
     }
@@ -775,6 +791,38 @@ impl FetchTransport {
     /// batch stop working; redeemed ones keep their days.
     pub async fn staff_revoke_batch(&self, batch_id: &str) -> Result<StaffBatchRevoked, CloudError> {
         let path = format!("/api/staff/gift-batches/{}/revoke", encode_query_component(batch_id));
+        let (status, body) = self.staff_exchange("POST", &path, Some("{}".to_string())).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/invites` — issue a registration invite. The code comes
+    /// back ONCE; the caller must not log it.
+    pub async fn staff_invite_issue(
+        &self,
+        nick: &str,
+        paid_days: i64,
+        note: &str,
+    ) -> Result<StaffInviteIssued, CloudError> {
+        let payload = serde_json::to_string(&StaffInviteRequest {
+            nick: nick.to_string(),
+            paid_days,
+            note: note.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/invites", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/staff/invites` — the invites, no code values.
+    pub async fn staff_invites(&self) -> Result<Vec<StaffInvite>, CloudError> {
+        let (status, body) = self.staff_exchange("GET", "/api/staff/invites", None).await?;
+        self.decode_success::<StaffInviteList>(status, &body).map(StaffInviteList::into_rows)
+    }
+
+    /// `POST /api/staff/invites/{id}/revoke` — the invite stops working and
+    /// its nick is released.
+    pub async fn staff_invite_revoke(&self, invite_id: &str) -> Result<StaffInviteRevoked, CloudError> {
+        let path = format!("/api/staff/invites/{}/revoke", encode_query_component(invite_id));
         let (status, body) = self.staff_exchange("POST", &path, Some("{}".to_string())).await?;
         self.decode_success(status, &body)
     }

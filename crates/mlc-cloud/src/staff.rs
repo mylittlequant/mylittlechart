@@ -57,6 +57,18 @@ pub struct StaffLifetimeRevokeRequest {
     pub grant: String,
 }
 
+
+/// Body of `POST /api/staff/invites`.
+#[derive(Debug, Clone, Serialize)]
+pub struct StaffInviteRequest {
+    /// The nick the invited account will carry (reserved names allowed).
+    pub nick: String,
+    /// Paid days granted on redeem.
+    pub paid_days: i64,
+    /// Why (optional, at most 200 printable characters).
+    pub note: String,
+}
+
 // =============================================================================
 // Responses
 // =============================================================================
@@ -83,6 +95,68 @@ impl std::fmt::Debug for StaffMintResponse {
             .field("codes", &format_args!("<{} redacted>", self.codes.len()))
             .finish()
     }
+}
+
+/// `201` reply of `POST /api/staff/invites`. The code comes back ONCE — the
+/// server stores only its digest.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+pub struct StaffInviteIssued {
+    pub invite_code: String,
+}
+
+impl std::fmt::Debug for StaffInviteIssued {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StaffInviteIssued").field("invite_code", &"<redacted>").finish()
+    }
+}
+
+/// One row of `GET /api/staff/invites` (no code values).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct StaffInvite {
+    #[serde(alias = "invite_id")]
+    pub id: String,
+    pub nick: String,
+    #[serde(alias = "days")]
+    pub paid_days: i64,
+    #[serde(default)]
+    pub note: String,
+    pub created_at: String,
+    /// Set once the invite was redeemed.
+    #[serde(default)]
+    pub redeemed_at: Option<String>,
+    /// Set once staff revoked the invite.
+    #[serde(default)]
+    pub revoked_at: Option<String>,
+    /// Set when the invite lapsed unredeemed.
+    #[serde(default)]
+    pub expires_at: Option<String>,
+    /// The server's own state word, when it sends one.
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+/// The list reply: a bare array, or an object holding it under `invites`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum StaffInviteList {
+    Bare(Vec<StaffInvite>),
+    Wrapped { invites: Vec<StaffInvite> },
+}
+
+impl StaffInviteList {
+    /// The rows, whichever shape carried them.
+    pub fn into_rows(self) -> Vec<StaffInvite> {
+        match self {
+            Self::Bare(rows) | Self::Wrapped { invites: rows } => rows,
+        }
+    }
+}
+
+/// Reply of `POST /api/staff/invites/{id}/revoke`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+pub struct StaffInviteRevoked {
+    #[serde(default)]
+    pub revoked: bool,
 }
 
 /// One row of `GET /api/staff/gift-batches` (newest first, no code values).
@@ -289,6 +363,32 @@ mod tests {
         let req = StaffMintRequest { days: 7, count: 3, note: "x".into() };
         let v = serde_json::to_value(&req).expect("serialize");
         assert_eq!(v, serde_json::json!({"days": 7, "count": 3, "note": "x"}));
+    }
+
+    #[test]
+    fn invite_issue_request_and_reply_keep_the_code_out_of_debug() {
+        let req = StaffInviteRequest { nick: "nix".into(), paid_days: 365, note: "friend".into() };
+        let v = serde_json::to_value(&req).expect("serialize");
+        assert_eq!(v, serde_json::json!({"nick": "nix", "paid_days": 365, "note": "friend"}));
+        let issued: StaffInviteIssued = serde_json::from_str(r#"{"invite_code":"INV-SECRET-1"}"#).expect("issued");
+        assert_eq!(issued.invite_code, "INV-SECRET-1");
+        assert!(!format!("{issued:?}").contains("SECRET"));
+    }
+
+    #[test]
+    fn invite_list_decodes_bare_and_wrapped_with_aliases() {
+        let row = r#"{"id":"inv_1","nick":"nix","paid_days":365,"created_at":"2026-10-01T00:00:00+00:00","redeemed_at":null}"#;
+        let bare: StaffInviteList = serde_json::from_str(&format!("[{row}]")).expect("bare");
+        let wrapped: StaffInviteList = serde_json::from_str(&format!(r#"{{"invites":[{row}]}}"#)).expect("wrapped");
+        assert_eq!(bare.clone().into_rows(), wrapped.into_rows());
+        let rows = bare.into_rows();
+        assert_eq!((rows[0].id.as_str(), rows[0].nick.as_str(), rows[0].paid_days), ("inv_1", "nix", 365));
+        let alias: StaffInvite = serde_json::from_str(
+            r#"{"invite_id":"inv_2","nick":"a","days":30,"created_at":"x","revoked_at":"y"}"#,
+        )
+        .expect("aliases");
+        assert_eq!((alias.id.as_str(), alias.paid_days), ("inv_2", 30));
+        assert_eq!(alias.revoked_at.as_deref(), Some("y"));
     }
 
     #[test]

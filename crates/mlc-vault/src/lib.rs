@@ -20,6 +20,7 @@
 //! `rand`, `sha2`, `hex`, `serde`, `zeroize`, `web-time`, `subtle`,
 //! `curve25519-dalek`, `ed25519-dalek`. No workspace deps.
 
+pub mod account_key;
 pub mod channel;
 pub mod crypto;
 pub mod dm;
