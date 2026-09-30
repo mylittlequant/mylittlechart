@@ -52,6 +52,8 @@ pub mod share_open;
 pub use share_open::{render_share_open_overlay, ShareOpenResult};
 pub mod share_settings;
 pub use share_settings::{render_share_settings_overlay, ShareSettingsResult};
+pub mod checkout;
+pub use checkout::{render_checkout_modal, CheckoutResult};
 pub mod chart_browser;
 pub mod tags_tabs_modal;
 pub mod panel_settings_popup;

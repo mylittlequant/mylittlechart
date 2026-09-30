@@ -25,6 +25,8 @@ pub mod sync_color_grid;
 pub mod tags_tabs_state;
 pub mod share_viewer_row;
 pub mod toast;
+pub mod checkout;
+pub mod qr_svg;
 
 pub use icons::Icon;
 pub use tags_tabs_state::*;

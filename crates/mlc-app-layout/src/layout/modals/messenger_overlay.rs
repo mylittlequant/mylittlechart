@@ -479,7 +479,17 @@ fn draw_chat_pane(
     // straight off `state.dm` same as `dm_overlay.rs` does today.
     if matches!(state.dm.unavailable_reason, DmUnavailableReason::NotPaid) {
         if let Some(err) = &state.dm.last_error {
-            draw_error_line(ctx, tt, w, x, y, err);
+            let used = draw_error_line(ctx, tt, w, x, y, err);
+            // The notice says a paid plan is needed; the plan is bought here.
+            crate::layout::modals::checkout::draw_entry_button(
+                ctx,
+                coord,
+                layer_id,
+                x,
+                y + used + 8.0,
+                mlc_core::i18n::CheckoutKey::ActionUpgrade.get(mlc_core::i18n::current_language()),
+                tt,
+            );
         }
         return;
     }

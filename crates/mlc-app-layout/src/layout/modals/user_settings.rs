@@ -2488,6 +2488,20 @@ fn render_account_tab(
             line.push_str(&format!("   {}: {}", UserSettingsKey::AccountRole.get(current_language()), role));
         }
         ctx.fill_text(&line, x, cy);
+        // The plan status is where a plan is bought: the checkout opens from
+        // here. Right-aligned on the same row, and absent until the shell has
+        // a checkout driver.
+        let upgrade = mlc_core::i18n::CheckoutKey::ActionUpgrade.get(current_language());
+        let upgrade_w = auto_btn_width(ctx, upgrade, "600 11px sans-serif", 10.0, 60.0);
+        crate::layout::modals::checkout::draw_entry_button(
+            ctx,
+            input_coordinator,
+            layer_id,
+            x + available_w - upgrade_w,
+            cy - 6.0,
+            upgrade,
+            toolbar_theme,
+        );
         cy += 22.0;
     }
 
