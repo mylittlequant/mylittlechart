@@ -23,17 +23,17 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use mlc_messenger_model::{
     initials_from_name, BackPagination, Capabilities, CreateRoomRequest, EventId, Folder, FolderExclude, FolderIcon,
-    FolderInclude, LastEventPreview, LegacyContent, Member, MemberRole, MessageContent, MessengerIntent,
+    FolderInclude, ForwardedFrom, LastEventPreview, LegacyContent, Member, MemberRole, MessageContent, MessengerIntent,
     MessengerProvider, MembershipChange, MembershipEvent, PowerLevel, PreviewContent, PublicRoomEntry,
-    ReactionSummary, ReplyPreview, RoomId, RoomKind, RoomSummary, RoomVisibility, SendState, Tag, TagName, Timestamp,
-    TimelineItem, UserEntry, UserId, UtdReason, VaultState,
+    ReactionSummary, ReplyPreview, RoomId, RoomKind, RoomSummary, RoomVisibility, SendState, SharedChartCard, Tag,
+    TagName, Timestamp, TimelineItem, UserEntry, UserId, UtdReason, VaultState,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::core::{CreateRoomKind, MessageKind, MessengerCommand, MessengerCore, OutgoingMessage};
 use crate::error::MessengerError;
 use crate::room::timeline::{
-    ItemContent, SendState as CoreSendState, StateChangeSummary, Timeline, TimelineItem as CoreTimelineItem,
+    Forwarded, ItemContent, SendState as CoreSendState, StateChangeSummary, Timeline, TimelineItem as CoreTimelineItem,
 };
 use crate::room::{MemberRole as CoreMemberRole, RoomKind as CoreRoomKind, RoomState};
 use crate::store::RecordCodec;
@@ -52,8 +52,10 @@ pub const SLICE_CAPABILITIES: Capabilities = Capabilities {
     replies: true,
     typing: true,
     receipts: true,
-    forward: false,
-    stickers: false,
+    forward: true,
+    stickers: true,
+    // Cards are received and shown (and forwarded when their share policy
+    // allows), but nothing here builds or sends one yet.
     chart_card_send: false,
 };
 
@@ -565,10 +567,55 @@ fn map_timeline_item<C: RecordCodec>(
         send_state: map_send_state(core, item),
         read_by,
         pinned: false,
-        shared_chart: None,
+        shared_chart: shared_chart_of(&item.content),
         mentions_me: false,
-        forwarded: None,
+        forwarded: item.forwarded.as_ref().map(map_forwarded),
     })
+}
+
+/// The engine's attribution verdict as the UI's marker. The engine has
+/// already applied the rule (an item forwarded out of an encrypted room
+/// carries no sender and no room name at all; out of a public channel, only
+/// the channel's name) -- nothing here can add back what it left out.
+fn map_forwarded(forwarded: &Forwarded) -> ForwardedFrom {
+    match forwarded {
+        Forwarded::Hidden => ForwardedFrom::Hidden,
+        Forwarded::Channel { room_name, .. } => ForwardedFrom::Channel { room_name: room_name.clone() },
+    }
+}
+
+/// A chart card's fields as the UI's card attachment. The engine keeps the
+/// card's whole event content untouched (`ItemContent::ChartCard::content`);
+/// this reads the display fields (`symbol`, `timeframe`, `venue`, `note`) and
+/// the share policy from it. `allow_forward` is read at the top level or under
+/// `share`, and a card that carries no flag at all is NOT forwardable: the
+/// share policy is the sender's to grant, never assumed.
+fn shared_chart_of(content: &ItemContent) -> Option<SharedChartCard> {
+    let ItemContent::ChartCard { content, .. } = content else { return None };
+    let text = |key: &str| content.get(key).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+    let allow_forward = content
+        .get("allow_forward")
+        .or_else(|| content.get("share").and_then(|share| share.get("allow_forward")))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    Some(SharedChartCard {
+        symbol: text("symbol"),
+        timeframe: text("timeframe"),
+        venue: text("venue"),
+        note: text("note"),
+        allow_forward,
+    })
+}
+
+/// The share policy is not the engine's business: a chart card whose share
+/// forbids forwarding is refused here, before anything is enqueued.
+fn forward_refusal(content: &ItemContent) -> Result<(), MessengerError> {
+    match shared_chart_of(content) {
+        Some(card) if !card.allow_forward => {
+            Err(MessengerError::IntentRefused("this shared chart cannot be forwarded".to_string()))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn build_reply_preview(timeline: &Timeline, target: &crate::ids::EventId) -> ReplyPreview {
@@ -586,6 +633,7 @@ fn first_line_preview(content: &MessageContent) -> Option<String> {
     let body = match content {
         MessageContent::Text(body) | MessageContent::Notice(body) => body.as_str(),
         MessageContent::Legacy(LegacyContent::Text(body)) => body.as_str(),
+        MessageContent::Sticker { alt, .. } => alt.as_str(),
         _ => return None,
     };
     Some(body.lines().next().unwrap_or_default().to_string())
@@ -1063,8 +1111,21 @@ fn apply_intent<C: RecordCodec>(core: &mut MessengerCore<C>, intent: MessengerIn
         }
         MessengerIntent::SearchPublicRooms { term } => core.dispatch(MessengerCommand::SearchPublicRooms { term }, now_ms),
         MessengerIntent::SearchUsers { term } => core.dispatch(MessengerCommand::SearchUsers { term }, now_ms),
-        MessengerIntent::Forward { .. } | MessengerIntent::SendSticker { .. } => {
-            Err(MessengerError::IntentRefused("not wired in this branch".to_string()))
+        MessengerIntent::SendSticker { room, pack, id } => {
+            let room_id = require_room(core, &room)?;
+            // The UI names a sticker by `(pack, id)` only, so the event body
+            // (`alt`, what a client without the pack shows) is the id.
+            let alt = id.clone();
+            core.dispatch(MessengerCommand::SendSticker { room_id, pack, id, alt, txn_id: None }, now_ms)
+        }
+        MessengerIntent::Forward { from_room, event_id, to_room } => {
+            let from = require_room(core, &from_room)?;
+            let to = require_room(core, &to_room)?;
+            let source = parse_event_id(&event_id)?;
+            if let Some(item) = core.timeline(&from).and_then(|timeline| timeline.item_by_event_id(&source)) {
+                forward_refusal(&item.content)?;
+            }
+            core.dispatch(MessengerCommand::Forward { from_room: from, event_id: source, to_room: to, txn_id: None }, now_ms)
         }
     }
 }
@@ -1719,6 +1780,326 @@ mod tests {
         assert_eq!(reply.event_id.as_str(), "$gone:example.org");
         assert_eq!(reply.preview, "…");
         assert_eq!(reply.sender.as_str(), "", "the model requires a UserId; an unloaded target's sender is unknown, so it is empty");
+    }
+
+    // -------------------------------------------------------------
+    // Stickers, chart cards and forwarding (UI intents <-> engine)
+    // -------------------------------------------------------------
+
+    /// A public channel `!ch:example.org` named `Signals` where `@alice` is a
+    /// member, holding one text post and one chart card (`allow_forward` as
+    /// given, or absent) from `@bob`, plus an ordinary unencrypted group
+    /// `!g:example.org` to forward into.
+    fn channel_and_group_body(allow_forward: Option<bool>) -> Value {
+        let channel_state = vec![
+            member_event("@alice:example.org", "join", None),
+            serde_json::json!({
+                "event_id": "$j1:example.org", "type": "m.room.join_rules", "sender": "@bob:example.org",
+                "origin_server_ts": 1, "state_key": "", "content": { "join_rule": "public" }
+            }),
+            serde_json::json!({
+                "event_id": "$n1:example.org", "type": "m.room.name", "sender": "@bob:example.org",
+                "origin_server_ts": 1, "state_key": "", "content": { "name": "Signals" }
+            }),
+        ];
+        let mut card = serde_json::json!({
+            "msgtype": "org.mylittlechart.chart", "body": "BTCUSDT 4h", "symbol": "BTCUSDT", "timeframe": "4h",
+            "venue": "binance", "note": "SMC scan"
+        });
+        if let Some(flag) = allow_forward {
+            card["allow_forward"] = Value::Bool(flag);
+        }
+        let channel_timeline = vec![
+            serde_json::json!({
+                "event_id": "$post:example.org", "type": "m.room.message", "sender": "@bob:example.org", "origin_server_ts": 10,
+                "content": { "msgtype": "m.text", "body": "BTC long above 64k" }
+            }),
+            serde_json::json!({
+                "event_id": "$card:example.org", "type": "m.room.message", "sender": "@bob:example.org", "origin_server_ts": 11,
+                "content": card
+            }),
+        ];
+        let group_state = vec![member_event("@alice:example.org", "join", None)];
+        serde_json::json!({
+            "next_batch": "s1",
+            "rooms": { "join": {
+                "!ch:example.org": { "state": { "events": channel_state }, "timeline": { "events": channel_timeline } },
+                "!g:example.org": { "state": { "events": group_state } }
+            } }
+        })
+    }
+
+    /// The `RoomSend` requests the core has released, `Sync` ones answered.
+    fn released_sends(core: &mut MessengerCore<InsecurePlainCodecForTests>) -> Vec<OutgoingRequest> {
+        flush_and_ack(core);
+        releasable_non_sync(core).into_iter().filter(|r| r.kind == OutgoingRequestKind::RoomSend).collect()
+    }
+
+    fn forward_intent(event: &str) -> MessengerIntent {
+        MessengerIntent::Forward {
+            from_room: RoomId::from("!ch:example.org"),
+            event_id: EventId::from(event),
+            to_room: RoomId::from("!g:example.org"),
+        }
+    }
+
+    #[test]
+    fn the_slice_reports_stickers_and_forward_and_not_chart_card_sending() {
+        assert!(SLICE_CAPABILITIES.stickers);
+        assert!(SLICE_CAPABILITIES.forward);
+        assert!(!SLICE_CAPABILITIES.chart_card_send, "no chart card is built or sent by this engine yet");
+    }
+
+    #[test]
+    fn send_sticker_becomes_an_m_sticker_send_with_pack_id_and_url() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &group_sync_body("@alice:example.org", "!g:example.org", "s1"));
+
+        apply_intent(
+            &mut core,
+            MessengerIntent::SendSticker {
+                room: RoomId::from("!g:example.org"),
+                pack: "mlc-hat".to_string(),
+                id: "rocket".to_string(),
+            },
+            0,
+        )
+        .expect("send sticker applies");
+
+        let sends = released_sends(&mut core);
+        assert_eq!(sends.len(), 1, "one send request");
+        assert!(sends[0].path.contains("m.sticker"), "the event type is m.sticker: {}", sends[0].path);
+        let body = sends[0].body.clone().expect("a body");
+        assert_eq!(body["info"]["pack"], "mlc-hat");
+        assert_eq!(body["info"]["id"], "rocket");
+        assert_eq!(body["url"], "mlc-sticker://mlc-hat/rocket");
+        assert_eq!(body["body"], "rocket", "the UI has no alt text, so the event body is the sticker id");
+    }
+
+    #[test]
+    fn send_sticker_into_an_unknown_room_names_the_room() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let err = apply_intent(
+            &mut core,
+            MessengerIntent::SendSticker {
+                room: RoomId::from("!missing:example.org"),
+                pack: "mlc-hat".to_string(),
+                id: "rocket".to_string(),
+            },
+            0,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("!missing:example.org"), "{err}");
+    }
+
+    #[test]
+    fn send_sticker_with_a_slash_in_its_name_is_refused_by_the_engine() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &group_sync_body("@alice:example.org", "!g:example.org", "s1"));
+        let err = apply_intent(
+            &mut core,
+            MessengerIntent::SendSticker {
+                room: RoomId::from("!g:example.org"),
+                pack: "mlc/hat".to_string(),
+                id: "rocket".to_string(),
+            },
+            0,
+        )
+        .unwrap_err();
+        assert!(matches!(err, MessengerError::IntentRefused(_)), "{err:?}");
+    }
+
+    #[test]
+    fn forward_from_a_public_channel_carries_only_the_channel_name() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(Some(true)));
+
+        apply_intent(&mut core, forward_intent("$post:example.org"), 0).expect("forward applies");
+
+        let sends = released_sends(&mut core);
+        assert_eq!(sends.len(), 1, "one send request");
+        let body = sends[0].body.clone().expect("a body");
+        assert_eq!(body["body"], "BTC long above 64k", "the content is re-sent");
+        let text = body.to_string();
+        assert!(text.contains("org.mylittlechart.forwarded_from"), "{text}");
+        assert!(text.contains("Signals"), "a public channel's own name is not a secret: {text}");
+        assert!(!text.contains("@bob:example.org"), "the original sender is never carried: {text}");
+    }
+
+    #[test]
+    fn forward_of_an_event_the_source_room_does_not_hold_is_refused_by_the_engine() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(Some(true)));
+
+        let err = apply_intent(&mut core, forward_intent("$nothing:example.org"), 0).unwrap_err();
+        assert!(matches!(err, MessengerError::IntentRefused(_)), "{err:?}");
+    }
+
+    #[test]
+    fn forward_between_unknown_rooms_names_the_missing_room() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let err = apply_intent(
+            &mut core,
+            MessengerIntent::Forward {
+                from_room: RoomId::from("!nowhere:example.org"),
+                event_id: EventId::from("$e:example.org"),
+                to_room: RoomId::from("!g:example.org"),
+            },
+            0,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("!nowhere:example.org"), "{err}");
+    }
+
+    #[test]
+    fn an_inbound_chart_card_becomes_a_shared_chart_with_its_share_policy() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(Some(true)));
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!ch:example.org")).expect("timeline present");
+        let card = items.iter().find(|i| i.event_id.as_str() == "$card:example.org").expect("the card item");
+        assert_eq!(
+            card.shared_chart,
+            Some(SharedChartCard {
+                symbol: "BTCUSDT".to_string(),
+                timeframe: "4h".to_string(),
+                venue: "binance".to_string(),
+                note: "SMC scan".to_string(),
+                allow_forward: true,
+            })
+        );
+        assert_eq!(card.content, MessageContent::Text("BTCUSDT 4h".to_string()), "the fallback line rides beside the card");
+        let text = items.iter().find(|i| i.event_id.as_str() == "$post:example.org").expect("the text post");
+        assert_eq!(text.shared_chart, None, "an ordinary message carries no card");
+    }
+
+    #[test]
+    fn a_chart_card_that_forbids_forwarding_is_refused_and_nothing_is_sent() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(Some(false)));
+
+        let err = apply_intent(&mut core, forward_intent("$card:example.org"), 0).unwrap_err();
+        assert!(matches!(err, MessengerError::IntentRefused(_)), "{err:?}");
+        assert!(released_sends(&mut core).is_empty(), "the refusal happens before anything is enqueued");
+        assert!(
+            apply_intents(&mut core, vec![forward_intent("$card:example.org")], 0).is_some(),
+            "the driver surfaces it through last_error"
+        );
+    }
+
+    #[test]
+    fn a_chart_card_with_no_share_flag_is_not_forwardable() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(None));
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!ch:example.org")).expect("timeline present");
+        let card = items.iter().find(|i| i.event_id.as_str() == "$card:example.org").expect("the card item");
+        assert_eq!(card.shared_chart.as_ref().map(|c| c.allow_forward), Some(false));
+        assert!(apply_intent(&mut core, forward_intent("$card:example.org"), 0).is_err());
+    }
+
+    #[test]
+    fn a_chart_card_that_allows_forwarding_is_re_sent_unchanged() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &channel_and_group_body(Some(true)));
+
+        apply_intent(&mut core, forward_intent("$card:example.org"), 0).expect("an allowed card forwards");
+        let sends = released_sends(&mut core);
+        assert_eq!(sends.len(), 1);
+        let body = sends[0].body.clone().expect("a body");
+        assert_eq!(body["msgtype"], "org.mylittlechart.chart");
+        assert_eq!(body["symbol"], "BTCUSDT");
+        assert_eq!(body["allow_forward"], true);
+    }
+
+    #[test]
+    fn a_share_flag_nested_under_share_is_read_too() {
+        let content = ItemContent::ChartCard {
+            body: "BTCUSDT 1h".to_string(),
+            content: serde_json::json!({ "symbol": "BTCUSDT", "share": { "link": "mlc://share/abc", "allow_forward": true } }),
+        };
+        assert_eq!(shared_chart_of(&content).map(|c| c.allow_forward), Some(true));
+        assert!(forward_refusal(&content).is_ok());
+        let closed = ItemContent::ChartCard {
+            body: String::new(),
+            content: serde_json::json!({ "share": { "allow_forward": false } }),
+        };
+        assert!(forward_refusal(&closed).is_err());
+        assert!(forward_refusal(&ItemContent::LegacyPlain("x".to_string())).is_ok(), "only cards are policy-checked");
+    }
+
+    #[test]
+    fn the_engines_forwarded_verdict_maps_to_the_ui_marker_without_adding_anything() {
+        assert_eq!(map_forwarded(&Forwarded::Hidden), ForwardedFrom::Hidden);
+        assert_eq!(
+            map_forwarded(&Forwarded::Channel {
+                room_id: crate::ids::RoomId::parse("!ch:example.org").expect("valid room id"),
+                room_name: "Signals".to_string(),
+            }),
+            ForwardedFrom::Channel { room_name: "Signals".to_string() }
+        );
+    }
+
+    #[test]
+    fn an_inbound_m_sticker_becomes_sticker_content_and_previews_as_its_alt() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let timeline = vec![serde_json::json!({
+            "event_id": "$st:example.org", "type": "m.sticker", "sender": "@bob:example.org", "origin_server_ts": 7,
+            "content": {
+                "body": "Rocket", "url": "mlc-sticker://mlc-hat/rocket",
+                "info": { "pack": "mlc-hat", "id": "rocket" }
+            }
+        })];
+        sync_with_body(
+            &mut core,
+            &join_body(
+                "!g:example.org",
+                serde_json::json!({ "state": { "events": [member_event("@alice:example.org", "join", None)] }, "timeline": { "events": timeline } }),
+                "s1",
+            ),
+        );
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!g:example.org")).expect("timeline present");
+        assert_eq!(
+            items[0].content,
+            MessageContent::Sticker { pack: "mlc-hat".to_string(), id: "rocket".to_string(), alt: "Rocket".to_string() }
+        );
+        let summary = view.rooms.iter().find(|r| r.id.as_str() == "!g:example.org").expect("room present");
+        assert_eq!(summary.last_event.as_ref().map(|e| e.content.clone()), Some(PreviewContent::Text("Rocket".to_string())));
+    }
+
+    #[test]
+    fn an_inbound_forwarded_from_channel_marks_the_item_and_a_bare_marker_hides_the_source() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let timeline = vec![
+            serde_json::json!({
+                "event_id": "$fw:example.org", "type": "m.room.message", "sender": "@bob:example.org", "origin_server_ts": 7,
+                "content": {
+                    "msgtype": "m.text", "body": "BTC long above 64k",
+                    "org.mylittlechart.forwarded_from": { "room_id": "!ch:example.org", "room_name": "Signals" }
+                }
+            }),
+            serde_json::json!({
+                "event_id": "$fh:example.org", "type": "m.room.message", "sender": "@bob:example.org", "origin_server_ts": 8,
+                "content": { "msgtype": "m.text", "body": "secret", "org.mylittlechart.forwarded": true }
+            }),
+        ];
+        sync_with_body(
+            &mut core,
+            &join_body(
+                "!g:example.org",
+                serde_json::json!({ "state": { "events": [member_event("@alice:example.org", "join", None)] }, "timeline": { "events": timeline } }),
+                "s1",
+            ),
+        );
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!g:example.org")).expect("timeline present");
+        assert_eq!(items[0].forwarded, Some(ForwardedFrom::Channel { room_name: "Signals".to_string() }));
+        assert_eq!(items[1].forwarded, Some(ForwardedFrom::Hidden));
     }
 
     #[test]
