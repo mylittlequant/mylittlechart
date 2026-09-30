@@ -28,6 +28,7 @@ use super::tables::{
     CANDLE_PATTERN_KEY_TABLE,
     CANDLE_PATTERN_SHORT_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
+    ADMIN_KEY_TABLE,
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
     SHARE_VIEWER_KEY_TABLE,
@@ -4033,6 +4034,200 @@ impl uzor::i18n::Translate for ForumKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&FORUM_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Admin Keys (Settings -> Admin tab)
+// =============================================================================
+
+/// Strings of the in-app Admin tab of the settings modal (gift codes, grants,
+/// account lookup). The tab is shown only to an account holding the `admin`
+/// role. Sentences that carry values use `{name}` placeholders that the
+/// caller replaces (`mlc_app_layout::ui::admin_tab::fill`); every language
+/// keeps the same placeholder set, which the table tests pin.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `ADMIN_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum AdminKey {
+    /// Admin tab label in the settings rail.
+    TabAdmin = 0,
+    /// Section switch: gift codes.
+    SectionCoupons = 1,
+    /// Section switch: paid days and lifetime grants.
+    SectionGrants = 2,
+    /// Section switch: account lookup.
+    SectionUser = 3,
+    /// Mint form heading.
+    MintTitle = 4,
+    /// Days label and batch-table column.
+    LabelDays = 5,
+    /// Count label of the mint form.
+    LabelCount = 6,
+    /// Note label and batch-table column.
+    LabelNote = 7,
+    /// Placeholder of the optional mint note; `{max}` is the length bound.
+    PlaceholderNote = 8,
+    /// Mint button.
+    BtnMint = 9,
+    /// The shown-once warning above freshly minted codes.
+    MintedShownOnce = 10,
+    /// Copy every freshly minted code.
+    BtnCopyAll = 11,
+    /// Copy one code.
+    BtnCopy = 12,
+    /// Dismiss the freshly minted codes.
+    BtnDone = 13,
+    /// Batches table heading.
+    BatchesTitle = 14,
+    /// Reload the batches table.
+    BtnRefresh = 15,
+    /// Empty batches table.
+    BatchesEmpty = 16,
+    /// A fetch is in flight.
+    Loading = 17,
+    /// Batches column: redeemed / count.
+    ColRedeemed = 18,
+    /// Batches column: revoked codes.
+    ColRevoked = 19,
+    /// Batches / grants column: creation time.
+    ColCreated = 20,
+    /// Batches column: who minted it.
+    ColBy = 21,
+    /// Revoke action.
+    BtnRevoke = 22,
+    /// Confirm an armed action.
+    BtnConfirm = 23,
+    /// Cancel an armed action.
+    BtnCancel = 24,
+    /// Confirmation before revoking a batch; `{batch}` is the batch id.
+    ConfirmRevokeBatch = 25,
+    /// Nick label.
+    LabelNick = 26,
+    /// Placeholder of an exact-nick field.
+    PlaceholderNick = 27,
+    /// Grants: paid-days block heading.
+    PaidDaysTitle = 28,
+    /// Grants: add paid days.
+    BtnAddPaidDays = 29,
+    /// Grants: lifetime block heading.
+    LifetimeTitle = 30,
+    /// Placeholder of the required lifetime-grant reason.
+    PlaceholderLifetimeNote = 31,
+    /// Grants: grant lifetime paid.
+    BtnGrantLifetimePaid = 32,
+    /// Grants: grant lifetime anonymous.
+    BtnGrantLifetimeAnon = 33,
+    /// Grants: revoke lifetime paid.
+    BtnRevokeLifetimePaid = 34,
+    /// Grants: revoke lifetime anonymous.
+    BtnRevokeLifetimeAnon = 35,
+    /// Grants: what a lifetime revoke touches.
+    HintRevokeAdminOnly = 36,
+    /// Name of the lifetime-paid grant inside sentences.
+    KindLifetimePaid = 37,
+    /// Name of the lifetime-anonymous grant inside sentences.
+    KindLifetimeAnon = 38,
+    /// Confirmation of a paid-days grant; `{days}`, `{nick}`.
+    ConfirmPaidDays = 39,
+    /// Confirmation of a lifetime grant; `{kind}`, `{nick}`.
+    ConfirmLifetimeGrant = 40,
+    /// Confirmation of a lifetime revoke; `{kind}`, `{nick}`.
+    ConfirmLifetimeRevoke = 41,
+    /// User lookup button.
+    BtnLookup = 42,
+    /// User card: account id.
+    CardUserId = 43,
+    /// User card: time-bound paid grant.
+    CardPaidUntil = 44,
+    /// User card: lifetime paid flag.
+    CardLifetimePaid = 45,
+    /// User card: lifetime anonymous flag.
+    CardLifetimeAnon = 46,
+    /// User card: quant tier.
+    CardQuantTier = 47,
+    /// User card: quant period end.
+    CardQuantUntil = 48,
+    /// User card: forum roles.
+    CardRoles = 49,
+    /// User card: lifetime grant ledger heading.
+    CardGrantsTitle = 50,
+    /// User card: empty ledger.
+    CardNoGrants = 51,
+    /// Ledger column: grant kind.
+    ColGrant = 52,
+    /// Ledger column: admin or invoice.
+    ColSource = 53,
+    /// Boolean true.
+    ValueYes = 54,
+    /// Boolean false.
+    ValueNo = 55,
+    /// Mint succeeded; `{count}`, `{days}`.
+    ResultMinted = 56,
+    /// Batch revoke succeeded; `{n}`.
+    ResultBatchRevoked = 57,
+    /// Paid days added; `{nick}`, `{until}`.
+    ResultPaidUntil = 58,
+    /// Lifetime grant created; `{nick}`, `{kind}`.
+    ResultLifetimeGranted = 59,
+    /// Lifetime grant already in force; `{nick}`, `{kind}`.
+    ResultLifetimeExisting = 60,
+    /// Lifetime revoke done; `{nick}`, `{n}`, `{kind}`.
+    ResultLifetimeRevoked = 61,
+    /// Copy to the clipboard done.
+    ResultCopied = 62,
+    /// A mint finished after the window closed and its codes were dropped.
+    ResultDiscarded = 63,
+    /// A write is in flight.
+    Working = 64,
+    /// Form bound; `{min}`, `{max}`.
+    ErrDaysRange = 65,
+    /// Form bound; `{min}`, `{max}`.
+    ErrCountRange = 66,
+    /// Form bound; `{max}`.
+    ErrNoteTooLong = 67,
+    /// Form bound: control characters.
+    ErrNoteBadChars = 68,
+    /// Form bound: the lifetime reason is required; `{max}`.
+    ErrNoteRequired = 69,
+    /// Form bound: empty nick.
+    ErrNickRequired = 70,
+    /// Form bound; `{max}`.
+    ErrNickTooLong = 71,
+    /// Server refusal 403.
+    FailForbidden = 72,
+    /// Server refusal 404.
+    FailNotFound = 73,
+    /// Server refusal 429 with a Retry-After; `{secs}`.
+    FailRateLimited = 74,
+    /// Server refusal 429 without a Retry-After.
+    FailRateLimitedSoon = 75,
+    /// Server refusal 400; `{detail}` is the server's sentence.
+    FailBadRequest = 76,
+    /// Server refusal 401.
+    FailSignedOut = 77,
+    /// Transport failure; `{detail}`.
+    FailNetwork = 78,
+    /// Any other server failure; `{detail}`.
+    FailServer = 79,
+}
+
+impl AdminKey {
+    pub const COUNT: usize = 80;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&ADMIN_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for AdminKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&ADMIN_KEY_TABLE[self as usize], lang_index)
     }
 }
 

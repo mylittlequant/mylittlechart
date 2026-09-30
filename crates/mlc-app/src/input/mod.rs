@@ -2575,6 +2575,7 @@ impl ChartApp {
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
                         UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
                     scroll.start_drag(y);
                     true
@@ -2860,7 +2861,11 @@ impl ChartApp {
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
                     let hit = us.content_items.iter()
-                        .any(|(id, rect)| id.as_str() == "user_settings:account_redeem_input" && rect.contains(x, y));
+                        .any(|(id, rect)| {
+                            (id.as_str() == "user_settings:account_redeem_input"
+                                || id.starts_with("user_settings:admin:field:"))
+                                && rect.contains(x, y)
+                        });
                     if hit {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                         return false;
@@ -3338,6 +3343,7 @@ impl ChartApp {
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
                         UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
 
                     // Track click (jump to position)
@@ -4901,6 +4907,7 @@ impl ChartApp {
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
                         UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
 
                     if try_handle_scrollbar_drag(y, &mut [(&info, scroll_state)]) {
@@ -7537,6 +7544,7 @@ impl ChartApp {
                                     UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
                         UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                                 };
                                 let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
                             }

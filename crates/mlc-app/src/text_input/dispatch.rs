@@ -132,6 +132,8 @@ impl ChartApp {
                     | FRIENDS_NICK
             );
         }
+        // The Admin tab's seven inputs (`mlc_app_layout::ui::admin_tab`).
+        is_early_field |= mlc_app_layout::ui::admin_tab::AdminField::from_id(focused_id.as_str()).is_some();
         if !is_early_field {
             return false;
         }
@@ -261,6 +263,10 @@ impl ChartApp {
                     _ => {}
                 }
             }
+            return;
+        }
+        if let Some(field) = mlc_app_layout::ui::admin_tab::AdminField::from_id(id.as_str()) {
+            self.text_action_admin_field(field, ch, action);
             return;
         }
         match id.as_str() {

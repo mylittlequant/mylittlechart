@@ -5,6 +5,7 @@
 //!
 //! Core re-exports these via `pub use mlc_core::ui::modal_settings::*`.
 
+use crate::ui::admin_tab::{AdminRequest, AdminState};
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
 #[cfg(feature = "cloud")]
@@ -3526,6 +3527,10 @@ pub enum UserSettingsTab {
     /// Privacy and friends. Signed-in only. Search visibility, the friend
     /// list, and an invite link. Not part of share settings.
     Friends,
+    /// Gift codes, grants and account lookup for an account holding the
+    /// `admin` role (`crate::ui::admin_tab`). Never in [`Self::all`]:
+    /// [`Self::visible`] appends it only when asked for the admin view.
+    Admin,
 }
 
 impl UserSettingsTab {
@@ -3540,6 +3545,7 @@ impl UserSettingsTab {
             Self::Account => "account",
             Self::Shares => "shares",
             Self::Friends => "friends",
+            Self::Admin => "admin",
         }
     }
 
@@ -3556,6 +3562,7 @@ impl UserSettingsTab {
             Self::Account => UserSettingsKey::TabAccount.get(lang),
             Self::Shares => "Shares",
             Self::Friends => "Friends",
+            Self::Admin => mlc_core::i18n::AdminKey::TabAdmin.get(lang),
         }
     }
 
@@ -3577,8 +3584,13 @@ impl UserSettingsTab {
     /// (owner ruling 2026-09-09): the header's own account button opens
     /// straight onto it, so it reads as the account's own home tab, not an
     /// afterthought at the end of the rail.
-    pub fn visible(signed_in: bool) -> Vec<Self> {
-        let mut tabs = Vec::with_capacity(Self::all().len() + 1);
+    ///
+    /// `admin` appends [`Self::Admin`] LAST, and only for a signed-in caller —
+    /// the caller passes `UserSettingsState::admin_tab_visible`, which is true
+    /// only for an account holding the `admin` role on a shell that can serve
+    /// the tab. Everyone else's rail is unchanged.
+    pub fn visible(signed_in: bool, admin: bool) -> Vec<Self> {
+        let mut tabs = Vec::with_capacity(Self::all().len() + 4);
         if signed_in {
             tabs.push(Self::Account);
             tabs.push(Self::Friends);
@@ -3587,6 +3599,9 @@ impl UserSettingsTab {
         tabs.extend_from_slice(Self::all());
         if !signed_in {
             tabs.retain(|t| *t != Self::Server);
+        }
+        if signed_in && admin {
+            tabs.push(Self::Admin);
         }
         tabs
     }
@@ -3602,6 +3617,7 @@ impl UserSettingsTab {
             "account" => Some(Self::Account),
             "shares" => Some(Self::Shares),
             "friends" => Some(Self::Friends),
+            "admin" => Some(Self::Admin),
             _ => None,
         }
     }
@@ -3924,6 +3940,9 @@ pub struct UserSettingsState {
     /// Token of a pinned share whose Revoke click is waiting for Confirm.
     /// Unpinned revoke does not arm this.
     pub share_revoke_confirm: Option<String>,
+    /// The Admin tab (`crate::ui::admin_tab`). Only ever reached through
+    /// [`Self::admin_tab_visible`].
+    pub admin: AdminState,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -4246,6 +4265,7 @@ impl Default for UserSettingsState {
             friend_cmd: None,
             share_status: String::new(),
             share_revoke_confirm: None,
+            admin: AdminState::default(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
@@ -4350,6 +4370,46 @@ impl UserSettingsState {
         // `CloudLoginState::open`'s own reset, moved here with the field).
         self.redeem_requested = false;
         self.redeem_status = RedeemStatus::Idle;
+        // Freshly minted gift codes are shown once: closing drops them (and
+        // the rest of the Admin tab's per-visit data).
+        self.admin.on_close();
+    }
+
+    /// Whether the signed-in account holds the `admin` role, as the
+    /// `GET /api/forum/me` fetch reported it ([`Self::account_roles`]).
+    pub fn is_admin(&self) -> bool {
+        self.account_signed_in && self.account_roles.iter().any(|r| r == "admin")
+    }
+
+    /// Whether the Admin tab is in the rail: an admin, on a shell that can
+    /// serve its requests. Never true for anyone else — the server refuses
+    /// them anyway, this only keeps the tab out of their sight.
+    pub fn admin_tab_visible(&self) -> bool {
+        self.is_admin() && self.admin.served
+    }
+
+    /// The tab strip for this account.
+    pub fn visible_tabs(&self) -> Vec<UserSettingsTab> {
+        UserSettingsTab::visible(self.account_signed_in, self.admin_tab_visible())
+    }
+
+    /// The request the Admin tab wants performed, if any. The web shell calls
+    /// this every frame (through `ChartApp::take_admin_request`); the first
+    /// batches load is queued here so a modal reopened on the Admin tab fills
+    /// itself without a click.
+    pub fn take_admin_request(&mut self) -> Option<AdminRequest> {
+        let on_screen = self.is_open && self.active_tab == UserSettingsTab::Admin && self.admin_tab_visible();
+        self.admin.auto_load(on_screen);
+        self.admin.take_request()
+    }
+
+    /// The account lost the admin view (signed out, or the role went away):
+    /// drop the tab's data and step off it.
+    pub fn drop_admin_view(&mut self) {
+        self.admin.reset();
+        if self.active_tab == UserSettingsTab::Admin {
+            self.active_tab = UserSettingsTab::General;
+        }
     }
 
     /// Toggle open/closed.
@@ -4363,6 +4423,11 @@ impl UserSettingsState {
 
     /// Switch to a different tab and close any open dropdown.
     pub fn set_tab(&mut self, tab: UserSettingsTab) {
+        // The Admin tab cannot be entered by anyone it is hidden from — a
+        // stale click id or a saved tab id lands nowhere.
+        if tab == UserSettingsTab::Admin && !self.admin_tab_visible() {
+            return;
+        }
         self.active_tab = tab;
         self.active_dropdown = None;
     }
@@ -7338,5 +7403,135 @@ mod messenger_available_tests {
     fn signed_out_is_not_available() {
         let st = forum2(false, &["public", "user", "paid"]);
         assert!(!st.messenger_available());
+    }
+}
+
+#[cfg(test)]
+mod admin_tab_visibility_tests {
+    //! The Admin tab is in the rail only for an admin, on a shell that can
+    //! serve it — and never reachable by anyone else.
+    use super::*;
+    use crate::ui::admin_tab::{AdminMinted, AdminOutcome, AdminSection};
+
+    fn state(signed_in: bool, roles: &[&str], served: bool) -> UserSettingsState {
+        let mut st = UserSettingsState::default();
+        st.account_signed_in = signed_in;
+        st.account_roles = roles.iter().map(|r| r.to_string()).collect();
+        st.admin.served = served;
+        st
+    }
+
+    #[test]
+    fn the_tab_is_hidden_for_a_member_with_no_role() {
+        let st = state(true, &[], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_for_a_moderator() {
+        let st = state(true, &["moderator"], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_while_signed_out_even_with_a_stale_role() {
+        let st = state(false, &["admin"], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_on_a_shell_that_cannot_serve_it() {
+        let st = state(true, &["admin"], false);
+        assert!(st.is_admin());
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_last_in_the_rail_for_an_admin() {
+        let st = state(true, &["admin"], true);
+        assert!(st.admin_tab_visible());
+        let tabs = st.visible_tabs();
+        assert_eq!(tabs.last(), Some(&UserSettingsTab::Admin));
+        assert_eq!(tabs.first(), Some(&UserSettingsTab::Account));
+    }
+
+    #[test]
+    fn a_rail_without_the_admin_flag_is_what_it_always_was() {
+        let plain = UserSettingsTab::visible(true, false);
+        let admin = UserSettingsTab::visible(true, true);
+        assert_eq!(&admin[..admin.len() - 1], &plain[..]);
+        assert!(!UserSettingsTab::visible(false, true).contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn a_non_admin_cannot_enter_the_tab() {
+        let mut st = state(true, &["moderator"], true);
+        st.set_tab(UserSettingsTab::Admin);
+        assert_eq!(st.active_tab, UserSettingsTab::General);
+        assert_eq!(UserSettingsTab::from_id("admin"), Some(UserSettingsTab::Admin));
+
+        let mut admin = state(true, &["admin"], true);
+        admin.set_tab(UserSettingsTab::Admin);
+        assert_eq!(admin.active_tab, UserSettingsTab::Admin);
+    }
+
+    #[test]
+    fn losing_the_role_steps_off_the_tab_and_drops_its_data() {
+        let mut st = state(true, &["admin"], true);
+        st.set_tab(UserSettingsTab::Admin);
+        st.admin.minted = Some(AdminMinted {
+            batch_id: "gb_1".to_string(),
+            days: 1,
+            count: 1,
+            note: String::new(),
+            codes: vec!["CODE".to_string()],
+        });
+        st.account_roles.clear();
+        st.drop_admin_view();
+        assert_eq!(st.active_tab, UserSettingsTab::General);
+        assert!(st.admin.minted.is_none());
+        assert!(st.admin.served, "the shell's capability is not the account's");
+    }
+
+    #[test]
+    fn closing_the_modal_drops_the_minted_codes() {
+        let mut st = state(true, &["admin"], true);
+        st.open();
+        st.set_tab(UserSettingsTab::Admin);
+        st.admin.busy = true;
+        st.admin.apply(AdminOutcome::Minted(Ok(AdminMinted {
+            batch_id: "gb_1".to_string(),
+            days: 30,
+            count: 1,
+            note: String::new(),
+            codes: vec!["ONLYONCE01".to_string()],
+        })));
+        assert!(st.admin.minted.is_some());
+        st.admin.set_section(AdminSection::User);
+        st.close();
+        assert!(st.admin.minted.is_none(), "closing must drop the codes from state");
+        st.open();
+        assert!(st.admin.minted.is_none());
+        assert_eq!(st.admin.section, AdminSection::Coupons, "a reopened tab starts clean");
+    }
+
+    #[test]
+    fn the_first_load_is_queued_only_for_a_visible_open_admin_tab() {
+        use crate::ui::admin_tab::AdminRequest;
+        let mut st = state(true, &["admin"], true);
+        st.open();
+        assert_eq!(st.take_admin_request(), None, "another tab is showing");
+        st.set_tab(UserSettingsTab::Admin);
+        assert_eq!(st.take_admin_request(), Some(AdminRequest::LoadBatches));
+        assert_eq!(st.take_admin_request(), None);
+
+        let mut hidden = state(true, &["moderator"], true);
+        hidden.open();
+        hidden.active_tab = UserSettingsTab::Admin;
+        assert_eq!(hidden.take_admin_request(), None, "no request for a non-admin");
     }
 }

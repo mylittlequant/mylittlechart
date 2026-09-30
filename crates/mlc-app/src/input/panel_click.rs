@@ -7030,6 +7030,13 @@ impl ChartApp {
                 "header" => {
                     // Drag start handled in mouse_down.
                 }
+                // Admin tab (gift codes, grants, account lookup) — the ids and
+                // their parsing live with the tab's state.
+                rest if rest.starts_with("admin:") => {
+                    if let Some(admin_action) = mlc_app_layout::ui::admin_tab::AdminAction::parse(rest) {
+                        self.admin_click(admin_action);
+                    }
+                }
                 rest if rest.starts_with("shareadm:") => {
                     let mut parts = rest.splitn(3, ':');
                     let _ = parts.next();

@@ -68,17 +68,29 @@ pub fn render_user_settings_modal(
 ) -> UserSettingsResult {
     let mut result = UserSettingsResult::default();
 
-    let modal_w = 540.0;
+    // `Server` drops out while signed out — the Agent API has no reachable
+    // server for a signed-out session to manage (agent-api-auth-and-secret-
+    // store plan, piece 4). `Admin` joins only for an admin the shell can
+    // serve (`UserSettingsState::admin_tab_visible`).
+    let visible_tabs = state.visible_tabs();
+    // A tab the rail no longer shows must not keep painting its body: the
+    // Admin tab's data belongs to whoever held the role a moment ago.
+    let active_tab = if state.active_tab == UserSettingsTab::Admin
+        && !visible_tabs.contains(&UserSettingsTab::Admin)
+    {
+        UserSettingsTab::General
+    } else {
+        state.active_tab
+    };
+
+    // The Admin tab carries a six-column table; it gets the room.
+    let modal_w = if active_tab == UserSettingsTab::Admin { 640.0 } else { 540.0 };
     let modal_h = 500.0;
     let padding = 20.0;
     // A fixed-height modal needs no height field: hand the shell the body
     // height that leaves the frame exactly where it was.
     let content_height = modal_h - HEADER_H - FOOTER_H;
 
-    // `Server` drops out while signed out — the Agent API has no reachable
-    // server for a signed-out session to manage (agent-api-auth-and-secret-
-    // store plan, piece 4).
-    let visible_tabs = UserSettingsTab::visible(state.account_signed_in);
     let tab_items: Vec<ModalTab<'_>> = visible_tabs
         .iter()
         .map(|tab| {
@@ -92,13 +104,14 @@ pub fn render_user_settings_modal(
                 UserSettingsTab::Account => Icon::User,
                 UserSettingsTab::Shares => Icon::Pin,
                 UserSettingsTab::Friends => Icon::User,
+                UserSettingsTab::Admin => Icon::Shield,
             };
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
         .collect();
     let active_tab_idx = visible_tabs
         .iter()
-        .position(|t| *t == state.active_tab)
+        .position(|t| *t == active_tab)
         .unwrap_or(0);
 
     let modal_theme = ModalTheme::from_toolbar(
@@ -149,7 +162,7 @@ pub fn render_user_settings_modal(
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(state.active_tab.label(), content_x + padding, content_y + padding);
+    ctx.fill_text(active_tab.label(), content_x + padding, content_y + padding);
 
     let settings_y = content_y + padding + 30.0;
     let scroll_viewport_h = shell.content.height - padding - 30.0;
@@ -173,7 +186,7 @@ pub fn render_user_settings_modal(
         danger:         toolbar_theme.danger.clone(),
     };
 
-    match state.active_tab {
+    match active_tab {
         UserSettingsTab::General => {
             let viewport_rect = WidgetRect::new(
                 content_x + padding,
@@ -309,6 +322,26 @@ pub fn render_user_settings_modal(
                 &mut result,
             );
         }
+        UserSettingsTab::Admin => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            super::user_settings_admin::render_admin_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
+                frame_theme,
+                &scroll_widget_theme,
+                current_time_ms,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
         UserSettingsTab::Account => {
             let viewport_rect = WidgetRect::new(
                 content_x + padding,
@@ -344,7 +377,7 @@ pub fn render_user_settings_modal(
 /// Word-wrap `text` to `max_w` pixels using the current font. Char-count
 /// wrap is wrong here: 11px CJK vs Latin would overflow the same way the
 /// unwrapped `fill_text` did.
-fn wrap_to_width(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
+pub(super) fn wrap_to_width(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
     let mut out = Vec::new();
     for para in text.split('\n') {
         let mut rest = para.trim();

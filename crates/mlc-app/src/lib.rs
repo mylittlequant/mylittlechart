@@ -15,6 +15,7 @@
 //! ```
 
 pub mod active_series;
+pub mod admin;
 pub mod agent;
 
 // On wasm32, gate4agent is absent from the dep graph. Re-alias our stub
@@ -227,6 +228,12 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // field that is only drawn and never registered cannot take a caret.
     tf.register(text_input::SHARE_SETTINGS_NICK, TextFieldConfig::text().with_max_len(64));
     tf.register(text_input::FRIENDS_NICK, TextFieldConfig::text().with_max_len(64));
+    // Admin tab (Settings -> Admin): the seven inputs, capped by the tab's own
+    // bounds (`AdminField::max_len`). Registered for the same reason as every
+    // field above: an unregistered id can never hold a rect or a caret.
+    for field in mlc_app_layout::ui::admin_tab::AdminField::ALL {
+        tf.register(field.id(), TextFieldConfig::text().with_max_len(field.max_len()));
+    }
 }
 
 use std::cell::RefCell;
@@ -11884,6 +11891,26 @@ impl ChartApp {
                             );
                             break;
                         }
+                    }
+                }
+            }
+            // Admin tab inputs: the renderer publishes each rect under the
+            // field's own hit id (`AdminField::content_key`), the same shape
+            // as the Account tab's gift-code box above.
+            if let Some(ref us) = fr.user_settings {
+                for field in mlc_app_layout::ui::admin_tab::AdminField::ALL {
+                    let ui_id = field.content_key();
+                    if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| *k == ui_id) {
+                        let char_positions = us.input_char_positions.iter()
+                            .find(|(k, _)| *k == ui_id)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default();
+                        let wid = WidgetId::from(field.id());
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &wid,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            char_positions,
+                        );
                     }
                 }
             }
