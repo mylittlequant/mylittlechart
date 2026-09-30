@@ -155,11 +155,10 @@ pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 /// every build, same as [`ACCOUNT_NICK`].
 ///
 /// The modal that draws it lives in `mlc-app-layout`, which cannot depend on
-/// this crate, so the id is spelled there as a literal too
-/// (`user_settings.rs`'s `"account_redeem_input"`) — the same split every
-/// other modal field in that crate already has. Enter submits, which is
+/// this crate, so the id is defined THERE (`REDEEM_CODE_FIELD`) and re-exported
+/// here: one spelling for the store field and for the box that draws it. Enter submits, which is
 /// what a ten-character code typed from a message wants.
-pub const REDEEM_CODE: &str = "redeem_code";
+pub const REDEEM_CODE: &str = mlc_app_layout::ui::modal_settings::REDEEM_CODE_FIELD;
 
 /// Forum compose view's title field (cloud builds, paid-only tab). The
 /// shared `uzor::input::TextFieldStore` has no multi-line mode, so this and

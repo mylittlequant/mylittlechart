@@ -383,6 +383,90 @@ mod tests {
         assert_eq!(focused.as_ref().map(|w| w.as_str()), Some(crate::text_input::REDEEM_CODE));
     }
 
+    /// Owner-reported 0.5.651: the Account tab's gift/trial code box could not
+    /// be focused, selected or pasted into. Its drawn text was read from a
+    /// different id than the store field the keys and pastes land in; the box
+    /// and the store now share `REDEEM_CODE_FIELD`. These tests drive the
+    /// store the way the shell does.
+    fn redeem_wid() -> uzor::WidgetId {
+        uzor::WidgetId::from(crate::text_input::REDEEM_CODE)
+    }
+
+    fn redeem_text(app: &ChartApp) -> String {
+        app.input_coordinator.borrow().text_fields().text(&redeem_wid()).to_string()
+    }
+
+    #[test]
+    fn the_box_and_the_store_share_one_field_id() {
+        assert_eq!(crate::text_input::REDEEM_CODE, mlc_app_layout::ui::modal_settings::REDEEM_CODE_FIELD);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_click_in_the_gift_box_focuses_it_and_shows_the_caret_state() {
+        let mut app = app().await;
+        let wid = redeem_wid();
+        {
+            let mut ic = app.input_coordinator.borrow_mut();
+            // What `sync_text_field_geometry` stamps from the drawn box.
+            ic.text_fields_mut().update_field(&wid, (40.0, 300.0, 200.0, 26.0), vec![44.0]);
+            ic.text_fields_mut().on_drag_start(60.0, 312.0);
+        }
+        let ic = app.input_coordinator.borrow();
+        assert_eq!(ic.text_fields().focused(), Some(&wid), "the press focuses the gift box");
+        assert!(ic.text_fields().is_engaged(&wid), "and it shows as engaged (caret, ring)");
+        drop(ic);
+        app.on_char_input('K');
+        assert_eq!(redeem_text(&app), "K", "typing lands in the box");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn typing_and_a_paste_fill_the_gift_box_and_enter_sends_the_code() {
+        let mut app = app().await;
+        app.input_coordinator.borrow_mut().text_fields_mut().focus(redeem_wid());
+        for ch in "K7Q2".chars() {
+            app.on_char_input(ch);
+        }
+        assert_eq!(redeem_text(&app), "K7Q2");
+        app.on_key_press(crate::KeyPress::Paste("M9XPTA".to_string()));
+        assert_eq!(redeem_text(&app), "K7Q2M9XPTA", "a paste event fills the box");
+
+        assert!(!app.panel_app.user_settings_state.redeem_requested);
+        app.on_char_input('\r');
+        assert!(
+            app.panel_app.user_settings_state.redeem_requested,
+            "Enter queues the redeem request the shell sends to /api/account/redeem"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_admin_mint_fields_and_the_gift_box_do_not_interfere() {
+        use mlc_app_layout::ui::admin_tab::AdminField;
+        let mut app = app().await;
+        let days = uzor::WidgetId::from(AdminField::MintDays.id());
+        let note = uzor::WidgetId::from(AdminField::MintNote.id());
+
+        app.input_coordinator.borrow_mut().text_fields_mut().focus(days.clone());
+        app.on_char_input('3');
+        app.on_char_input('0');
+        app.input_coordinator.borrow_mut().text_fields_mut().focus(redeem_wid());
+        app.on_key_press(crate::KeyPress::Paste("B4N8R5WCDE".to_string()));
+        app.input_coordinator.borrow_mut().text_fields_mut().focus(note.clone());
+        app.on_key_press(crate::KeyPress::Paste("beta".to_string()));
+
+        let ic = app.input_coordinator.borrow();
+        let tf = ic.text_fields();
+        assert_eq!(tf.text(&days), "30", "the days box keeps its own text");
+        assert_eq!(tf.text(&note), "beta");
+        assert_eq!(tf.text(&redeem_wid()), "B4N8R5WCDE", "the gift box keeps its own text");
+        drop(ic);
+
+        // Enter in the gift box must not press the Mint button.
+        app.input_coordinator.borrow_mut().text_fields_mut().focus(redeem_wid());
+        app.on_char_input('\r');
+        assert!(app.panel_app.user_settings_state.redeem_requested);
+        assert!(app.panel_app.user_settings_state.admin.take_request().is_none(), "no mint was queued");
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_typed_account_key_signs_a_signed_out_visitor_in_and_the_box_forgets_it() {
         let mut app = opened(false).await;

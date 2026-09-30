@@ -934,6 +934,52 @@ mod tests {
         assert!(ids.iter().all(|id| !shows_live_field(&store, id)));
     }
 
+    /// Owner-reported 0.5.651: the gift/trial code box could not be focused,
+    /// selected or pasted into. The box drew from a differently spelled id than
+    /// the store field, so what the store held never reached the screen.
+    #[test]
+    fn the_gift_code_box_draws_what_the_store_holds_and_arms_redeem() {
+        use uzor::input::TextFieldConfig;
+        let mut st = admin_state();
+        st.active_tab = UserSettingsTab::Account;
+        let wid = uzor::WidgetId::from(crate::ui::modal_settings::REDEEM_CODE_FIELD);
+        let draw = |coord: &mut uzor::input::InputCoordinator| {
+            let mut ctx = Rec::default();
+            let result = render_user_settings_modal(
+                &mut ctx,
+                1280.0,
+                800.0,
+                &st,
+                &CredentialsState::default(),
+                &FrameTheme::default(),
+                &ToolbarTheme::default(),
+                0,
+                coord,
+                false,
+            );
+            (ctx.texts, result)
+        };
+
+        let mut coord = uzor::input::InputCoordinator::new();
+        coord.text_fields_mut().register(wid.clone(), TextFieldConfig::text().with_max_len(32));
+        let (texts, result) = draw(&mut coord);
+        assert!(has(&texts, "XXXXXXXXXX"), "an empty box shows its hint: {texts:?}");
+        assert!(!result.content_items.iter().any(|(k, _)| k == "account_redeem"), "Redeem is dead while empty");
+
+        // A paste (or typing) lands in the store's field; the box must show it.
+        coord.text_fields_mut().focus(wid.clone());
+        coord.text_fields_mut().set_text(&wid, "K7Q2M9XPTA");
+        coord.text_fields_mut().engage(&wid);
+        let (texts, result) = draw(&mut coord);
+        assert!(has(&texts, "K7Q2M9XPTA"), "the pasted code is drawn: {texts:?}");
+        assert!(!has(&texts, "XXXXXXXXXX"), "the hint is gone once there is text");
+        assert!(result.content_items.iter().any(|(k, _)| k == "account_redeem"), "Redeem is armed");
+        assert!(
+            result.content_items.iter().any(|(k, _)| k == "user_settings:account_redeem_input"),
+            "the box publishes its geometry for the click claim"
+        );
+    }
+
     #[test]
     fn an_admin_gets_the_tab_and_the_coupons_form() {
         let (texts, result) = render(&admin_state());

@@ -2545,9 +2545,9 @@ fn render_account_tab(
     // `CloudLoginState::open()`/`is_open = true` call site gates on
     // `!account_signed_in`; the header's own account button has opened
     // straight into THIS tab since 0.5.610) and was therefore dead code.
-    // Same field id (`text_input::REDEEM_CODE`, spelled as a literal here
-    // — this crate cannot depend on `mlc-app`, the same split every other
-    // modal field here already has) and the same transport (`POST /api/
+    // Same field id (`REDEEM_CODE_FIELD`, which `mlc-app`'s
+    // `text_input::REDEEM_CODE` re-exports, so the store's id and the id this
+    // box reads its text from can never drift apart) and the same transport (`POST /api/
     // account/redeem`); the shell drains `UserSettingsState::
     // redeem_requested` exactly like `nick_save_requested` above, and on
     // success invalidates the `Me`/entitlements caches so the tier/role
@@ -2569,7 +2569,7 @@ fn render_account_tab(
         let btn_gap = 8.0;
         let field_w = (available_w - btn_w - btn_gap).max(1.0);
         let field_rect = WidgetRect::new(x, cy, field_w, field_h);
-        let wid = uzor::WidgetId::from("account_redeem_input");
+        let wid = uzor::WidgetId::from(crate::ui::modal_settings::REDEEM_CODE_FIELD);
         let text = input_coordinator.text_fields().text(&wid).to_string();
         let cursor = input_coordinator.text_fields().cursor(&wid);
         let (sel_start, sel_end) = match input_coordinator.text_fields().selection_range(&wid) {

@@ -4337,6 +4337,14 @@ impl Default for UserSettingsState {
     }
 }
 
+/// Id of the Account tab's gift/trial code box in the shared
+/// `TextFieldStore`. The store field, the box's drawn text/caret/ring and the
+/// Redeem button's armed state all key off this one id: the box once read its
+/// text from a differently spelled literal, so it drew empty and caretless
+/// while keystrokes and pastes went to the store's real field (owner-reported
+/// 0.5.651: "cannot focus, select or paste").
+pub const REDEEM_CODE_FIELD: &str = "redeem_code";
+
 impl UserSettingsState {
     /// Open the modal, and stamp [`Self::focus_seq`] — every call site that
     /// used to set `is_open = true` directly now routes through here (owner
