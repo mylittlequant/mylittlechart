@@ -3626,6 +3626,13 @@ mod boot_page_tests {
     }
 
     #[test]
+    fn splash_shows_the_spinning_hat_alone() {
+        assert!(!INDEX_HTML.contains("loading chart engine"), "boot caption is gone");
+        assert!(!INDEX_HTML.contains("boot-caption"));
+        assert!(INDEX_HTML.contains("boot-hat.svg"), "the hat stays");
+    }
+
+    #[test]
     fn splash_has_a_bounded_wait() {
         let script = dismiss_script();
         assert!(script.contains("MAX_WAIT_MS"), "a frame loop that never paints cannot pin the splash");
