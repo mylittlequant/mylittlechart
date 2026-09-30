@@ -121,6 +121,8 @@ struct Account {
     public_id: String,
     /// The raw bearer token of the account's first device.
     token: String,
+    /// `users.nick`: the label the server must stamp into member events.
+    nick: String,
 }
 
 /// The parsed stand env file plus this run's freshly seeded accounts.
@@ -226,8 +228,13 @@ impl Stand {
         let mut accounts = BTreeMap::new();
         for who in Who::ALL {
             let seed = sha256_hex(&format!("{run}/{}", who.label()));
-            let account = Account { provider_user_id: format!("{}-{}", who.label(), head(&run, 12)), public_id: head(&seed, 32).to_string(), token: random_token() };
             let nick = format!("{}_{}", who.label(), seed.get(32..40).unwrap_or_default());
+            let account = Account {
+                provider_user_id: format!("{}-{}", who.label(), head(&run, 12)),
+                public_id: head(&seed, 32).to_string(),
+                token: random_token(),
+                nick: nick.clone(),
+            };
             sql.push_str(&format!(
                 "INSERT INTO users (provider, provider_user_id, display_name, created_at, public_id, nick, paid_until) \
                  VALUES ('dev', '{puid}', '{label}', '{SEED_TIME}', '{pid}', '{nick}', '{PAID_UNTIL}'); \
@@ -876,6 +883,17 @@ fn s1_direct_message_lifecycle() {
     let mut problems: Vec<String> = Vec::new();
     if summary.kind != RoomKind::Direct {
         problems.push(format!("the invitee's DM room is {:?}, not Direct (the invite's member event carries no `is_direct`)", summary.kind));
+    }
+    // A DM is titled after the peer's member-event displayname, which the
+    // server stamps from the peer's nick; a bare public id means it did not.
+    let alice_nick = &stand.account(Who::Alice).nick;
+    if summary.name != *alice_nick {
+        problems.push(format!("bob's DM title is {:?}, not alice's nick {alice_nick:?} (member events carry no displayname)", summary.name));
+    }
+    let bob_nick = &stand.account(Who::Bob).nick;
+    let alice_title = ap.room(&room).map(|r| r.name).unwrap_or_default();
+    if alice_title != *bob_nick {
+        problems.push(format!("alice's DM title is {alice_title:?}, not bob's nick {bob_nick:?}"));
     }
 
     let took = wait_until(&mut [&mut alice, &mut bob], "alice's item is Sent with a server event id", || {
