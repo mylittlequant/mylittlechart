@@ -524,9 +524,9 @@ fn messenger_wake(inner: &Rc<RefCell<Inner>>) -> Rc<dyn Fn()> {
             return;
         }
         let weak = weak.clone();
-        let pending = pending.clone();
+        let fired = pending.clone();
         let tick = Closure::once_into_js(move || {
-            pending.set(false);
+            fired.set(false);
             let Some(inner) = weak.upgrade() else { return };
             let Ok(mut inner) = inner.try_borrow_mut() else { return };
             if let Some(run) = inner.messenger.as_mut() {
