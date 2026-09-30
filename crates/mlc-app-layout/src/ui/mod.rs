@@ -1,5 +1,6 @@
 //! Chart UI rendering - self-contained toolbar and overlay rendering
 pub mod widgets;
+pub mod admin_tab;
 pub mod z_order;
 pub mod avatar_widget;
 pub mod chips_input;
