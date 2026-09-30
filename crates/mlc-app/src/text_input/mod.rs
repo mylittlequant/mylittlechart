@@ -268,6 +268,23 @@ pub const SHARE_SETTINGS_NICK: &str = "share_settings_nick";
 /// Nick search in the Friends tab. Adds the picked account as a friend.
 pub const FRIENDS_NICK: &str = "friends_nick";
 
+/// The Admin tab's seven inputs (Settings -> Admin; the ids and bounds are
+/// defined next to the tab's state, `mlc_app_layout::ui::admin_tab::
+/// AdminField`, so the renderer and this store cannot disagree). Mint form:
+pub const ADMIN_MINT_DAYS: &str = mlc_app_layout::ui::admin_tab::FIELD_MINT_DAYS;
+/// Admin tab, mint form: codes per batch.
+pub const ADMIN_MINT_COUNT: &str = mlc_app_layout::ui::admin_tab::FIELD_MINT_COUNT;
+/// Admin tab, mint form: optional batch note.
+pub const ADMIN_MINT_NOTE: &str = mlc_app_layout::ui::admin_tab::FIELD_MINT_NOTE;
+/// Admin tab, Grants section: exact nick.
+pub const ADMIN_GRANT_NICK: &str = mlc_app_layout::ui::admin_tab::FIELD_GRANT_NICK;
+/// Admin tab, Grants section: paid days to add.
+pub const ADMIN_GRANT_DAYS: &str = mlc_app_layout::ui::admin_tab::FIELD_GRANT_DAYS;
+/// Admin tab, Grants section: required lifetime-grant reason.
+pub const ADMIN_GRANT_NOTE: &str = mlc_app_layout::ui::admin_tab::FIELD_GRANT_NOTE;
+/// Admin tab, User section: exact nick to look up.
+pub const ADMIN_USER_NICK: &str = mlc_app_layout::ui::admin_tab::FIELD_USER_NICK;
+
 /// Inline fast-search text field hosted in the `symbol_selector` toolbar
 /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
 /// 2026-07-16, `ProfileUiSettings::symbol_quick_search`). Mirrors
@@ -338,5 +355,12 @@ pub fn known_field_ids() -> &'static [&'static str] {
         SHARE_OPEN_INPUT,
         SHARE_SETTINGS_NICK,
         FRIENDS_NICK,
+        ADMIN_MINT_DAYS,
+        ADMIN_MINT_COUNT,
+        ADMIN_MINT_NOTE,
+        ADMIN_GRANT_NICK,
+        ADMIN_GRANT_DAYS,
+        ADMIN_GRANT_NOTE,
+        ADMIN_USER_NICK,
     ]
 }
