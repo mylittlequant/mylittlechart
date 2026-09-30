@@ -20,7 +20,12 @@ pub enum ShellEvent {
     /// event_processor::PlatformEvent::Scroll`'s own doc) go through
     /// [`pixels_to_notch_units`] first — so a physical notch reads the same
     /// magnitude regardless of platform or input device.
-    Scroll { dx: f64, dy: f64 },
+    ///
+    /// `continuous` is `true` for pixel-mode input (a trackpad's two-finger
+    /// scroll and pinch, a pixel-mode wheel) and `false` for line-mode wheel
+    /// notches; `pinch` marks a trackpad pinch (a browser reports it as a
+    /// wheel event with `ctrlKey` set).
+    Scroll { dx: f64, dy: f64, continuous: bool, pinch: bool },
     ModifiersChanged(NormalizedModifiers),
     KeyPressed { logical: LogicalKey, physical: PhysicalKey },
     ImeCommit(String),

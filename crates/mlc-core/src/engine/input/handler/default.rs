@@ -125,6 +125,44 @@ impl InputHandlerConfig {
 }
 
 // =============================================================================
+// Continuous scroll
+// =============================================================================
+
+/// Natural-log zoom per scroll unit. About 20 units make one physical wheel
+/// notch, so a notch zooms by `exp(20 * 0.0024) ~ 1.05`: the same 5% a
+/// fixed-step wheel event gives.
+const ZOOM_LN_PER_UNIT: f64 = 0.0024;
+
+/// Largest delta (scroll units) one event may move the zoom by: three notches.
+/// A trackpad fling can report huge single deltas; capping keeps one event
+/// from jumping the chart.
+const MAX_SCROLL_UNITS_PER_EVENT: f64 = 60.0;
+
+/// CSS pixels per scroll unit (100 px per 20-unit notch): converts a
+/// continuous `delta_x` to the pixel pan the drag path uses.
+const SCROLL_UNIT_PX: f64 = 5.0;
+
+/// The fields of [`ChartInputAction::ScrollScaled`], carried together.
+struct ScaledScroll {
+    x: f64,
+    y: f64,
+    delta_x: f64,
+    delta_y: f64,
+    continuous: bool,
+    zoom_gain: f64,
+    pan_gain: f64,
+}
+
+/// Zoom factor of one continuous scroll event: `> 1` zooms in for a positive
+/// `delta_y`. Exponential, so the factors of a stream of small events multiply
+/// to that of one event with their summed delta, and `gain` scales the
+/// logarithm (gain 2 doubles the zoom of every event).
+pub fn continuous_zoom_factor(delta_y: f64, gain: f64) -> f64 {
+    let units = delta_y.clamp(-MAX_SCROLL_UNITS_PER_EVENT, MAX_SCROLL_UNITS_PER_EVENT);
+    (units * ZOOM_LN_PER_UNIT * gain).exp()
+}
+
+// =============================================================================
 // Input State
 // =============================================================================
 
@@ -520,6 +558,18 @@ impl DefaultChartInputHandler {
             ChartInputAction::Scroll { x, y, delta_x, delta_y } => {
                 self.handle_scroll(x, y, delta_x, delta_y, hit_tester)
             }
+            ChartInputAction::ScrollScaled {
+                x,
+                y,
+                delta_x,
+                delta_y,
+                continuous,
+                zoom_gain,
+                pan_gain,
+            } => self.handle_scroll_scaled(
+                ScaledScroll { x, y, delta_x, delta_y, continuous, zoom_gain, pan_gain },
+                hit_tester,
+            ),
             ChartInputAction::None => {
                 vec![]
             }
@@ -1021,6 +1071,58 @@ impl DefaultChartInputHandler {
         }
     }
 
+    /// Handle a scroll that carries the user's feel settings.
+    ///
+    /// Fixed-step input (`continuous == false`, a line-mode mouse wheel)
+    /// zooms by `1 +/- scroll_zoom_factor * zoom_gain` per event, exactly what
+    /// [`Self::handle_scroll`] does at gain 1. Continuous input (a trackpad, a
+    /// pixel-mode wheel) zooms by [`continuous_zoom_factor`] (proportional to
+    /// the delta, so a slow two-finger scroll moves a little and a fast one a
+    /// lot) and `delta_x` pans the chart by `pan_gain`.
+    fn handle_scroll_scaled(&mut self, scroll: ScaledScroll, hit_tester: &dyn ChartHitTester) -> Vec<ChartOutputAction> {
+        let ScaledScroll { x, y, delta_x, delta_y, continuous, zoom_gain, pan_gain } = scroll;
+        let hit = hit_tester.hit_test(x, y);
+        let step = (self.config.scroll_zoom_factor * zoom_gain).min(0.9);
+        let factor = if continuous {
+            continuous_zoom_factor(delta_y, zoom_gain)
+        } else if delta_y > 0.0 {
+            1.0 + step
+        } else {
+            1.0 - step
+        };
+
+        match hit {
+            HitResult::PriceScale => vec![
+                ChartOutputAction::Zoom { center_x: x, center_y: y, factor_x: 1.0, factor_y: 1.0 / factor },
+                ChartOutputAction::Repaint,
+            ],
+            HitResult::SubPanePriceScale { pane_index } => {
+                // Same 200 px proxy pane height `handle_scroll` documents.
+                const PROXY_H: f64 = 200.0;
+                vec![
+                    ChartOutputAction::ZoomSubPane { pane_index, delta_y: -(factor - 1.0) * PROXY_H },
+                    ChartOutputAction::Repaint,
+                ]
+            }
+            _ => {
+                let mut out = vec![ChartOutputAction::Zoom {
+                    center_x: x,
+                    center_y: y,
+                    factor_x: factor,
+                    factor_y: 1.0,
+                }];
+                if continuous && delta_x != 0.0 {
+                    out.push(ChartOutputAction::Pan {
+                        bar_delta: delta_x * SCROLL_UNIT_PX * pan_gain,
+                        price_delta: 0.0,
+                    });
+                }
+                out.push(ChartOutputAction::Repaint);
+                out
+            }
+        }
+    }
+
     /// Update kinetic velocity from drag movement.
     ///
     /// Call this from the platform code during drag with timestamps.
@@ -1303,6 +1405,88 @@ mod tests {
             ChartOutputAction::Zoom { factor_x, factor_y, .. }
             if *factor_x != 1.0 && *factor_y == 1.0
         )));
+    }
+
+    fn zoom_x_of(outputs: &[ChartOutputAction]) -> f64 {
+        outputs
+            .iter()
+            .find_map(|o| match o {
+                ChartOutputAction::Zoom { factor_x, .. } => Some(*factor_x),
+                _ => None,
+            })
+            .expect("a zoom output")
+    }
+
+    fn scaled(delta_x: f64, delta_y: f64, continuous: bool, zoom_gain: f64, pan_gain: f64) -> ChartInputAction {
+        ChartInputAction::ScrollScaled { x: 400.0, y: 300.0, delta_x, delta_y, continuous, zoom_gain, pan_gain }
+    }
+
+    #[test]
+    fn a_pixel_delta_stream_zooms_in_proportion_to_its_total() {
+        let hit_tester = MockHitTester::new(HitResult::Chart);
+        let mut handler = DefaultChartInputHandler::new();
+
+        // One notch (20 units) is about the fixed 5% step.
+        let notch = zoom_x_of(&handler.process_action(scaled(0.0, 20.0, true, 1.0, 1.0), &hit_tester));
+        assert!((notch - 1.05).abs() < 0.005, "one notch is ~5%: {notch}");
+
+        // Twenty 1-unit trackpad events compose to the same zoom as one
+        // 20-unit event: the factors multiply.
+        let mut stream = 1.0;
+        for _ in 0..20 {
+            stream *= zoom_x_of(&handler.process_action(scaled(0.0, 1.0, true, 1.0, 1.0), &hit_tester));
+        }
+        assert!((stream - notch).abs() < 1e-9, "stream {stream} vs single {notch}");
+
+        // Twice the delta, twice the log-zoom (a small delta moves a little).
+        let small = zoom_x_of(&handler.process_action(scaled(0.0, 2.0, true, 1.0, 1.0), &hit_tester));
+        let big = zoom_x_of(&handler.process_action(scaled(0.0, 4.0, true, 1.0, 1.0), &hit_tester));
+        assert!((big.ln() - 2.0 * small.ln()).abs() < 1e-12);
+        assert!(small > 1.0 && small < 1.01, "a 2-unit event is a sub-percent zoom: {small}");
+
+        // Scrolling the other way zooms out symmetrically.
+        let out = zoom_x_of(&handler.process_action(scaled(0.0, -20.0, true, 1.0, 1.0), &hit_tester));
+        assert!((out * notch - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_zoom_speed_setting_scales_a_continuous_stream_and_a_fixed_step() {
+        let hit_tester = MockHitTester::new(HitResult::Chart);
+        let mut handler = DefaultChartInputHandler::new();
+        let base = zoom_x_of(&handler.process_action(scaled(0.0, 10.0, true, 1.0, 1.0), &hit_tester));
+        let fast = zoom_x_of(&handler.process_action(scaled(0.0, 10.0, true, 2.0, 1.0), &hit_tester));
+        let slow = zoom_x_of(&handler.process_action(scaled(0.0, 10.0, true, 0.5, 1.0), &hit_tester));
+        assert!((fast.ln() - 2.0 * base.ln()).abs() < 1e-12, "2x speed doubles the zoom");
+        assert!((slow.ln() - 0.5 * base.ln()).abs() < 1e-12, "0.5x speed halves it");
+
+        // A fixed step keeps its 5% at speed 1 and scales with the setting.
+        let step = zoom_x_of(&handler.process_action(scaled(0.0, 1.0, false, 1.0, 1.0), &hit_tester));
+        assert!((step - 1.05).abs() < 1e-12);
+        let step2 = zoom_x_of(&handler.process_action(scaled(0.0, 1.0, false, 2.0, 1.0), &hit_tester));
+        assert!((step2 - 1.10).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_huge_single_delta_is_capped_and_horizontal_scroll_pans_by_the_scroll_speed() {
+        let hit_tester = MockHitTester::new(HitResult::Chart);
+        let mut handler = DefaultChartInputHandler::new();
+        let capped = zoom_x_of(&handler.process_action(scaled(0.0, 5000.0, true, 1.0, 1.0), &hit_tester));
+        assert!((capped - continuous_zoom_factor(60.0, 1.0)).abs() < 1e-12);
+
+        let pan_of = |outputs: &[ChartOutputAction]| {
+            outputs.iter().find_map(|o| match o {
+                ChartOutputAction::Pan { bar_delta, .. } => Some(*bar_delta),
+                _ => None,
+            })
+        };
+        let normal = pan_of(&handler.process_action(scaled(4.0, 0.0, true, 1.0, 1.0), &hit_tester)).expect("pan");
+        let fast = pan_of(&handler.process_action(scaled(4.0, 0.0, true, 1.0, 2.0), &hit_tester)).expect("pan");
+        assert_eq!(normal, 20.0, "4 units are 20 px");
+        assert_eq!(fast, 40.0, "scroll speed 2x doubles the pan");
+        assert!(
+            pan_of(&handler.process_action(scaled(4.0, 0.0, false, 1.0, 1.0), &hit_tester)).is_none(),
+            "a fixed-step wheel never pans"
+        );
     }
 
     #[test]

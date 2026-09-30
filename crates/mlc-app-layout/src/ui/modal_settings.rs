@@ -1064,6 +1064,14 @@ pub struct ChartSettingsState {
     pub active_field_id: Option<String>,
     /// Render-time snapshot of the focused sub-field (populated by ChartApp before each render).
     pub active_render: ActiveFieldRender,
+    /// Scales tab, Mouse & trackpad section: mirror of the profile's scroll
+    /// speed multiplier (`ProfileUiSettings::scroll_speed`), refreshed by
+    /// `ChartApp` before each render.
+    pub input_scroll_speed: f64,
+    /// Mirror of `ProfileUiSettings::zoom_speed`.
+    pub input_zoom_speed: f64,
+    /// Mirror of `ProfileUiSettings::precise_trackpad`.
+    pub input_precise_trackpad: bool,
     /// Instrument checkbox: use previous close color
     pub instrument_use_prev_close: bool,
     /// Instrument checkbox: body enabled
@@ -1115,6 +1123,9 @@ impl Default for ChartSettingsState {
             text_input: TextInputState::default(),
             active_field_id: None,
             active_render: ActiveFieldRender::default(),
+            input_scroll_speed: 1.0,
+            input_zoom_speed: 1.0,
+            input_precise_trackpad: true,
             instrument_use_prev_close: false,
             instrument_body_enabled: true,
             instrument_border_enabled: true,

@@ -95,9 +95,9 @@ impl App<'_> {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
-                let (dx, dy) = match delta {
+                let (dx, dy, continuous) = match delta {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        (x as f64 * UNITS_PER_NOTCH, y as f64 * UNITS_PER_NOTCH)
+                        (x as f64 * UNITS_PER_NOTCH, y as f64 * UNITS_PER_NOTCH, false)
                     }
                     // Trackpad: raw pixels, same contract conversion the web
                     // shell applies to its own CSS-pixel deltas (recon: item
@@ -105,10 +105,10 @@ impl App<'_> {
                     // input-hotkeys-and-modal-wheel.md`) — previously passed
                     // through unnormalized.
                     winit::event::MouseScrollDelta::PixelDelta(pos) => {
-                        (pixels_to_notch_units(pos.x), pixels_to_notch_units(pos.y))
+                        (pixels_to_notch_units(pos.x), pixels_to_notch_units(pos.y), true)
                     }
                 };
-                ShellEvent::Scroll { dx, dy }
+                ShellEvent::Scroll { dx, dy, continuous, pinch: false }
             }
 
             WindowEvent::ModifiersChanged(new_modifiers) => {

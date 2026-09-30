@@ -632,6 +632,10 @@ impl ChartApp {
                         log::debug!("[ChartApp] scales:use_24h = {}", w.scale_settings.time_format.use_24h);
                     }
                 }
+                "precise_trackpad" => {
+                    self.toggle_precise_trackpad();
+                    log::debug!("[ChartApp] scales:precise_trackpad toggled");
+                }
                 "show_day_of_week" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.show_day_of_week = !w.scale_settings.time_format.show_day_of_week;

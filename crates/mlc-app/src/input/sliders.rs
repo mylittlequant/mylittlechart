@@ -40,6 +40,21 @@ impl ChartApp {
             return;
         }
 
+        // Wheel / trackpad feel (chart settings, Scales tab -> Mouse & trackpad):
+        // profile-wide multipliers.
+        if let Some(which) = field_id.strip_prefix("input:") {
+            self.set_input_speed(which, value);
+            return;
+        }
+
+        // Candle style opacity sliders (`candle_opacity:{body,border,wick}`):
+        // one alpha for the row's up AND down colors, RGB untouched.
+        if let Some(row) = field_id.strip_prefix("candle_opacity:") {
+            self.apply_candle_opacity(row, value);
+            self.autosave_snapshot();
+            return;
+        }
+
         // Scales tab sliders
         if field_id.starts_with("scales:") {
             match field_id {
@@ -471,4 +486,183 @@ impl ChartApp {
         self.autosave_snapshot();
     }
 
+}
+
+impl ChartApp {
+    /// Set the profile's `scroll_speed` or `zoom_speed` (`which`), clamped to
+    /// the slider's range, and mark the profile for saving.
+    pub(crate) fn set_input_speed(&mut self, which: &str, value: f64) {
+        use mlc_app_layout::layout::modals::chart_settings::{INPUT_SPEED_MAX, INPUT_SPEED_MIN};
+        let value = value.clamp(INPUT_SPEED_MIN, INPUT_SPEED_MAX);
+        {
+            let mut user = self.core.user_mut();
+            let ui = &mut user.profile_mut().ui;
+            match which {
+                "scroll_speed" => ui.scroll_speed = value,
+                "zoom_speed" => ui.zoom_speed = value,
+                other => {
+                    log::debug!("[ChartApp] set_input_speed: unknown setting: {}", other);
+                    return;
+                }
+            }
+        }
+        self.profile_dirty = true;
+    }
+
+    /// Mirror the profile's wheel / trackpad settings into the chart settings
+    /// modal's state, which is what its Scales tab draws.
+    pub(crate) fn sync_input_prefs_to_settings_ui(&mut self) {
+        let (scroll_speed, zoom_speed, precise) = {
+            let user = self.core.user();
+            let ui = &user.profile().ui;
+            (ui.scroll_speed, ui.zoom_speed, ui.precise_trackpad)
+        };
+        let state = &mut self.panel_app.chart_settings_state;
+        state.input_scroll_speed = scroll_speed;
+        state.input_zoom_speed = zoom_speed;
+        state.input_precise_trackpad = precise;
+    }
+
+    /// Flip the profile's precise-trackpad switch.
+    pub(crate) fn toggle_precise_trackpad(&mut self) {
+        {
+            let mut user = self.core.user_mut();
+            let ui = &mut user.profile_mut().ui;
+            ui.precise_trackpad = !ui.precise_trackpad;
+        }
+        self.profile_dirty = true;
+    }
+
+    /// Set the alpha of a candle style row's up and down colors (`body`,
+    /// `border` or `wick`) to `alpha`, keeping each color's RGB exactly.
+    pub(crate) fn apply_candle_opacity(&mut self, row: &str, alpha: f64) {
+        let series = &mut self.panel_app.theme_manager.current_mut().series;
+        match row {
+            "body" => {
+                series.candle_up_body = mlc_core::with_alpha(&series.candle_up_body, alpha);
+                series.candle_down_body = mlc_core::with_alpha(&series.candle_down_body, alpha);
+            }
+            "wick" => {
+                series.candle_up_wick = mlc_core::with_alpha(&series.candle_up_wick, alpha);
+                series.candle_down_wick = mlc_core::with_alpha(&series.candle_down_wick, alpha);
+            }
+            "border" => {
+                // Borders are optional: an unset one follows its body color,
+                // so the row starts from that color.
+                let up = series.candle_up_border.clone().unwrap_or_else(|| series.candle_up_body.clone());
+                let down = series.candle_down_border.clone().unwrap_or_else(|| series.candle_down_body.clone());
+                series.candle_up_border = Some(mlc_core::with_alpha(&up, alpha));
+                series.candle_down_border = Some(mlc_core::with_alpha(&down, alpha));
+            }
+            other => log::debug!("[ChartApp] apply_candle_opacity: unknown row: {}", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod candle_opacity_tests {
+    use std::sync::Arc;
+
+    use mlc_backend_data_bridge::DataBridge;
+
+    use crate::ChartApp;
+
+    async fn app() -> ChartApp {
+        let (bridge, _live_rx, _ready_rx) = DataBridge::new().await;
+        let core = mlc_backend::BackendCore::new(Arc::new(bridge), None);
+        ChartApp::new_empty(core)
+    }
+
+    /// Tester report: changing the candle opacity reset the color to green.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_opacity_slider_changes_only_alpha_and_keeps_the_users_grey() {
+        let mut app = app().await;
+        {
+            let series = &mut app.panel_app.theme_manager.current_mut().series;
+            series.candle_up_body = "#808080".to_string();
+            series.candle_down_body = "#404040".to_string();
+            series.candle_up_wick = "#909090".to_string();
+        }
+        app.apply_slider_value("candle_opacity:body", 0.4);
+        let series = &app.panel_app.theme_manager.current().series;
+        assert_eq!(series.candle_up_body, "rgba(128,128,128,0.4)", "up stays grey, only alpha changes");
+        assert_eq!(series.candle_down_body, "rgba(64,64,64,0.4)", "down keeps its own rgb");
+        assert_eq!(series.candle_up_wick, "#909090", "other rows are untouched");
+
+        app.apply_slider_value("candle_opacity:body", 0.7);
+        assert_eq!(app.panel_app.theme_manager.current().series.candle_up_body, "rgba(128,128,128,0.7)");
+        app.apply_slider_value("candle_opacity:body", 1.0);
+        assert_eq!(app.panel_app.theme_manager.current().series.candle_up_body, "#808080");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_speed_sliders_write_the_profile_within_their_range() {
+        let mut app = app().await;
+        assert_eq!(app.core.user().profile().ui.scroll_speed, 1.0, "default");
+        app.apply_slider_value("input:scroll_speed", 2.0);
+        app.apply_slider_value("input:zoom_speed", 0.5);
+        assert_eq!(app.core.user().profile().ui.scroll_speed, 2.0);
+        assert_eq!(app.core.user().profile().ui.zoom_speed, 0.5);
+        app.apply_slider_value("input:zoom_speed", 99.0);
+        assert_eq!(app.core.user().profile().ui.zoom_speed, 3.0, "clamped to 3x");
+        app.apply_slider_value("input:zoom_speed", 0.0);
+        assert_eq!(app.core.user().profile().ui.zoom_speed, 0.25, "clamped to 0.25x");
+
+        app.sync_input_prefs_to_settings_ui();
+        assert_eq!(app.panel_app.chart_settings_state.input_scroll_speed, 2.0, "the modal shows the profile");
+        assert!(app.panel_app.chart_settings_state.input_precise_trackpad);
+        app.toggle_precise_trackpad();
+        app.sync_input_prefs_to_settings_ui();
+        assert!(!app.panel_app.chart_settings_state.input_precise_trackpad);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn scroll_actions_carry_the_kind_and_the_users_speeds() {
+        use crate::ScrollKind;
+        use mlc_core::ChartInputAction;
+        let mut app = app().await;
+        app.apply_slider_value("input:scroll_speed", 2.0);
+        app.apply_slider_value("input:zoom_speed", 1.5);
+
+        let fields = |a: ChartInputAction| match a {
+            ChartInputAction::ScrollScaled { continuous, zoom_gain, pan_gain, .. } => (continuous, zoom_gain, pan_gain),
+            other => panic!("unexpected action {other:?}"),
+        };
+        assert_eq!(fields(app.chart_scroll_action(0.0, 0.0, 1.0, 2.0, ScrollKind::Discrete)), (false, 1.5, 2.0));
+        assert_eq!(
+            fields(app.chart_scroll_action(0.0, 0.0, 1.0, 2.0, ScrollKind::Continuous { pinch: false })),
+            (true, 1.5, 2.0),
+            "a trackpad scroll is continuous"
+        );
+        let (continuous, pinch_gain, _) =
+            fields(app.chart_scroll_action(0.0, 0.0, 0.0, 2.0, ScrollKind::Continuous { pinch: true }));
+        assert!(continuous && pinch_gain > 1.5, "a pinch carries extra gain: {pinch_gain}");
+
+        // With Precise trackpad off every event is one fixed step again.
+        app.toggle_precise_trackpad();
+        assert_eq!(
+            fields(app.chart_scroll_action(0.0, 0.0, 1.0, 2.0, ScrollKind::Continuous { pinch: false })),
+            (false, 1.5, 2.0)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wick_and_border_rows_get_the_same_treatment() {
+        let mut app = app().await;
+        {
+            let series = &mut app.panel_app.theme_manager.current_mut().series;
+            series.candle_up_wick = "#123456".to_string();
+            series.candle_down_wick = "#654321".to_string();
+            series.candle_up_border = Some("#abcdef".to_string());
+            series.candle_down_border = None;
+            series.candle_down_body = "#404040".to_string();
+        }
+        app.apply_slider_value("candle_opacity:wick", 0.5);
+        app.apply_slider_value("candle_opacity:border", 0.25);
+        let series = &app.panel_app.theme_manager.current().series;
+        assert_eq!(series.candle_up_wick, "rgba(18,52,86,0.5)");
+        assert_eq!(series.candle_down_wick, "rgba(101,67,33,0.5)");
+        assert_eq!(series.candle_up_border.as_deref(), Some("rgba(171,205,239,0.25)"));
+        assert_eq!(series.candle_down_border.as_deref(), Some("rgba(64,64,64,0.25)"), "an unset border follows its body");
+    }
 }

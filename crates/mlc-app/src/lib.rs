@@ -63,6 +63,7 @@ pub use panels_store::TradingPanelsStore;
 pub use share_viewer::{PendingReopenShare, PresetId, SharedChartMeta, StrippedIndicator};
 
 pub use input::KeyPress;
+pub use input::ScrollKind;
 pub use input::VaultSetupOutcome;
 pub use digdigdig3::ExchangeId;
 pub use mlc_backend::watchlist::WatchlistManager;
@@ -6982,6 +6983,7 @@ impl ChartApp {
         // One step per rendered frame — this is the cadence the clock's
         // hover animation runs at.
         self.anim_frame = self.anim_frame.wrapping_add(1);
+        self.sync_input_prefs_to_settings_ui();
         let w = self.width as f64;
         let h = self.height as f64;
 

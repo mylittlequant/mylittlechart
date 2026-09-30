@@ -876,9 +876,46 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
 
     let provider = WebWindowProvider::from_id("chart")
         .map_err(|e| JsValue::from_str(&e))?;
+    install_wheel_meta_listener()?;
 
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
     run_render_loop(app, provider, bridge, profile_manager)
+}
+
+/// What the newest DOM `wheel` event said about its kind. uzor's own wheel
+/// listener converts every event to CSS pixels and drops `deltaMode` and
+/// `ctrlKey`; the chart needs both to tell a continuous trackpad scroll or
+/// pinch from a line-mode wheel notch.
+#[cfg(target_arch = "wasm32")]
+#[derive(Clone, Copy)]
+struct WheelMeta {
+    /// `deltaMode == DOM_DELTA_PIXEL`.
+    pixel_mode: bool,
+    /// `ctrlKey` (a trackpad pinch arrives as ctrl + wheel).
+    ctrl_key: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+thread_local! {
+    static WHEEL_META: std::cell::Cell<WheelMeta> =
+        const { std::cell::Cell::new(WheelMeta { pixel_mode: false, ctrl_key: false }) };
+}
+
+/// Record every wheel event's kind next to uzor's own listener. Both fire in
+/// the same dispatch, before the render loop drains the queued events.
+#[cfg(target_arch = "wasm32")]
+fn install_wheel_meta_listener() -> Result<(), JsValue> {
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let canvas = get_canvas("chart").ok_or_else(|| JsValue::from_str("canvas#chart not found"))?;
+    let closure = Closure::wrap(Box::new(move |ev: web_sys::WheelEvent| {
+        WHEEL_META.with(|m| m.set(WheelMeta { pixel_mode: ev.delta_mode() == 0, ctrl_key: ev.ctrl_key() }));
+    }) as Box<dyn FnMut(web_sys::WheelEvent)>);
+    canvas.add_event_listener_with_callback("wheel", closure.as_ref().unchecked_ref())?;
+    // Lives as long as the page, like uzor's own listeners.
+    closure.forget();
+    Ok(())
 }
 
 /// Flush both persistence layers on tab close/hide.
@@ -2797,9 +2834,15 @@ fn map_platform_event_to_shell(
             // through raw pixel-mode deltas (~100-120/notch), ~5-6x more
             // sensitive than native for the same physical wheel click.
             use mlc_app_input_shell::pixels_to_notch_units;
+            // uzor's listener normalizes `deltaMode` away; the side listener
+            // (`install_wheel_meta_listener`) kept it, plus `ctrlKey`, which
+            // a browser sets on a trackpad pinch.
+            let meta = WHEEL_META.with(|m| m.get());
             Some(ShellEvent::Scroll {
                 dx: pixels_to_notch_units(dx),
                 dy: pixels_to_notch_units(dy),
+                continuous: meta.pixel_mode,
+                pinch: meta.pixel_mode && meta.ctrl_key,
             })
         }
         PlatformEvent::WindowResized { width, height } => {

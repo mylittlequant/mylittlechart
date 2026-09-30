@@ -979,7 +979,7 @@ pub fn process_event(
         }
 
         // ─── Scroll ───────────────────────────────────────────────────────
-        ShellEvent::Scroll { dx, dy } => {
+        ShellEvent::Scroll { dx, dy, continuous, pinch } => {
             let (x, y) = state.last_mouse_pos;
             let chart_y = y - state.chrome_height;
             if chart_y < 0.0 {
@@ -994,7 +994,12 @@ pub fn process_event(
                 }
                 return;
             }
-            chart.on_scroll(x, chart_y, dx, dy, state.modifiers.ctrl);
+            let kind = if continuous {
+                mlc_app::ScrollKind::Continuous { pinch }
+            } else {
+                mlc_app::ScrollKind::Discrete
+            };
+            chart.on_scroll_kind(x, chart_y, dx, dy, state.modifiers.ctrl, kind);
             dirty.sidebar_dirty_scene = true;
             dirty.chart_dirty         = true;
         }

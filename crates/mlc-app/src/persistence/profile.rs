@@ -199,6 +199,11 @@ impl ChartApp {
                 // this snapshot is built from live UI state and this is not
                 // UI state.
                 clock_glitch_enabled: existing.ui.clock_glitch_enabled,
+                // Wheel / trackpad feel (chart settings, Scales tab): mutated
+                // in-place through `profile_mut()` like the toggle above.
+                scroll_speed: existing.ui.scroll_speed,
+                zoom_speed: existing.ui.zoom_speed,
+                precise_trackpad: existing.ui.precise_trackpad,
                 // Toast anchor/quiet-mode (toast restyle-and-anchor follow-up
                 // to §8, owner ask 2026-09-09): mutated in-place via
                 // `self.core.user_mut().profile_mut()` at toggle/drag time

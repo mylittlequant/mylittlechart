@@ -2192,9 +2192,9 @@ fn render_scales_settings(
     let viewport_height = content_height;
     let viewport_y = y;
 
-    let section_count = 8.0;
-    let item_count = 22.0;
-    let gap_count = 6.0;
+    let section_count = 9.0;
+    let item_count = 25.0;
+    let gap_count = 7.0;
     let total_content_height = (section_count * row_height) + (item_count * row_height) + (gap_count * 12.0);
 
     result.total_content_height = total_content_height;
@@ -2575,6 +2575,51 @@ fn render_scales_settings(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.fill_text(ClockKey::DayOfWeek.get(current_language()), x + checkbox_size + 12.0, row_y + row_height / 2.0);
+    row_y += row_height + 12.0;
+
+    // Section: MOUSE & TRACKPAD (profile-wide, not per chart): scroll and
+    // zoom speed multipliers, and whether pixel-mode wheel events (a
+    // trackpad's two-finger scroll and pinch) are read as continuous motion.
+    ctx.set_fill_color(muted_color);
+    ctx.set_font("11px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(t_settings(SettingsKey::SectionInput), x, row_y + row_height / 2.0);
+    row_y += row_height;
+    ctx.set_font("12px sans-serif");
+
+    let input_widget_theme = toolbar_to_widget_theme(theme, frame_theme);
+    let speed_config = SliderConfig::new(INPUT_SPEED_MIN, INPUT_SPEED_MAX).with_step(0.05);
+    for (label, field_id, value) in [
+        (t_settings(SettingsKey::ScrollSpeed), "input:scroll_speed", chart_settings_state.input_scroll_speed),
+        (t_settings(SettingsKey::ZoomSpeed), "input:zoom_speed", chart_settings_state.input_zoom_speed),
+    ] {
+        let dragging = chart_settings_state.slider_drag.as_ref().filter(|d| d.field_id == field_id);
+        let display = dragging.and_then(|d| d.floating_value).unwrap_or(value);
+        let hovered = dragging.is_some()
+            || chart_settings_state.hovered_item_id.as_deref() == Some(field_id);
+        let rect = WidgetRect::new(x, row_y, 300.0, row_height);
+        let slider = render_single_slider(ctx, &speed_config, display, rect, label, &input_widget_theme, hovered, None);
+        result.content_items.push((field_id.to_string(), slider.full_rect));
+        if let Some(wi) = slider.track_info {
+            result.slider_tracks.push(SliderTrackInfo {
+                field_id: field_id.to_string(),
+                track_x: wi.track_x,
+                track_width: wi.track_width,
+                min_val: wi.min_val,
+                max_val: wi.max_val,
+            });
+        }
+        row_y += row_height;
+    }
+
+    let check_y = row_y + (row_height - checkbox_size) / 2.0;
+    let check_rect = WidgetRect::new(x, check_y, checkbox_size, checkbox_size);
+    draw_checkbox(ctx, check_rect, chart_settings_state.input_precise_trackpad, theme);
+    result.content_items.push(("scales:precise_trackpad".to_string(), check_rect));
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.fill_text(t_settings(SettingsKey::PreciseTrackpad), label_x, row_y + row_height / 2.0);
 
     let widget_theme = WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, total_content_height, &widget_theme);

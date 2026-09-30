@@ -878,6 +878,25 @@ pub struct ProfileUiSettings {
     #[serde(default = "default_true")]
     pub clock_glitch_enabled: bool,
 
+    /// Wheel / trackpad scroll speed multiplier (chart settings, Scales tab,
+    /// "Mouse & trackpad"): scales how far a two-finger scroll pans the chart.
+    /// `1.0` is the default feel; clamped to `0.25..=3.0` when read.
+    #[serde(default = "default_input_speed")]
+    pub scroll_speed: f64,
+
+    /// Zoom speed multiplier: scales how far one wheel notch or trackpad
+    /// scroll / pinch zooms. `1.0` is the default; clamped to `0.25..=3.0`.
+    #[serde(default = "default_input_speed")]
+    pub zoom_speed: f64,
+
+    /// Read pixel-mode wheel events (a trackpad's two-finger scroll and
+    /// pinch) as continuous motion, proportional to the delta. `false` treats
+    /// every wheel event as one fixed step, like a mouse-wheel notch.
+    /// Defaults to TRUE (a plain `#[serde(default)]` bool would default to
+    /// false and change the feel for every existing profile).
+    #[serde(default = "default_true")]
+    pub precise_trackpad: bool,
+
     /// System event log (system-event-bus arc, 2026-09-05, owner scope
     /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8) —
     /// ring-capped (200) history of everything the system told the user:
@@ -957,6 +976,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_input_speed() -> f64 {
+    1.0
+}
+
 impl ProfileUiSettings {
     fn new() -> Self {
         Self {
@@ -1006,6 +1029,9 @@ impl ProfileUiSettings {
             drawings_locked: false,
             drawings_visible: true,
             clock_glitch_enabled: true,
+            scroll_speed: default_input_speed(),
+            zoom_speed: default_input_speed(),
+            precise_trackpad: true,
             system_events: SystemEventLog::new(),
             toast_anchor: ToastAnchor::default(),
             toasts_enabled: true,

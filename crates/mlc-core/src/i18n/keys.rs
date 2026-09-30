@@ -978,10 +978,18 @@ pub enum SettingsKey {
     // chip row (2026-08-08 3-tab port): the one class TfTicks..TfMonths
     // didn't cover.
     TfRanges                       = 131,
+
+    // ---- chart_settings modal, Scales tab, "Mouse & trackpad" section
+    // (profile-wide input feel: scroll / zoom speed multipliers and the
+    // precise-trackpad switch). ----
+    ScrollSpeed                    = 132,
+    ZoomSpeed                      = 133,
+    PreciseTrackpad                = 134,
+    SectionInput                   = 135,
 }
 
 impl SettingsKey {
-    pub const COUNT: usize = 132;
+    pub const COUNT: usize = 136;
 
     /// Get translation for this key
     #[inline]
@@ -1146,6 +1154,11 @@ pub enum UserSettingsKey {
     // messenger's Web Lock.
     MessengerConnecting             = 63,
     MessengerActiveElsewhere        = 64,
+
+    // Account menu under the header avatar (top right): the visible way to
+    // the plans (checkout modal) and to Settings -> Account.
+    AccountMenuUpgrade              = 65,
+    AccountMenuSettings             = 66,
 }
 
 impl UserSettingsKey {
@@ -1154,11 +1167,6 @@ impl UserSettingsKey {
     /// Get translation for this key.
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
-
-    // Account menu under the header avatar (top right): the visible way to
-    // the plans (checkout modal) and to Settings -> Account.
-    AccountMenuUpgrade              = 65,
-    AccountMenuSettings             = 66,
         uzor::table_lookup!(&USER_SETTINGS_KEY_TABLE[self as usize], lang as usize)
     }
 }

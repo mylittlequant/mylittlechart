@@ -165,6 +165,32 @@ pub enum ChartInputAction {
         delta_y: f64,
     },
 
+    /// A wheel / trackpad scroll with the user's feel settings applied.
+    ///
+    /// Deltas are in wheel-notch units (about 20 per physical
+    /// notch). `continuous` is `true` for pixel-mode input (a
+    /// trackpad's two-finger scroll and pinch, or a pixel-mode wheel): the
+    /// zoom is then proportional to `delta_y` and `delta_x` pans the chart.
+    /// `false` keeps the fixed step per event a line-mode mouse wheel gets.
+    /// `zoom_gain` / `pan_gain` are the user's zoom / scroll speed multipliers
+    /// (pinch gain already folded into `zoom_gain`).
+    ScrollScaled {
+        /// X position of scroll.
+        x: f64,
+        /// Y position of scroll.
+        y: f64,
+        /// Horizontal scroll delta (notch units).
+        delta_x: f64,
+        /// Vertical scroll delta (notch units).
+        delta_y: f64,
+        /// Proportional (`true`) or fixed-step (`false`) zoom.
+        continuous: bool,
+        /// Zoom speed multiplier.
+        zoom_gain: f64,
+        /// Pan (scroll) speed multiplier.
+        pan_gain: f64,
+    },
+
     /// No action needed.
     ///
     /// Used as a placeholder when processing events that
@@ -184,6 +210,7 @@ impl ChartInputAction {
             ChartInputAction::Pan { .. }
                 | ChartInputAction::Zoom { .. }
                 | ChartInputAction::Scroll { .. }
+                | ChartInputAction::ScrollScaled { .. }
         )
     }
 

@@ -37,6 +37,28 @@ pub(crate) mod drawing_session;
 mod trading_container_bind;
 
 // =============================================================================
+// ScrollKind — what a wheel / trackpad event was
+// =============================================================================
+
+/// What kind of device produced a scroll event, as the shell knows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScrollKind {
+    /// A line-mode wheel notch: one fixed zoom step per event.
+    Discrete,
+    /// Pixel-mode input (trackpad two-finger scroll, pinch, pixel-mode wheel):
+    /// motion proportional to the delta. `pinch` marks a trackpad pinch.
+    Continuous { pinch: bool },
+}
+
+/// Extra zoom gain of a trackpad pinch: browsers report it as tiny wheel
+/// deltas (a few pixels per event), so it needs more gain than a scroll to
+/// feel 1:1.
+const PINCH_ZOOM_GAIN: f64 = 8.0;
+
+/// Range the scroll / zoom speed settings are clamped to when read.
+const SPEED_RANGE: (f64, f64) = (0.25, 3.0);
+
+// =============================================================================
 // KeyPress — named key events forwarded from the platform runner
 // =============================================================================
 
@@ -7267,6 +7289,14 @@ impl ChartApp {
     /// When a modal is open, scroll is routed to the modal's scroll state
     /// instead of the chart canvas.
     pub fn on_scroll(&mut self, x: f64, y: f64, dx: f64, dy: f64, ctrl: bool) {
+        self.on_scroll_kind(x, y, dx, dy, ctrl, ScrollKind::Discrete);
+    }
+
+    /// [`Self::on_scroll`] with the kind of device that produced the event, so
+    /// a trackpad's continuous scroll / pinch zooms and pans in proportion to
+    /// its deltas while a wheel notch keeps its fixed step. The user's scroll
+    /// and zoom speed (profile, chart settings -> Scales) scale both.
+    pub fn on_scroll_kind(&mut self, x: f64, y: f64, dx: f64, dy: f64, ctrl: bool, kind: ScrollKind) {
         // Route scroll to open modal content instead of blocking entirely.
         if self.input_coordinator.borrow_mut().is_blocked_by_modal(x, y) {
             // Normalise dy: wheel delta is typically negative when scrolling down
@@ -8189,11 +8219,30 @@ impl ChartApp {
             .unwrap_or_default();
         let hit_tester = ExtendedLayoutHitTester::new(extended)
             .with_overlays(&overlay_results_sc);
-        let actions = self.input_handler.process_action(
-            ChartInputAction::Scroll { x, y, delta_x: dx, delta_y: dy },
-            &hit_tester,
-        );
+        let action = self.chart_scroll_action(x, y, dx, dy, kind);
+        let actions = self.input_handler.process_action(action, &hit_tester);
         self.process_output_actions(actions);
+    }
+
+    /// The chart input action for a scroll of `kind`, with the profile's
+    /// scroll speed, zoom speed and precise-trackpad switch applied.
+    pub(crate) fn chart_scroll_action(&self, x: f64, y: f64, dx: f64, dy: f64, kind: ScrollKind) -> ChartInputAction {
+        let (zoom_speed, pan_gain, precise_trackpad) = {
+            let user = self.core.user();
+            let ui = &user.profile().ui;
+            (
+                ui.zoom_speed.clamp(SPEED_RANGE.0, SPEED_RANGE.1),
+                ui.scroll_speed.clamp(SPEED_RANGE.0, SPEED_RANGE.1),
+                ui.precise_trackpad,
+            )
+        };
+        let (continuous, zoom_gain) = match kind {
+            ScrollKind::Continuous { pinch } if precise_trackpad => {
+                (true, if pinch { zoom_speed * PINCH_ZOOM_GAIN } else { zoom_speed })
+            }
+            _ => (false, zoom_speed),
+        };
+        ChartInputAction::ScrollScaled { x, y, delta_x: dx, delta_y: dy, continuous, zoom_gain, pan_gain }
     }
 
     // -------------------------------------------------------------------------
