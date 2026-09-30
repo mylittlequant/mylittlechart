@@ -22,13 +22,17 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
+use mlc_app_layout::ui::admin_tab::{
+    AdminBatchRow, AdminFailure, AdminLedgerRow, AdminLifetimeDone, AdminMinted, AdminOutcome, AdminRequest,
+    AdminUserCard, LifetimeKind,
+};
 use mlc_app_layout::ui::modal_settings::{
     dm_has_older, merge_dm_messages, BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary,
     CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
     DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessagePage, DmMessageUi, DmRequest as UiDmRequest,
     DmUnavailableReason, DmView, ForumListState,
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab, DM_MESSAGE_PAGE_LIMIT,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, DM_MESSAGE_PAGE_LIMIT,
 };
 use mlc_cloud::{
     dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
@@ -388,6 +392,16 @@ struct Inner {
     /// (unrelated request streams) so neither tab's fetch can block or be
     /// blocked by the other's.
     dm_in_flight: bool,
+
+    // ── Admin tab (`/api/staff/*`) ──────────────────────────────────────
+    /// A staff request is in flight (one at a time).
+    admin_busy: bool,
+    /// Bumped on sign-out: an outcome tagged with an older value belongs to
+    /// the identity that left and is dropped.
+    admin_epoch: u64,
+    /// Mailbox: the last settled request, `(epoch it was fired in, outcome)`.
+    /// Applied by `drive_admin`, the only place `&mut ChartApp` is reachable.
+    admin_result: Option<(u64, AdminOutcome)>,
 }
 
 pub struct CloudSession {
@@ -484,6 +498,9 @@ impl CloudSession {
                 dm_peer_keys: std::collections::HashMap::new(),
                 dm_backfill_queue: std::collections::VecDeque::new(),
                 dm_in_flight: false,
+                admin_busy: false,
+                admin_epoch: 0,
+                admin_result: None,
             })),
         }
     }
@@ -561,6 +578,16 @@ impl CloudSession {
         chart.panel_app.user_settings_state.account_provider = String::new();
         chart.panel_app.user_settings_state.account_classes = Vec::new();
         chart.panel_app.user_settings_state.account_roles = Vec::new();
+        // The Admin tab's data (fresh gift codes above all) belongs to the
+        // identity that just left; a request still in flight settles into
+        // nothing.
+        chart.drop_admin_view();
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.admin_epoch = inner.admin_epoch.wrapping_add(1);
+            inner.admin_busy = false;
+            inner.admin_result = None;
+        }
         chart.panel_app.user_settings_state.nick_edit_mode = false;
         chart.panel_app.user_settings_state.nick_edit_focused = false;
         chart.panel_app.user_settings_state.nick_status =
@@ -1599,6 +1626,7 @@ impl CloudSession {
         self.poll_share_ops(chart, now_ms);
         self.poll_edge(chart, now_ms);
         self.poll_friends(chart);
+        self.drive_admin(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
         // `ChartApp::request_clone_share` is the one-shot mailbox a "Clone to
@@ -2227,6 +2255,9 @@ impl CloudSession {
                             // moves `me.classes`/`me.roles` into `forum2`.
                             chart.panel_app.user_settings_state.account_classes = me.classes.clone();
                             chart.panel_app.user_settings_state.account_roles = me.roles.clone();
+                            // The Admin tab's presence in the rail follows
+                            // these roles.
+                            chart.admin_roles_refreshed();
 
                             let ov = &mut chart.panel_app.community_state;
                             ov.forum2.caller_roles = me.roles;
@@ -2861,9 +2892,11 @@ impl CloudSession {
             // this fetch (`UserSettingsState::account_classes`'s own doc) —
             // it must fire even when the Community modal itself is closed,
             // so the tab's line fills the moment it's looked at rather than
-            // only after the Forum tab happens to have been opened once.
-            let account_tab_visible = chart.panel_app.user_settings_state.is_open
-                && chart.panel_app.user_settings_state.active_tab == UserSettingsTab::Account;
+            // only after the Forum tab happens to have been opened once. The
+            // Admin tab's place in the rail comes from the same answer, and
+            // the rail is on screen whichever tab is active, so any open
+            // Settings modal asks (once — `me_fetched_at` gates the refire).
+            let account_tab_visible = chart.panel_app.user_settings_state.is_open;
 
             let ov = &mut chart.panel_app.community_state;
             let forum2_active = ov.is_open && ov.tab == CommunityTab::Forum;
@@ -3858,6 +3891,184 @@ fn mark_unauthorized(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) {
     let mut inner = inner.borrow_mut();
     if mlc_cloud::is_session_revoked_401(inner.token.is_some(), e.is_unauthorized()) {
         inner.unauthorized = true;
+    }
+}
+
+// ── Admin tab (Settings -> Admin, `/api/staff/*`) ────────────────────────
+//
+// `ChartApp` holds the tab's state and one mailbox each way
+// (`take_admin_request` / `apply_admin_outcome`); this is the shell's half:
+// perform the request, classify the failure, hand the outcome back on the
+// next frame. One staff request at a time — the server rate-limits writes per
+// actor, and the tab's own `busy` flag already serialises the buttons.
+
+impl CloudSession {
+    /// Per-frame Admin-tab step: announce that this shell serves the tab,
+    /// apply a settled outcome, then start the next queued request.
+    fn drive_admin(&self, chart: &mut ChartApp) {
+        chart.set_admin_served(true);
+        let settled = self.inner.borrow_mut().admin_result.take();
+        if let Some((epoch, outcome)) = settled {
+            // An outcome from before the last sign-out belongs to nobody now.
+            if epoch == self.inner.borrow().admin_epoch {
+                chart.apply_admin_outcome(outcome);
+            }
+        }
+        if self.inner.borrow().admin_busy {
+            return;
+        }
+        if let Some(request) = chart.take_admin_request() {
+            self.fire_admin(request);
+        }
+    }
+
+    /// Perform one Admin request. A signed-out session settles it at once with
+    /// the sign-in refusal instead of sending anything.
+    fn fire_admin(&self, request: AdminRequest) {
+        let epoch = self.inner.borrow().admin_epoch;
+        if !self.is_signed_in() {
+            let outcome = admin_failed(&request, AdminFailure::SignedOut);
+            self.inner.borrow_mut().admin_result = Some((epoch, outcome));
+            return;
+        }
+        self.inner.borrow_mut().admin_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let outcome = run_admin(&transport, &inner, request).await;
+            let mut guard = inner.borrow_mut();
+            guard.admin_busy = false;
+            guard.admin_result = Some((epoch, outcome));
+        });
+    }
+}
+
+/// The failed [`AdminOutcome`] for `request`.
+fn admin_failed(request: &AdminRequest, failure: AdminFailure) -> AdminOutcome {
+    match request {
+        AdminRequest::Mint { .. } => AdminOutcome::Minted(Err(failure)),
+        AdminRequest::LoadBatches => AdminOutcome::Batches(Err(failure)),
+        AdminRequest::RevokeBatch { .. } => AdminOutcome::BatchRevoked(Err(failure)),
+        AdminRequest::PaidDays { .. } => AdminOutcome::PaidDays(Err(failure)),
+        AdminRequest::LifetimeGrant { .. } => AdminOutcome::LifetimeGranted(Err(failure)),
+        AdminRequest::LifetimeRevoke { .. } => AdminOutcome::LifetimeRevoked(Err(failure)),
+        AdminRequest::LookupUser { .. } => AdminOutcome::User(Err(failure)),
+    }
+}
+
+/// Classify a transport error for the tab (`mlc_cloud::staff_error`), noting a
+/// revoked session on the way.
+fn admin_error(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) -> AdminFailure {
+    use mlc_cloud::StaffError;
+    mark_unauthorized(inner, e);
+    match mlc_cloud::staff_error(e) {
+        StaffError::Forbidden => AdminFailure::Forbidden,
+        StaffError::NotFound => AdminFailure::NotFound,
+        StaffError::RateLimited { retry_after_secs } => AdminFailure::RateLimited { retry_after_secs },
+        StaffError::BadRequest { detail } => AdminFailure::BadRequest { detail },
+        StaffError::SignedOut => AdminFailure::SignedOut,
+        StaffError::Network { detail } => AdminFailure::Network { detail },
+        StaffError::Server { detail } => AdminFailure::Server { detail },
+    }
+}
+
+/// Server counts are never negative; a bad one reads as zero.
+fn admin_count(n: i64) -> u64 {
+    u64::try_from(n).unwrap_or(0)
+}
+
+/// Run one Admin request against `/api/staff/*` and shape the answer for the tab.
+async fn run_admin(
+    transport: &FetchTransport,
+    inner: &Rc<RefCell<Inner>>,
+    request: AdminRequest,
+) -> AdminOutcome {
+    match request {
+        AdminRequest::Mint { days, count, note } => AdminOutcome::Minted(
+            match transport.staff_mint(days, count, &note).await {
+                Ok(m) => Ok(AdminMinted {
+                    batch_id: m.batch_id,
+                    days: m.days,
+                    count: m.count,
+                    note: m.note,
+                    codes: m.codes,
+                }),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LoadBatches => AdminOutcome::Batches(match transport.staff_gift_batches().await {
+            Ok(rows) => Ok(rows
+                .into_iter()
+                .map(|b| AdminBatchRow {
+                    batch_id: b.batch_id,
+                    note: b.note,
+                    days: b.days,
+                    count: b.count,
+                    redeemed: b.redeemed,
+                    revoked: b.revoked,
+                    created_at: b.created_at,
+                    created_by: b.created_by_nick,
+                })
+                .collect()),
+            Err(e) => Err(admin_error(inner, &e)),
+        }),
+        AdminRequest::RevokeBatch { batch_id } => {
+            AdminOutcome::BatchRevoked(match transport.staff_revoke_batch(&batch_id).await {
+                Ok(r) => Ok(admin_count(r.revoked)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::PaidDays { nick, days } => {
+            AdminOutcome::PaidDays(match transport.staff_paid_days(&nick, days).await {
+                Ok(r) => Ok((r.nick, r.paid_until)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::LifetimeGrant { nick, kind, note } => AdminOutcome::LifetimeGranted(
+            match transport.staff_lifetime_grant(&nick, kind.wire(), &note).await {
+                Ok(r) => Ok(AdminLifetimeDone {
+                    nick: r.nick,
+                    kind: LifetimeKind::from_wire(&r.grant).unwrap_or(kind),
+                    created: r.created,
+                }),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LifetimeRevoke { nick, kind } => AdminOutcome::LifetimeRevoked(
+            match transport.staff_lifetime_revoke(&nick, kind.wire()).await {
+                Ok(r) => Ok((
+                    r.nick,
+                    LifetimeKind::from_wire(&r.grant).unwrap_or(kind),
+                    admin_count(r.revoked),
+                )),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LookupUser { nick } => AdminOutcome::User(match transport.staff_user(&nick).await {
+            Ok(u) => Ok(AdminUserCard {
+                nick: u.nick,
+                user_id: u.user_id,
+                paid_until: u.paid_until,
+                lifetime_paid: u.lifetime_paid,
+                lifetime_anon: u.lifetime_anon,
+                ledger: u
+                    .lifetime_grants
+                    .into_iter()
+                    .map(|g| AdminLedgerRow {
+                        grant_id: g.grant_id,
+                        grant: g.grant,
+                        source: g.source,
+                        source_ref: g.source_ref,
+                        created_at: g.created_at,
+                        revoked_at: g.revoked_at,
+                    })
+                    .collect(),
+                quant_tier: u.quant_tier,
+                quant_active_until: u.quant_active_until,
+                roles: u.roles,
+            }),
+            Err(e) => Err(admin_error(inner, &e)),
+        }),
     }
 }
 
