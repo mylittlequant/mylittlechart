@@ -1250,7 +1250,8 @@ mod tests {
     }
 
     fn open_with_plans_and_gate(signed_in: bool, anon_purchase: bool) -> CheckoutState {
-        let mut st = CheckoutState { anon_purchase, ..CheckoutState::default() };
+        let mut st = CheckoutState::default();
+        st.anon_purchase = anon_purchase;
         st.open(signed_in);
         st.take_cmd(NOW);
         st.apply(
@@ -1476,9 +1477,10 @@ mod tests {
         let mut st = paying("paid", None);
         st.click("chip:1", NOW);
         let (ctx, _) = render(&st);
-        // The sentence wraps inside the QR square; both halves are on screen.
-        assert!(has_text(&ctx, "QR code unavailable"));
-        assert!(has_text(&ctx, "Use the address"));
+        // The sentence wraps inside the QR square, on whatever word boundary the
+        // measured widths give; read it back as one sentence.
+        let sentence = ctx.texts.join(" ");
+        assert!(sentence.contains("QR code unavailable. Use the address."), "{:?}", ctx.texts);
         assert!(has_text(&ctx, "TMockAddress"));
         assert!(!ctx.fills.iter().any(|f| f.4 == QR_DARK));
     }
