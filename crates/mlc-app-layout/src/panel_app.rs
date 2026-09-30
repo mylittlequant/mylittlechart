@@ -850,16 +850,14 @@ pub fn chart_toolbar_render_toolbars(
 
             // Screenshot-destination arc, anonymous-sharing ruling
             // (2026-09-05): a signed-out session cannot use `share_chart`
-            // (the live-share link needs a cloud session) — drop the globe
-            // button from the strip entirely rather than draw it disabled,
+            // (the live-share link needs a cloud session) — nor the camcorder
+            // `share_stream` (2026-09-30: same gate, one predicate,
+            // `drop_signed_in_only_controls`) — drop the buttons from the
+            // strip entirely rather than draw it disabled,
             // same `retain`-by-id idiom `split_symbol_compare` uses for
             // `compare` above. `panel_click.rs`'s intercept refusal stays as
             // a backstop for stale rendered state.
-            if !account_signed_in {
-                for section in &mut control_sections {
-                    section.items.retain(|item| item.id() != Some("share_chart"));
-                }
-            }
+            drop_signed_in_only_controls(&mut control_sections, account_signed_in);
 
             let control_config = TcConfig {
                 sections: control_sections,
@@ -3792,6 +3790,54 @@ fn chart_toolbar_find_submenu_items(_tb: &ChartToolbarState, submenu_id: &str, t
 ///
 /// Maps each section and item to the toolbar_core equivalents so that
 /// `draw_toolbar_with_icons` can render the chart's toolbar definitions.
+/// Control-strip buttons that need a cloud session: the globe (`share_chart`,
+/// live-share link) and the camcorder (`share_stream`, Live). One list, one
+/// predicate: a signed-out session gets neither, drawn or disabled.
+const SIGNED_IN_ONLY_CONTROLS: [&str; 2] = ["share_chart", "share_stream"];
+
+fn drop_signed_in_only_controls(sections: &mut [ToolbarSection], account_signed_in: bool) {
+    if account_signed_in {
+        return;
+    }
+    for section in sections {
+        section
+            .items
+            .retain(|item| !matches!(item.id(), Some(id) if SIGNED_IN_ONLY_CONTROLS.contains(&id)));
+    }
+}
+
+#[cfg(test)]
+mod signed_in_only_controls_tests {
+    use super::*;
+
+    fn strip() -> Vec<ToolbarSection> {
+        vec![ToolbarSection::new(
+            ["screenshot", "share_chart", "share_stream", "settings"]
+                .iter()
+                .map(|id| TcToolbarItem::icon_button(id, IconId::new("Video")))
+                .collect(),
+        )]
+    }
+
+    fn ids(sections: &[ToolbarSection]) -> Vec<String> {
+        sections.iter().flat_map(|s| s.items.iter()).filter_map(|i| i.id().map(str::to_string)).collect()
+    }
+
+    #[test]
+    fn a_signed_out_strip_has_neither_the_globe_nor_the_camcorder() {
+        let mut sections = strip();
+        drop_signed_in_only_controls(&mut sections, false);
+        assert_eq!(ids(&sections), ["screenshot", "settings"]);
+    }
+
+    #[test]
+    fn a_signed_in_strip_keeps_both() {
+        let mut sections = strip();
+        drop_signed_in_only_controls(&mut sections, true);
+        assert_eq!(ids(&sections), ["screenshot", "share_chart", "share_stream", "settings"]);
+    }
+}
+
 fn convert_toolbar_def_to_sections(def: &PanelToolbarDef) -> Vec<ToolbarSection> {
     def.sections.iter().map(|section| {
         let items = section.items.iter().map(|item| {
