@@ -195,6 +195,11 @@ pub fn process_event(
                 let (win_w, _) = platform.window_size();
                 chrome::tab_list_hover(chrome_st, x, y, win_w as f64);
             }
+            #[cfg(feature = "cloud")]
+            if chrome_st.account_menu_open {
+                let (win_w, _) = platform.window_size();
+                chrome::account_menu_hover(chrome_st, x, y, win_w as f64);
+            }
 
             let (win_w, win_h) = platform.window_size();
             let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
@@ -552,6 +557,33 @@ pub fn process_event(
                     return;
                 }
 
+                // Account menu under the header avatar: a press on a row does
+                // that row; any press closes it. A press on the account button
+                // itself only closes (the button is the menu's toggle).
+                #[cfg(feature = "cloud")]
+                if chrome_st.account_menu_open {
+                    let (win_w, win_h) = platform.window_size();
+                    let sel = chrome::account_menu_hit_test(chrome_st, x, y, win_w as f64);
+                    let on_account_button =
+                        chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st) == ChromeHit::LoginButton;
+                    chrome_st.account_menu_open = false;
+                    chrome_st.account_menu_hovered = -1;
+                    dirty.chart_dirty = true;
+                    platform.request_redraw();
+                    match sel {
+                        Some(chrome::AccountMenuItem::UpgradePlans) => {
+                            chart.open_checkout();
+                            return;
+                        }
+                        Some(chrome::AccountMenuItem::AccountSettings) => {
+                            open_account_settings(chart);
+                            return;
+                        }
+                        None if on_account_button => return,
+                        None => {}
+                    }
+                }
+
                 if chrome_st.context_menu.open {
                     if let Some(action) = chrome::context_menu_hit_test(&chrome_st.context_menu, x, y) {
                         chrome_st.context_menu.close();
@@ -734,22 +766,23 @@ pub fn process_event(
                             if !skeleton_active {
                                 if chrome_st.account_label.is_some() {
                                     // Signed in: the header's own account
-                                    // button opens straight onto User
-                                    // Settings' Account tab (owner ruling
-                                    // 2026-09-09) — the login overlay's own
-                                    // job (choose a provider, or watch the
-                                    // sign-in complete) is already done.
-                                    // Toggle closed if it is already open
-                                    // there, the same "click again to
-                                    // close" the overlay itself used to give
-                                    // this button.
-                                    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
-                                    let uss = &mut chart.panel_app.user_settings_state;
-                                    if uss.is_open && uss.active_tab == UserSettingsTab::Account {
-                                        uss.close();
+                                    // button opens the account menu (Upgrade /
+                                    // Plans, Account settings) on a shell with
+                                    // a checkout driver; without one it opens
+                                    // straight onto User Settings' Account
+                                    // tab (owner ruling 2026-09-09) — the
+                                    // login overlay's own job (choose a
+                                    // provider, or watch the sign-in
+                                    // complete) is already done. Toggle
+                                    // closed if it is already open there, the
+                                    // same "click again to close" the
+                                    // overlay itself used to give this
+                                    // button.
+                                    if mlc_app_layout::ui::checkout::entry_points_enabled() {
+                                        chrome_st.account_menu_open = true;
+                                        chrome_st.account_menu_hovered = -1;
                                     } else {
-                                        uss.open();
-                                        uss.set_tab(UserSettingsTab::Account);
+                                        toggle_account_settings(chart);
                                     }
                                     // The overlay's own "sign out" stays for
                                     // the signed-out→signed-in TRANSITION
@@ -1331,4 +1364,29 @@ fn indicator_modal_category_tooltip(
         }
     }
     None
+}
+
+/// Open User Settings on the Account tab (the account menu's "Account
+/// settings" row). Never toggles closed: a menu row means "take me there".
+#[cfg(feature = "cloud")]
+fn open_account_settings(chart: &mut mlc_app::ChartApp) {
+    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+    let uss = &mut chart.panel_app.user_settings_state;
+    uss.open();
+    uss.set_tab(UserSettingsTab::Account);
+    chart.panel_app.cloud_login_state.close();
+    chart.panel_app.cloud_overlay_state.close();
+}
+
+/// Open User Settings on the Account tab, or close it if it is already there.
+#[cfg(feature = "cloud")]
+fn toggle_account_settings(chart: &mut mlc_app::ChartApp) {
+    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+    let uss = &mut chart.panel_app.user_settings_state;
+    if uss.is_open && uss.active_tab == UserSettingsTab::Account {
+        uss.close();
+    } else {
+        uss.open();
+        uss.set_tab(UserSettingsTab::Account);
+    }
 }

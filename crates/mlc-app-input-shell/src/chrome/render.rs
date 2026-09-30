@@ -914,6 +914,50 @@ pub fn render_context_menu(
     }
 }
 
+// ── render_account_menu ───────────────────────────────────────────────────────
+
+/// Render the account menu under the header avatar if open: "Upgrade / Plans"
+/// (opens the checkout) and "Account settings". Window-space coordinates,
+/// theme colours from `state.colors` only.
+#[cfg(feature = "cloud")]
+pub fn render_account_menu(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64) {
+    use mlc_core::i18n::{current_language, UserSettingsKey};
+
+    use super::logic::{
+        account_menu_rect, AccountMenuItem, ACCOUNT_MENU_ITEM_HEIGHT, ACCOUNT_MENU_PADDING,
+    };
+
+    if !state.account_menu_open {
+        return;
+    }
+    let (mx, my, mw, mh) = account_menu_rect(state, width);
+    let c = &state.colors;
+
+    ctx.set_fill_color("rgba(0,0,0,0.3)");
+    ctx.fill_rect(mx + 2.0, my + 2.0, mw, mh);
+    ctx.set_fill_color(&c.background);
+    ctx.fill_rect(mx, my, mw, mh);
+    draw_rect_outline(ctx, mx, my, mw, mh, 1.0, &c.separator);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let lang = current_language();
+    for (i, item) in AccountMenuItem::ALL.iter().enumerate() {
+        let row_y = my + ACCOUNT_MENU_PADDING + i as f64 * ACCOUNT_MENU_ITEM_HEIGHT;
+        if state.account_menu_hovered == i as i32 {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(mx + 1.0, row_y, mw - 2.0, ACCOUNT_MENU_ITEM_HEIGHT);
+        }
+        let label = match item {
+            AccountMenuItem::UpgradePlans => UserSettingsKey::AccountMenuUpgrade.get(lang),
+            AccountMenuItem::AccountSettings => UserSettingsKey::AccountMenuSettings.get(lang),
+        };
+        ctx.set_fill_color(if state.account_menu_hovered == i as i32 { &c.icon_hover } else { &c.icon_normal });
+        ctx.fill_text(label, mx + 12.0, row_y + ACCOUNT_MENU_ITEM_HEIGHT / 2.0);
+    }
+}
+
 // ── render_tab_list ───────────────────────────────────────────────────────────
 
 const TAB_LIST_ITEM_HEIGHT: f64 = 26.0;
@@ -927,6 +971,10 @@ pub fn render_tab_list(
     state: &ChromeState,
     width: f64,
 ) {
+    // The account menu shares this overlay pass (both shells already call it
+    // where they paint chrome overlays).
+    #[cfg(feature = "cloud")]
+    render_account_menu(ctx, state, width);
     if !state.tab_list_open {
         return;
     }

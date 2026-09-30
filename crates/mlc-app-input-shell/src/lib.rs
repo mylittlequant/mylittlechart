@@ -15,6 +15,7 @@ pub use chrome::{
     ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeContextMenu, ChromeColors, ChromeState, Tab,
     CHROME_HEIGHT,
     render, render_tooltip, render_tooltip_themed, render_context_menu, render_tab_list, update_tab_widths,
+    AccountMenuItem,
 };
 pub use events::{
     ShellEvent, NormalizedModifiers, MouseBtn, LogicalKey, PhysicalKey, ResizeDir,

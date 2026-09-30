@@ -690,6 +690,70 @@ pub fn tab_list_hover(state: &mut ChromeState, x: f64, y: f64, width: f64) {
     state.tab_list_hovered = tab_list_hit_test(state, x, y, width).map(|i| i as i32).unwrap_or(-1);
 }
 
+// ── Account menu (under the header avatar) ────────────────────────────────────
+
+/// Width of the account menu.
+pub const ACCOUNT_MENU_WIDTH: f64 = 210.0;
+/// Height of one account-menu row.
+pub const ACCOUNT_MENU_ITEM_HEIGHT: f64 = 28.0;
+/// Padding above the first and below the last account-menu row.
+pub const ACCOUNT_MENU_PADDING: f64 = 4.0;
+
+/// What a row of the account menu does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountMenuItem {
+    /// Open the checkout modal on the plans ("Upgrade / Plans").
+    UpgradePlans,
+    /// Open User Settings on the Account tab.
+    AccountSettings,
+}
+
+impl AccountMenuItem {
+    /// The rows, top to bottom.
+    pub const ALL: [AccountMenuItem; 2] = [AccountMenuItem::UpgradePlans, AccountMenuItem::AccountSettings];
+}
+
+/// Geometry of the account menu: `(x, y, w, h)` in window space, right-aligned
+/// with the account button and just below the chrome strip. Cloud builds only:
+/// the account button does not exist without them.
+#[cfg(feature = "cloud")]
+pub fn account_menu_rect(state: &ChromeState, width: f64) -> (f64, f64, f64, f64) {
+    let signed_in = state.account_label.is_some();
+    let bp = ButtonPositions::compute(
+        width, state.flavor, positions_update_w(state), signed_in, positions_account_w(state),
+    );
+    let right = bp.login_left + positions_account_w(state);
+    let h = ACCOUNT_MENU_PADDING * 2.0 + AccountMenuItem::ALL.len() as f64 * ACCOUNT_MENU_ITEM_HEIGHT;
+    let x = (right - ACCOUNT_MENU_WIDTH).max(4.0);
+    (x, CHROME_HEIGHT, ACCOUNT_MENU_WIDTH, h)
+}
+
+/// Which row of the open account menu `(x, y)` is on, if any.
+#[cfg(feature = "cloud")]
+pub fn account_menu_hit_test(state: &ChromeState, x: f64, y: f64, width: f64) -> Option<AccountMenuItem> {
+    if !state.account_menu_open {
+        return None;
+    }
+    let (mx, my, mw, mh) = account_menu_rect(state, width);
+    if x < mx || x >= mx + mw || y < my || y >= my + mh {
+        return None;
+    }
+    let idx = ((y - my - ACCOUNT_MENU_PADDING) / ACCOUNT_MENU_ITEM_HEIGHT).floor();
+    if idx < 0.0 {
+        return None;
+    }
+    AccountMenuItem::ALL.get(idx as usize).copied()
+}
+
+/// Update the hovered row of the open account menu.
+#[cfg(feature = "cloud")]
+pub fn account_menu_hover(state: &mut ChromeState, x: f64, y: f64, width: f64) {
+    state.account_menu_hovered = account_menu_hit_test(state, x, y, width)
+        .and_then(|item| AccountMenuItem::ALL.iter().position(|i| *i == item))
+        .map(|i| i as i32)
+        .unwrap_or(-1);
+}
+
 /// Scroll the strip so tab `idx` is fully visible (used when a tab is
 /// activated from the overflow list — it may be scrolled out of view).
 pub fn scroll_tab_into_view(state: &mut ChromeState, width: f64, idx: usize) {
@@ -811,6 +875,41 @@ mod cloud_tests {
         state.flavor = ChromeFlavor::Native;
         state.update = update;
         state
+    }
+
+    /// The account menu hangs under the avatar: right edge on the account
+    /// button's right edge, first row "Upgrade / Plans", second the account
+    /// settings, and only while open.
+    #[test]
+    fn the_account_menu_sits_under_the_avatar_and_hit_tests_its_rows() {
+        let width = 1200.0;
+        let mut state = native_state(ChromeUpdate::Idle);
+        state.account_label = Some("Al".to_string());
+        state.account_nick_text_w = 12.0;
+
+        assert_eq!(account_menu_hit_test(&state, 1000.0, 40.0, width), None, "closed: nothing to hit");
+
+        state.account_menu_open = true;
+        let (mx, my, mw, mh) = account_menu_rect(&state, width);
+        assert_eq!(my, CHROME_HEIGHT, "just below the chrome strip");
+        let bp = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&state), true, positions_account_w(&state),
+        );
+        let button_right = bp.login_left + positions_account_w(&state);
+        assert!((mx + mw - button_right).abs() < 0.001, "right-aligned with the account button");
+        assert_eq!(mh, ACCOUNT_MENU_PADDING * 2.0 + 2.0 * ACCOUNT_MENU_ITEM_HEIGHT);
+
+        let first = my + ACCOUNT_MENU_PADDING + ACCOUNT_MENU_ITEM_HEIGHT / 2.0;
+        let second = first + ACCOUNT_MENU_ITEM_HEIGHT;
+        assert_eq!(account_menu_hit_test(&state, mx + 10.0, first, width), Some(AccountMenuItem::UpgradePlans));
+        assert_eq!(account_menu_hit_test(&state, mx + 10.0, second, width), Some(AccountMenuItem::AccountSettings));
+        assert_eq!(account_menu_hit_test(&state, mx - 5.0, first, width), None, "left of the menu");
+        assert_eq!(account_menu_hit_test(&state, mx + 10.0, my + mh + 2.0, width), None, "below the menu");
+
+        account_menu_hover(&mut state, mx + 10.0, second, width);
+        assert_eq!(state.account_menu_hovered, 1);
+        account_menu_hover(&mut state, 5.0, 500.0, width);
+        assert_eq!(state.account_menu_hovered, -1);
     }
 
     #[test]

@@ -1149,11 +1149,16 @@ pub enum UserSettingsKey {
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 65;
+    pub const COUNT: usize = 67;
 
     /// Get translation for this key.
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
+
+    // Account menu under the header avatar (top right): the visible way to
+    // the plans (checkout modal) and to Settings -> Account.
+    AccountMenuUpgrade              = 65,
+    AccountMenuSettings             = 66,
         uzor::table_lookup!(&USER_SETTINGS_KEY_TABLE[self as usize], lang as usize)
     }
 }

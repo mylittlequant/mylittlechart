@@ -255,6 +255,11 @@ pub struct ChromeState {
     pub tab_list_open: bool,
     /// Hovered row in the tab-list dropdown (-1 = none).
     pub tab_list_hovered: i32,
+    /// Whether the account menu under the header avatar is open (a signed-in
+    /// account button click opens it; cloud builds only ever set it).
+    pub account_menu_open: bool,
+    /// Hovered row in the account menu (-1 = none).
+    pub account_menu_hovered: i32,
     /// Live tab drag&drop reorder state (armed on tab press, activates past
     /// a 4 px threshold, applies on release).
     pub tab_drag: Option<TabDrag>,
@@ -315,6 +320,8 @@ impl ChromeState {
             tab_scroll:   0.0,
             tab_list_open: false,
             tab_list_hovered: -1,
+            account_menu_open: false,
+            account_menu_hovered: -1,
             tab_drag:     None,
             tooltip:      TooltipState::new(),
             flavor:       ChromeFlavor::default(),

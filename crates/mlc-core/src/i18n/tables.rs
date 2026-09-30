@@ -609,7 +609,7 @@ pub(super) static SETTINGS_KEY_TABLE: [[&str; N_LANG]; 132] = [
 //
 //  Col:  0=En                                        1=Ru                                           2..14=""
 
-pub(super) static USER_SETTINGS_KEY_TABLE: [[&str; N_LANG]; 65] = [
+pub(super) static USER_SETTINGS_KEY_TABLE: [[&str; N_LANG]; 67] = [
     /* 0  Title                  */ [ "User Settings",                     "Настройки пользователя",                    "Configuración de usuario",          "Benutzereinstellungen",                "Paramètres utilisateur",                   "Configurações do usuário",              "用户设置",          "ユーザー設定",            "사용자 설정",         "إعدادات المستخدم",          "Impostazioni utente",           "Kullanıcı Ayarları",              "Ustawienia użytkownika",          "Налаштування користувача",              "उपयोगकर्ता सेटिंग्स"       ],
     /* 1  SectionProfile         */ [ "PROFILE",                           "ПРОФИЛЬ",                                   "PERFIL",                            "PROFIL",                               "PROFIL",                                   "PERFIL",                                "配置文件",          "プロフィール",            "프로필",              "الملف الشخصي",              "PROFILO",                       "PROFİL",                          "PROFIL",                          "ПРОФІЛЬ",                               "प्रोफ़ाइल"                  ],
     /* 2  SectionLanguage        */ [ "LANGUAGE",                          "ЯЗЫК",                                      "IDIOMA",                            "SPRACHE",                              "LANGUE",                                   "IDIOMA",                                "语言",              "言語",                    "언어",                "اللغة",                     "LINGUA",                        "DİL",                             "JĘZYK",                           "МОВА",                                  "भाषा"                       ],
@@ -679,6 +679,8 @@ pub(super) static USER_SETTINGS_KEY_TABLE: [[&str; N_LANG]; 65] = [
 
 // =============================================================================
 // ProfileKey table  (29 variants × N_LANG)
+    /* 65  AccountMenuUpgrade     */ [ "Upgrade / Plans", "Тарифы / Улучшить", "Mejorar / Planes", "Upgrade / Tarife", "Mise à niveau / Offres", "Upgrade / Planos", "升级 / 套餐", "アップグレード / プラン", "업그레이드 / 요금제", "ترقية / الخطط", "Upgrade / Piani", "Yükselt / Planlar", "Ulepsz / Plany", "Покращити / Тарифи", "अपग्रेड / प्लान" ],
+    /* 66  AccountMenuSettings    */ [ "Account settings", "Настройки аккаунта", "Ajustes de cuenta", "Kontoeinstellungen", "Paramètres du compte", "Configurações da conta", "账户设置", "アカウント設定", "계정 설정", "إعدادات الحساب", "Impostazioni account", "Hesap ayarları", "Ustawienia konta", "Налаштування облікового запису", "खाता सेटिंग्स" ],
 // =============================================================================
 //
 //  Col:  0=En                                        1=Ru                                           2..14=""

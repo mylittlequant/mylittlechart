@@ -321,7 +321,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
         // Render chrome context menu overlay. Suppressed while capturing a
         // screenshot (screenshot-is-chart-only arc, 2026-09-05) — a
         // right-click tab-strip menu can open down into the chart rect.
-        if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
+        if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open || pw.chrome_state.account_menu_open) {
             let mut overlay_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_context_menu(&mut overlay_ctx, &pw.chrome_state.context_menu, &pw.chrome_state.colors);
             chrome::render_tab_list(&mut overlay_ctx, &pw.chrome_state, width as f64);
@@ -434,7 +434,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
-                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open || pw.chrome_state.account_menu_open) {
                     let mut overlay_ctx = mlc_app_render_context_instanced::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -556,7 +556,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
-                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open || pw.chrome_state.account_menu_open) {
                     chrome::render_context_menu(
                         &mut cpu_ctx,
                         &pw.chrome_state.context_menu,
@@ -643,7 +643,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
-                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open || pw.chrome_state.account_menu_open) {
                     chrome::render_context_menu(
                         &mut skia_ctx,
                         &pw.chrome_state.context_menu,
@@ -720,7 +720,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
-                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open || pw.chrome_state.account_menu_open) {
                     chrome::render_context_menu(
                         &mut hybrid_ctx,
                         &pw.chrome_state.context_menu,
