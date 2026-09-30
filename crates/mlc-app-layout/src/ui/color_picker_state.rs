@@ -95,15 +95,21 @@ impl HsvColor {
 
 /// Apply opacity to a hex color string
 /// Returns rgba() format string for CSS compatibility
-pub fn apply_opacity_to_hex(hex: &str, opacity: f64) -> String {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() < 6 {
-        return format!("rgba(0,0,0,{})", opacity);
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0);
+///
+/// `color` may be any CSS color string the chart stores (`#RRGGBB`,
+/// `#RRGGBBAA`, `rgb()`, `rgba()`): only its RGB is used, so re-applying an
+/// opacity to an already translucent `rgba(..)` color keeps the color (it used
+/// to slice the string as hex digits and lose it).
+pub fn apply_opacity_to_hex(color: &str, opacity: f64) -> String {
+    let (r, g, b, _) = mlc_core::parse_css_color(color);
     format!("rgba({},{},{},{})", r, g, b, opacity)
+}
+
+/// Split a stored chart color into the opaque `#rrggbb` the picker edits and
+/// its alpha (`0.0..=1.0`), so opening the picker on a translucent color shows
+/// that color at its real opacity instead of resetting it to 100%.
+pub fn split_color_alpha(color: &str) -> (String, f64) {
+    (mlc_core::with_alpha(color, 1.0), mlc_core::color_alpha(color))
 }
 
 /// Convert HSV to RGB
@@ -387,10 +393,20 @@ impl ColorPickerState {
     pub fn open_l1(&mut self, x: f64, y: f64, color: Option<&str>) {
         self.level = ColorPickerLevel::L1;
         self.origin = (x, y);
-        self.opacity = 1.0; // Reset opacity to 100% when opening
+        self.opacity = 1.0;
         if let Some(c) = color {
-            self.current_color = c.to_string();
+            self.load_color(c);
         }
+    }
+
+    /// Take a stored color: RGB into `current_color`, its alpha into
+    /// `opacity`. Changing the opacity afterwards can then only ever change
+    /// the alpha of the SAME color.
+    fn load_color(&mut self, color: &str) {
+        let (hex, alpha) = split_color_alpha(color);
+        self.current_color = hex;
+        self.opacity = alpha;
+        self.previous_opacity = None;
     }
 
     /// Transition to L2 (from L1's "+" button)
@@ -759,9 +775,9 @@ impl ColorPickerState {
 
         self.level = ColorPickerLevel::L1;
         self.origin = (x, y);
-        self.opacity = 1.0; // Reset opacity to 100% when opening
+        self.opacity = 1.0;
         if let Some(c) = color {
-            self.current_color = c.to_string();
+            self.load_color(c);
         }
     }
 
@@ -774,5 +790,47 @@ impl ColorPickerState {
         // Keep current origin but clamp to window bounds
         self.origin.0 = self.origin.0.clamp(margin, (window_w - popup_w - margin).max(margin));
         self.origin.1 = self.origin.1.clamp(margin, (window_h - popup_h - margin).max(margin));
+    }
+}
+
+#[cfg(test)]
+mod opacity_tests {
+    use super::*;
+
+    /// Tester report: in the candle style settings, changing the opacity reset
+    /// the color to the default green (the user's grey became green). The
+    /// picker opens on the stored color; opacity may only touch alpha.
+    #[test]
+    fn changing_opacity_keeps_the_rgb_of_the_opened_color() {
+        let mut picker = ColorPickerState::new();
+        picker.open_l1(0.0, 0.0, Some("#808080"));
+        picker.set_opacity(0.4);
+        assert_eq!(picker.get_final_color(), "rgba(128,128,128,0.4)");
+        picker.set_opacity(0.9);
+        assert_eq!(picker.get_final_color(), "rgba(128,128,128,0.9)");
+        picker.set_opacity(1.0);
+        assert_eq!(picker.get_final_color(), "#808080");
+    }
+
+    #[test]
+    fn reopening_on_a_translucent_color_keeps_its_rgb_and_shows_its_alpha() {
+        let mut picker = ColorPickerState::new();
+        picker.open_l1(0.0, 0.0, Some("rgba(128,128,128,0.4)"));
+        assert_eq!(picker.current_color, "#808080");
+        assert!((picker.get_opacity() - 0.4).abs() < 0.01, "the opacity is the color's own alpha");
+        picker.set_opacity(0.7);
+        assert_eq!(picker.get_final_color(), "rgba(128,128,128,0.7)", "grey stays grey");
+
+        let mut smart = ColorPickerState::new();
+        smart.open_l1_smart(10.0, 10.0, 24.0, 24.0, 1280.0, 800.0, Some("#80808066"));
+        assert_eq!(smart.current_color, "#808080");
+        smart.set_opacity(0.25);
+        assert_eq!(smart.get_final_color(), "rgba(128,128,128,0.25)");
+    }
+
+    #[test]
+    fn applying_an_opacity_to_an_rgba_string_keeps_the_color() {
+        assert_eq!(apply_opacity_to_hex("rgba(38,166,154,0.5)", 0.8), "rgba(38,166,154,0.8)");
+        assert_eq!(apply_opacity_to_hex("#26a69a", 0.5), "rgba(38,166,154,0.5)");
     }
 }

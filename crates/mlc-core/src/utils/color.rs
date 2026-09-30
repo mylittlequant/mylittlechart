@@ -102,6 +102,27 @@ pub fn apply_opacity(color: &str, opacity: f64) -> String {
     format!("#{:02X}{:02X}{:02X}{:02X}", r, g, b, alpha)
 }
 
+/// Alpha channel of any supported CSS color, `0.0..=1.0` (`1.0` for a color
+/// without one).
+pub fn color_alpha(color: &str) -> f64 {
+    let (_, _, _, a) = parse_css_color(color);
+    f64::from(a) / 255.0
+}
+
+/// `color` with ONLY its alpha replaced: RGB is kept exactly, whatever format
+/// it came in (`#RGB`, `#RRGGBB`, `#RRGGBBAA`, `rgb()`, `rgba()`). An opaque
+/// result is `#RRGGBB`; anything else is `rgba(r,g,b,a)` with `a` rounded to
+/// two decimals (the shape every chart color string already takes).
+pub fn with_alpha(color: &str, alpha: f64) -> String {
+    let (r, g, b, _) = parse_css_color(color);
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha >= 0.995 {
+        format!("#{:02x}{:02x}{:02x}", r, g, b)
+    } else {
+        format!("rgba({},{},{},{})", r, g, b, (alpha * 100.0).round() / 100.0)
+    }
+}
+
 /// Linear sRGB mix of two CSS colors: `t = 0.0` → pure `a`, `t = 1.0` →
 /// pure `b`. Alpha channels mix too. The skin-token system derives every
 /// dimmed/hover/border tier and the volume-intensity bar gradients
@@ -133,6 +154,25 @@ pub fn rgba_to_hex(r: u8, g: u8, b: u8, a: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_alpha_changes_only_the_alpha_and_keeps_the_rgb() {
+        // The tester's grey stays grey at any opacity, in any input format.
+        assert_eq!(with_alpha("#808080", 0.4), "rgba(128,128,128,0.4)");
+        assert_eq!(with_alpha("rgba(128,128,128,0.4)", 0.7), "rgba(128,128,128,0.7)");
+        assert_eq!(with_alpha("#80808066", 0.25), "rgba(128,128,128,0.25)");
+        assert_eq!(with_alpha("rgb(128, 128, 128)", 1.0), "#808080");
+        assert_eq!(with_alpha("rgba(128,128,128,0.4)", 1.0), "#808080");
+        assert_eq!(with_alpha("#26a69a", 0.0), "rgba(38,166,154,0)");
+    }
+
+    #[test]
+    fn color_alpha_reads_every_format() {
+        assert_eq!(color_alpha("#808080"), 1.0);
+        assert!((color_alpha("rgba(128,128,128,0.4)") - 0.4).abs() < 0.01);
+        assert!((color_alpha("#80808080") - 0.5).abs() < 0.01);
+        assert_eq!(color_alpha("transparent"), 0.0);
+    }
 
     #[test]
     fn test_hex_6() {
