@@ -174,6 +174,13 @@ pub struct ChartContainer {
     /// Cached sub-pane overlay button rects from the last render frame.
     /// Used by hit tester to detect button clicks.
     pub sub_pane_overlay_results: Vec<SubPaneOverlayResult>,
+    /// Main pane's own overlay button UI state (hover-triggered visibility).
+    /// Mirrors a single entry of `sub_pane_overlay_states` but for the main
+    /// chart slot, which has no indicator instance identity of its own.
+    pub main_pane_overlay_state: SubPaneOverlayState,
+    /// Cached main-pane overlay button rect from the last render frame.
+    /// Used by hit tester to detect Expand/Restore clicks on the main chart.
+    pub main_pane_overlay_result: Option<SubPaneOverlayResult>,
 
     // === Interaction State ===
     /// Crosshair state (position, visibility)
@@ -450,6 +457,8 @@ impl ChartContainer {
             sub_pane_y_state: HashMap::new(),
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
+            main_pane_overlay_state: SubPaneOverlayState::default(),
+            main_pane_overlay_result: None,
             // Interaction
             crosshair: Crosshair::default(),
             follow_remote_view: false,
@@ -1250,6 +1259,8 @@ impl ChartContainer {
             sub_pane_y_state: HashMap::new(),
             sub_pane_overlay_states: Vec::new(),
             sub_pane_overlay_results: Vec::new(),
+            main_pane_overlay_state: SubPaneOverlayState::default(),
+            main_pane_overlay_result: None,
 
             crosshair: {
                 let mut ch = self.crosshair;
@@ -2867,5 +2878,22 @@ mod viewport_snap_tests {
         let mut c = container_with(0.0, 8.0, 0);
         c.ensure_min_bar_spacing(120.0);
         assert_eq!(c.viewport.bar_spacing, 120.0);
+    }
+}
+
+#[cfg(test)]
+mod pane_expand_defaults_tests {
+    //! Coverage for the pane-expand arc's two new `ChartContainer` fields
+    //! (docs/mlc/plans/pane-expand-2026-09-25.md, Step 4): a freshly
+    //! constructed container has no main-pane overlay visible and no cached
+    //! hit-test rect, same as a sub-pane's overlay state/result default.
+    use super::*;
+
+    #[test]
+    fn new_container_has_default_main_pane_overlay_state_and_result() {
+        let c = ChartContainer::new("BTCUSDT", Timeframe::m1());
+        assert!(!c.main_pane_overlay_state.visible);
+        assert_eq!(c.main_pane_overlay_state.hovered_button, None);
+        assert!(c.main_pane_overlay_result.is_none());
     }
 }

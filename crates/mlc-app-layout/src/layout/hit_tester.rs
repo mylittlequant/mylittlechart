@@ -66,12 +66,15 @@ pub struct ExtendedLayoutHitTester<'a> {
     pub layout: &'a ExtendedFrameLayout,
     /// Optional sub-pane overlay results for button hit testing.
     pub overlay_results: Option<&'a [SubPaneOverlayResult]>,
+    /// Optional main-pane overlay result (its own Expand/Restore button) for
+    /// button hit testing.
+    pub main_overlay_result: Option<&'a SubPaneOverlayResult>,
 }
 
 impl<'a> ExtendedLayoutHitTester<'a> {
     /// Create a new extended hit tester
     pub fn new(layout: &'a ExtendedFrameLayout) -> Self {
-        Self { layout, overlay_results: None }
+        Self { layout, overlay_results: None, main_overlay_result: None }
     }
 
     /// Attach sub-pane overlay results for button hit testing.
@@ -79,11 +82,36 @@ impl<'a> ExtendedLayoutHitTester<'a> {
         self.overlay_results = Some(overlays);
         self
     }
+
+    /// Attach the main pane's own overlay result for button hit testing.
+    pub fn with_main_overlay(mut self, overlay: &'a SubPaneOverlayResult) -> Self {
+        self.main_overlay_result = Some(overlay);
+        self
+    }
 }
 
 impl<'a> ChartHitTester for ExtendedLayoutHitTester<'a> {
     fn hit_test(&self, x: f64, y: f64) -> HitResult {
-        // 0. Check sub-pane overlay buttons (highest priority — small precise targets)
+        // 0a. Check the main pane's own overlay button (same priority tier
+        // as the sub-pane overlay buttons below — small precise target).
+        if let Some(overlay) = self.main_overlay_result {
+            if let Some(ref rect) = overlay.expand_rect {
+                if rect.contains(x, y) {
+                    return HitResult::MainPaneOverlayButton {
+                        button: SubPaneButton::Expand,
+                    };
+                }
+            }
+            if let Some(ref rect) = overlay.restore_rect {
+                if rect.contains(x, y) {
+                    return HitResult::MainPaneOverlayButton {
+                        button: SubPaneButton::Restore,
+                    };
+                }
+            }
+        }
+
+        // 0b. Check sub-pane overlay buttons (highest priority — small precise targets)
         if let Some(overlays) = self.overlay_results {
             for (idx, overlay) in overlays.iter().enumerate() {
                 if let Some(ref rect) = overlay.delete_rect {
@@ -325,5 +353,32 @@ mod tests {
                 HitResult::SubPaneChart { pane_index: 1 }
             );
         }
+    }
+
+    #[test]
+    fn test_extended_hit_tester_main_overlay_button() {
+        use crate::layout::Margins;
+        use crate::layout::LayoutRect;
+
+        let margins = Margins::zero();
+        let layout = ExtendedFrameLayout::compute(
+            800.0, 600.0, &margins,
+            &[1], // One sub-pane, so the main overlay button is meaningful
+            100.0, 1.0,
+        );
+        let main_overlay = SubPaneOverlayResult {
+            expand_rect: Some(LayoutRect::new(700.0, 10.0, 18.0, 18.0)),
+            ..Default::default()
+        };
+
+        let tester = ExtendedLayoutHitTester::new(&layout).with_main_overlay(&main_overlay);
+
+        assert_eq!(
+            tester.hit_test(705.0, 15.0),
+            HitResult::MainPaneOverlayButton { button: SubPaneButton::Expand }
+        );
+        // Outside the button rect still resolves to the ordinary chart hit.
+        let main_chart_y = layout.main_chart.chart.y + 50.0;
+        assert_eq!(tester.hit_test(100.0, main_chart_y), HitResult::Chart);
     }
 }

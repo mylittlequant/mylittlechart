@@ -1356,16 +1356,17 @@ pub struct ChartApp {
     /// Format: `window_id → HashSet<instance_id>`.  Cleared after applied.
     pub(crate) pending_sub_pane_hidden: std::collections::HashMap<u64, std::collections::HashSet<u64>>,
 
-    /// Per-window maximized sub-pane state.
+    /// Per-window exclusively-expanded pane state.
     ///
-    /// When a sub-pane is expanded (maximized), this map stores:
-    /// - key: `window.id.0` (ChartId)
-    /// - value: `(maximized_instance_id, pre_maximize_proportions)`
-    ///
-    /// The pre-maximize proportions are the `inner_docking` root proportions
-    /// before the maximize, used to restore the original layout on Restore.
+    /// Key: `window.id.0` (ChartId). Value: which pane (main or a sub-pane
+    /// by instance_id) is exclusively expanded — every other pane in that
+    /// container collapses to a header strip (`ExtendedFrameLayout::
+    /// pane_expanded`). Restoring exact ratios needs no saved-proportions
+    /// side channel: `inner_docking`'s real tree proportions are never
+    /// mutated while a pane is expanded (pane_expanded is a render-time-only
+    /// override), so removing the entry snaps back automatically.
     /// Runtime-only — not persisted to disk.
-    pub(crate) maximized_sub_panes: std::collections::HashMap<u64, (u64, Vec<f64>)>,
+    pub(crate) expanded_pane: std::collections::HashMap<u64, mlc_core::state::modal_data::ExpandedPane>,
 
     /// Agent session manager — owns PTY and pipe sessions.
     ///
@@ -2093,6 +2094,12 @@ pub struct RenderOutput {
     /// Produced each frame by `render_full_chart_panel`.  Applied in
     /// `apply_render_output` so the hit tester can read button rects next frame.
     pub sub_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)>,
+    /// Main-pane overlay result writebacks: `(leaf_id, overlay_result)`.
+    ///
+    /// Produced each frame by `render_full_chart_panel`.  Applied in
+    /// `apply_render_output` so the hit tester can read the main pane's own
+    /// Expand/Restore button rect next frame.
+    pub main_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Option<mlc_core::SubPaneOverlayResult>)>,
     /// Per-leaf loading-spinner geometry: `(leaf_id, (cx, cy, radius))` for
     /// every panel that rendered the loading skeleton (bars empty + no
     /// data_error) this frame. Empty when nothing is loading.
@@ -3679,7 +3686,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
-            maximized_sub_panes: std::collections::HashMap::new(),
+            expanded_pane: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
@@ -4088,7 +4095,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
-            maximized_sub_panes: std::collections::HashMap::new(),
+            expanded_pane: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
@@ -4704,7 +4711,7 @@ impl ChartApp {
             pending_sub_pane_above_main: std::collections::HashMap::new(),
             pending_sub_pane_order: std::collections::HashMap::new(),
             pending_sub_pane_hidden: std::collections::HashMap::new(),
-            maximized_sub_panes: std::collections::HashMap::new(),
+            expanded_pane: std::collections::HashMap::new(),
             live_preset_cache: std::collections::HashMap::new(),
             load_state: crate::persistence::LoadState::default(),
             agent: agent::AgentSessionManager::default(),
@@ -7035,6 +7042,8 @@ impl ChartApp {
         let mut out_sub_pane_range_writebacks: Vec<(mlc_core::LeafId, usize, f64, f64)> = Vec::new();
         // Sub-pane overlay result writebacks: cached per-window for hit testing.
         let mut out_sub_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)> = Vec::new();
+        // Main-pane overlay result writebacks: cached per-window for hit testing.
+        let mut out_main_pane_overlay_writebacks: Vec<(mlc_core::LeafId, Option<mlc_core::SubPaneOverlayResult>)> = Vec::new();
         // Loading-spinner geometry per leaf for the host renderer to composite as overlay.
         let mut out_loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))> = Vec::new();
 
@@ -7132,6 +7141,7 @@ impl ChartApp {
 
             let mut sub_pane_writebacks: Vec<(mlc_core::LeafId, Vec<(usize, f64, f64)>)> = Vec::new();
             let mut overlay_writebacks: Vec<(mlc_core::LeafId, Vec<mlc_core::SubPaneOverlayResult>)> = Vec::new();
+            let mut main_overlay_writebacks: Vec<(mlc_core::LeafId, Option<mlc_core::SubPaneOverlayResult>)> = Vec::new();
             // Collect rendered scale-corner zones per leaf so handle_canvas_click
             // can hit-test them in split mode (avoids the empty-default bug).
             let mut split_corner_zones: Vec<(mlc_core::LeafId, ScaleCornerHitZones)> = Vec::new();
@@ -7322,9 +7332,8 @@ impl ChartApp {
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
                     data_error: window.data_error.as_deref(),
-                    maximized_sub_pane_id: self.maximized_sub_panes
-                        .get(&window.id.0)
-                        .map(|(iid, _)| *iid),
+                    expanded_pane: self.expanded_pane.get(&window.id.0).copied(),
+                    main_pane_overlay_state: &window.main_pane_overlay_state,
                     above_main_ids: Some(&window.sub_pane_above_main),
                 };
 
@@ -7336,6 +7345,7 @@ impl ChartApp {
                 }
                 // Store overlay results for next frame's hit testing.
                 overlay_writebacks.push((leaf_id, render_result.sub_pane_overlays));
+                main_overlay_writebacks.push((leaf_id, render_result.main_pane_overlay));
                 if let Some(geom) = render_result.loading_spinner {
                     out_loading_spinners.push((leaf_id, geom));
                 }
@@ -7389,16 +7399,26 @@ impl ChartApp {
                         .filter(|(_, id)| visible_set.contains(id))
                         .map(|(i, &id)| (id, all_props.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
-                    // Mirror render_full_chart_panel's maximize override: when a
-                    // sub-pane is maximized it covers the whole container, the
-                    // main chart is zero-height, and chart-anchored overlays
-                    // (leaf tab, alert bells) must not poke through.
-                    let maximized_iid = leaf_chart_id
-                        .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
-                        .map(|(iid, _)| *iid)
-                        .filter(|iid| sub_pane_ids.contains(iid));
-                    let extended = if let Some(miid) = maximized_iid {
-                        mlc_core::ExtendedFrameLayout::maximized(&leaf_rect, miid, &window.scale_settings)
+                    // Mirror render_full_chart_panel's pane-expand override:
+                    // when a pane is exclusively expanded, every other slot
+                    // (main chart or sub-pane) collapses to a header strip,
+                    // and chart-anchored overlays (leaf tab, alert bells)
+                    // must not poke through the collapsed main chart.
+                    let expanded = leaf_chart_id
+                        .and_then(|cid| self.expanded_pane.get(&cid.0).copied())
+                        .filter(|e| match e {
+                            mlc_core::state::modal_data::ExpandedPane::Main => true,
+                            mlc_core::state::modal_data::ExpandedPane::SubPane(iid) => sub_pane_ids.contains(iid),
+                        });
+                    let extended = if let Some(exp) = expanded {
+                        mlc_core::ExtendedFrameLayout::pane_expanded(
+                            &leaf_rect,
+                            exp,
+                            &sub_pane_ids,
+                            &window.scale_settings,
+                            mlc_core::types::PANE_HEADER_STRIP_HEIGHT,
+                            &window.sub_pane_above_main,
+                        )
                     } else {
                         mlc_core::ExtendedFrameLayout::from_proportions(
                             &leaf_rect,
@@ -7410,6 +7430,12 @@ impl ChartApp {
                             &window.sub_pane_above_main,
                         )
                     };
+                    // Main chart is collapsed (not the expanded slot) when
+                    // some OTHER pane (a sub-pane) is the one expanded.
+                    let main_collapsed = matches!(
+                        expanded,
+                        Some(mlc_core::state::modal_data::ExpandedPane::SubPane(_))
+                    );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
                         x: main.chart.x,
@@ -7428,8 +7454,8 @@ impl ChartApp {
 
                     // S2.7.1: pass split_symbol/exchange/account_type from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
-                    // (maximized sub-pane covers the container).
-                    if chart_area.height >= 1.0 {
+                    // (some other pane is the one exclusively expanded).
+                    if chart_area.height >= 1.0 && !main_collapsed {
                         let split_bars_vec: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_tag_id).to_vec();
                         let split_bell_drawings_guard = self.core.drawings();
                         let split_bell_prims = split_bell_drawings_guard.primitives(window.current_tag_id);
@@ -7459,7 +7485,7 @@ impl ChartApp {
                         }
                     }
                     main_chart_y = extended.main_chart.chart.y;
-                    leaf_tab_visible = extended.main_chart.chart.height >= 1.0;
+                    leaf_tab_visible = extended.main_chart.chart.height >= 1.0 && !main_collapsed;
 
                     // chart:price_scale, chart:time_scale, chart:sub_sep, chart:sub_price_scale
                     // registrations removed — chart is now a BlackboxPanel and its
@@ -7516,7 +7542,10 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:body", leaf_id.0),
                             uzor::Rect::new(rx, ry, rw, rh),
-                            Sense::CLICK,
+                            // DOUBLE_CLICK too: a double-click on the leaf
+                            // title toggles grid-level maximize (owner item
+                            // 4) — on_double_click's `leaf_tab:` branch.
+                            Sense::CLICK | Sense::DOUBLE_CLICK,
                         );
                     }
                     let [dx, dy, dw, dh] = dots_rect;
@@ -7716,6 +7745,7 @@ impl ChartApp {
 
             // Collect multi-panel overlay writebacks.
             out_sub_pane_overlay_writebacks.extend(overlay_writebacks);
+            out_main_pane_overlay_writebacks.extend(main_overlay_writebacks);
 
             // Render separators between split leaves.
             // thickness_for_state() returns 2.0 for idle, 4.0 for hover/dragging.
@@ -7849,6 +7879,7 @@ impl ChartApp {
 
             let mut single_sub_pane_ranges: Vec<(usize, f64, f64)> = Vec::new();
             let mut single_sub_pane_overlays: Vec<mlc_core::SubPaneOverlayResult> = Vec::new();
+            let mut single_main_pane_overlay: Option<mlc_core::SubPaneOverlayResult> = None;
             let mut single_loading_spinner: Option<(f64, f64, f64)> = None;
 
             // S2.7.1: extract single-window instrument values from branch_meta tuple.
@@ -7962,9 +7993,8 @@ impl ChartApp {
                     inner_proportions: &inner_proportions_vec,
                     inner_sub_instance_ids: &inner_sub_ids_vec,
                     data_error: window.data_error.as_deref(),
-                    maximized_sub_pane_id: self.maximized_sub_panes
-                        .get(&window.id.0)
-                        .map(|(iid, _)| *iid),
+                    expanded_pane: self.expanded_pane.get(&window.id.0).copied(),
+                    main_pane_overlay_state: &window.main_pane_overlay_state,
                     above_main_ids: Some(&window.sub_pane_above_main),
                 };
 
@@ -7980,6 +8010,7 @@ impl ChartApp {
                 // Stash ranges and overlay results for writeback after the immutable borrow on `window` ends.
                 single_sub_pane_ranges = render_result.sub_pane_ranges;
                 single_sub_pane_overlays = render_result.sub_pane_overlays;
+                single_main_pane_overlay = render_result.main_pane_overlay;
                 single_loading_spinner = render_result.loading_spinner;
                 let corner_zones_ret = render_result.corner_zones;
 
@@ -8027,15 +8058,24 @@ impl ChartApp {
                         .filter(|(_, id)| visible_set.contains(id))
                         .map(|(i, &id)| (id, all_props2.get(i + 1).copied().unwrap_or(0.0)))
                         .unzip();
-                    // Mirror render_full_chart_panel's maximize override (see the
-                    // split-mode twin above): chart-anchored overlays must not
-                    // poke through a maximized sub-pane.
-                    let maximized_iid = self.panel_app.panel_grid.active_container_id()
-                        .and_then(|cid| self.maximized_sub_panes.get(&cid.0))
-                        .map(|(iid, _)| *iid)
-                        .filter(|iid| sub_pane_ids.contains(iid));
-                    let extended = if let Some(miid) = maximized_iid {
-                        mlc_core::ExtendedFrameLayout::maximized(&chart_render_rect, miid, &window.scale_settings)
+                    // Mirror render_full_chart_panel's pane-expand override
+                    // (see the split-mode twin above): chart-anchored
+                    // overlays must not poke through a collapsed main chart.
+                    let expanded = self.panel_app.panel_grid.active_container_id()
+                        .and_then(|cid| self.expanded_pane.get(&cid.0).copied())
+                        .filter(|e| match e {
+                            mlc_core::state::modal_data::ExpandedPane::Main => true,
+                            mlc_core::state::modal_data::ExpandedPane::SubPane(iid) => sub_pane_ids.contains(iid),
+                        });
+                    let extended = if let Some(exp) = expanded {
+                        mlc_core::ExtendedFrameLayout::pane_expanded(
+                            &chart_render_rect,
+                            exp,
+                            &sub_pane_ids,
+                            &window.scale_settings,
+                            mlc_core::types::PANE_HEADER_STRIP_HEIGHT,
+                            &window.sub_pane_above_main,
+                        )
                     } else {
                         mlc_core::ExtendedFrameLayout::from_proportions(
                             &chart_render_rect,
@@ -8047,6 +8087,10 @@ impl ChartApp {
                             &window.sub_pane_above_main,
                         )
                     };
+                    let main_collapsed = matches!(
+                        expanded,
+                        Some(mlc_core::state::modal_data::ExpandedPane::SubPane(_))
+                    );
                     let main = &extended.main_chart;
                     let chart_area = LayoutRect {
                         x: main.chart.x,
@@ -8064,8 +8108,8 @@ impl ChartApp {
 
                     // S2.7.1: use single_sym/exch/at from branch_meta.
                     // Skip chart-anchored bells when the main chart is collapsed
-                    // (maximized sub-pane covers the container).
-                    if chart_area.height >= 1.0 {
+                    // (some other pane is the one exclusively expanded).
+                    if chart_area.height >= 1.0 && !main_collapsed {
                         let single_bars_vec2: Vec<mlc_core::Bar> = self.core.bubbles().bars(window.current_tag_id).to_vec();
                         let single_bell_drawings_guard = self.core.drawings();
                         let single_bell_prims = single_bell_drawings_guard.primitives(window.current_tag_id);
@@ -8096,7 +8140,7 @@ impl ChartApp {
                         }
                     }
                     main_chart_y_single = extended.main_chart.chart.y;
-                    single_leaf_tab_visible = extended.main_chart.chart.height >= 1.0;
+                    single_leaf_tab_visible = extended.main_chart.chart.height >= 1.0 && !main_collapsed;
                 }
 
                 corner_zones_ret
@@ -8145,6 +8189,7 @@ impl ChartApp {
                     .active_leaf()
                     .unwrap_or(mlc_core::LeafId(0));
                 out_sub_pane_overlay_writebacks.push((single_leaf_id, single_sub_pane_overlays));
+                out_main_pane_overlay_writebacks.push((single_leaf_id, single_main_pane_overlay));
                 if let Some(geom) = single_loading_spinner {
                     out_loading_spinners.push((single_leaf_id, geom));
                 }
@@ -8208,7 +8253,10 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:body", single_leaf_id.0),
                             uzor::Rect::new(rx, ry, rw, rh),
-                            Sense::CLICK,
+                            // DOUBLE_CLICK too: a double-click on the leaf
+                            // title toggles grid-level maximize (owner item
+                            // 4) — on_double_click's `leaf_tab:` branch.
+                            Sense::CLICK | Sense::DOUBLE_CLICK,
                         );
                     }
                     let [dx, dy, dw, dh] = dots_rect;
@@ -9066,6 +9114,7 @@ impl ChartApp {
                                     self.panel_app.panel_grid.containers_mut().get_mut(&aux_cid)
                                 {
                                     w.sub_pane_overlay_results = out.sub_pane_overlays;
+                                    w.main_pane_overlay_result = out.main_pane_overlay;
                                 }
                             }
                         }
@@ -9515,6 +9564,7 @@ impl ChartApp {
             open_submenu_update: out_open_submenu_update,
             sub_pane_range_writebacks: out_sub_pane_range_writebacks,
             sub_pane_overlay_writebacks: out_sub_pane_overlay_writebacks,
+            main_pane_overlay_writebacks: out_main_pane_overlay_writebacks,
             loading_spinners: out_loading_spinners,
         }
     }
@@ -9602,6 +9652,12 @@ impl ChartApp {
         for (leaf_id, overlays) in output.sub_pane_overlay_writebacks {
             if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
                 window.sub_pane_overlay_results = overlays;
+            }
+        }
+        // Write back the main pane's own overlay button rect.
+        for (leaf_id, overlay) in output.main_pane_overlay_writebacks {
+            if let Some(window) = self.panel_app.panel_grid.container_for_leaf_mut(leaf_id) {
+                window.main_pane_overlay_result = overlay;
             }
         }
         // Loading-spinner geometry for this frame, read by the host renderer.

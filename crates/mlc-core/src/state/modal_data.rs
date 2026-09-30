@@ -34,6 +34,17 @@ pub enum SubPaneButton {
     IndicatorDelete,
 }
 
+/// Which pane is exclusively expanded inside a chart container's own grid.
+/// Mutually exclusive with sub-pane proportional layout; `None`-equivalent
+/// is simply "absent from `ChartApp::expanded_pane`".
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ExpandedPane {
+    /// The main chart is expanded; every sub-pane collapses to a header strip.
+    Main,
+    /// Indicator instance_id of the expanded sub-pane.
+    SubPane(u64),
+}
+
 /// Per-sub-pane overlay button UI state (hover triggered visibility).
 ///
 /// One instance lives in `ChartApp` keyed by `instance_id`.

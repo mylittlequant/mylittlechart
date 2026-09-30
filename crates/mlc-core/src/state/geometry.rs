@@ -2,6 +2,7 @@
 
 use crate::{CursorStyle, ScaleSettings, PriceScalePosition, TimeScalePosition};
 use crate::state::InnerLayout;
+use crate::state::modal_data::ExpandedPane;
 
 /// Simple rectangle for layout computation - no external dependencies
 ///
@@ -432,6 +433,9 @@ pub struct ExtendedFrameLayout {
     pub sub_panes: Vec<SubPaneLayout>,
     /// Total height of main chart + all sub-panes (excluding time scale)
     pub total_chart_height: f64,
+    /// Which pane (if any) is exclusively expanded — set by `pane_expanded()`,
+    /// left `None` by `from_proportions()`/`compute_with_config()`.
+    pub expanded_pane: Option<ExpandedPane>,
 }
 
 impl ExtendedFrameLayout {
@@ -535,19 +539,6 @@ impl ExtendedFrameLayout {
         separator_height: f64,
         above_main_ids: &std::collections::HashSet<u64>,
     ) -> Self {
-        // Clamp scale dimensions to the chart_panel bounds so nothing can
-        // overflow into neighbouring leaves when the leaf is squeezed below
-        // the configured scale size (sidebar separator drag, narrow splits).
-        // Mirrors the guard in ChartAreaLayout::compute / compute_with_settings.
-        let price_scale_width = scale_settings
-            .effective_price_scale_width()
-            .min(chart_panel.width)
-            .max(0.0);
-        let time_scale_height = scale_settings
-            .effective_time_scale_height()
-            .min(chart_panel.height)
-            .max(0.0);
-        let chart_width = (chart_panel.width - price_scale_width).max(0.0);
         let sub_pane_count = sub_pane_instance_ids.len();
 
         if sub_pane_count == 0 {
@@ -558,9 +549,18 @@ impl ExtendedFrameLayout {
                 main_chart: chart_area,
                 sub_panes: Vec::new(),
                 total_chart_height: chart_area.chart.height,
+                expanded_pane: None,
             };
         }
 
+        // Clamp scale dimensions to the chart_panel bounds so nothing can
+        // overflow into neighbouring leaves when the leaf is squeezed below
+        // the configured scale size (sidebar separator drag, narrow splits).
+        // Mirrors the guard in ChartAreaLayout::compute / compute_with_settings.
+        let time_scale_height = scale_settings
+            .effective_time_scale_height()
+            .min(chart_panel.height)
+            .max(0.0);
         let available_height = chart_panel.height - time_scale_height;
 
         // Build a local InnerLayout from the caller-supplied proportions
@@ -589,6 +589,103 @@ impl ExtendedFrameLayout {
         let heights = local.heights(available_height);
         let main_chart_height = heights.first().copied().unwrap_or(available_height);
         let scaled_heights: Vec<f64> = heights.iter().skip(1).copied().collect();
+
+        Self::assemble(
+            chart_panel,
+            sub_pane_instance_ids,
+            main_chart_height,
+            &scaled_heights,
+            scale_settings,
+            separator_height,
+            above_main_ids,
+            None,
+        )
+    }
+
+    /// Layout with exactly one slot (the main chart, or one sub-pane by
+    /// `instance_id`) expanded to fill the freed height; every other slot
+    /// collapses to `header_strip_height` instead of disappearing — title +
+    /// overlay buttons still render, just no chart content
+    /// (`render_full_chart_panel` skips content for a collapsed slot but
+    /// keeps painting its background/overlay bar).
+    ///
+    /// Separators get zero height (unreachable to drag) while expanded —
+    /// the same "unreachable to drag" trick the old `maximized()` used, now
+    /// applied to every separator via `assemble(..., separator_height: 0.0,
+    /// ...)` so a drag can never corrupt the ratios expand is about to
+    /// restore.
+    ///
+    /// Replaces the old `maximized()`, whose zero-height main chart and
+    /// dropped `sub_panes` Vec entry meant a non-maximized pane drew
+    /// nothing at all, not even its overlay bar.
+    pub fn pane_expanded(
+        chart_panel: &LayoutRect,
+        expanded: ExpandedPane,
+        sub_pane_instance_ids: &[u64],
+        scale_settings: &ScaleSettings,
+        header_strip_height: f64,
+        above_main_ids: &std::collections::HashSet<u64>,
+    ) -> Self {
+        let time_scale_height = scale_settings
+            .effective_time_scale_height()
+            .min(chart_panel.height)
+            .max(0.0);
+        let available_height = (chart_panel.height - time_scale_height).max(0.0);
+        let sub_pane_count = sub_pane_instance_ids.len();
+        // Exactly one slot out of `sub_pane_count + 1` (main + subs) is
+        // expanded, so the other `sub_pane_count` slots collapse to a
+        // header strip regardless of which one is expanded.
+        let expanded_height =
+            (available_height - header_strip_height * sub_pane_count as f64).max(0.0);
+
+        let main_chart_height = match expanded {
+            ExpandedPane::Main => expanded_height,
+            ExpandedPane::SubPane(_) => header_strip_height,
+        };
+        let scaled_heights: Vec<f64> = sub_pane_instance_ids
+            .iter()
+            .map(|&id| match expanded {
+                ExpandedPane::SubPane(target) if target == id => expanded_height,
+                _ => header_strip_height,
+            })
+            .collect();
+
+        Self::assemble(
+            chart_panel,
+            sub_pane_instance_ids,
+            main_chart_height,
+            &scaled_heights,
+            scale_settings,
+            0.0,
+            above_main_ids,
+            Some(expanded),
+        )
+    }
+
+    /// Shared geometry tail of `from_proportions`/`pane_expanded`: turns
+    /// already-decided per-slot pixel heights into screen-space rects for
+    /// the main chart, its scales, and every sub-pane's
+    /// separator/content/price-scale rects.
+    fn assemble(
+        chart_panel: &LayoutRect,
+        sub_pane_instance_ids: &[u64],
+        main_chart_height: f64,
+        scaled_heights: &[f64],
+        scale_settings: &ScaleSettings,
+        separator_height: f64,
+        above_main_ids: &std::collections::HashSet<u64>,
+        expanded_pane: Option<ExpandedPane>,
+    ) -> Self {
+        let price_scale_width = scale_settings
+            .effective_price_scale_width()
+            .min(chart_panel.width)
+            .max(0.0);
+        let time_scale_height = scale_settings
+            .effective_time_scale_height()
+            .min(chart_panel.height)
+            .max(0.0);
+        let chart_width = (chart_panel.width - price_scale_width).max(0.0);
+        let sub_pane_count = sub_pane_instance_ids.len();
         let separator_budget = separator_height * sub_pane_count as f64;
         let actual_available_for_subs: f64 =
             scaled_heights.iter().sum::<f64>() + separator_budget;
@@ -717,70 +814,7 @@ impl ExtendedFrameLayout {
             main_chart,
             sub_panes,
             total_chart_height,
-        }
-    }
-
-    /// Layout for a MAXIMIZED sub-pane: the pane covers the WHOLE container
-    /// content area (an overlay in z-order above the chart), not a squeezed
-    /// stack. The main chart gets a zero-height rect — render passes guard on
-    /// `main_chart_visible` (height >= 1.0) and skip it entirely; the pane's
-    /// separator gets zero height so `find_separator_at_y` ignores it.
-    ///
-    /// Replaces the old `from_proportions(&[id], &[1.0], ...)` trick, whose
-    /// `InnerLayout::heights` min-enforcement always left a 26 px main-chart
-    /// strip visible above the maximized pane.
-    pub fn maximized(
-        chart_panel: &LayoutRect,
-        instance_id: u64,
-        scale_settings: &ScaleSettings,
-    ) -> Self {
-        let price_scale_width = scale_settings
-            .effective_price_scale_width()
-            .min(chart_panel.width)
-            .max(0.0);
-        let time_scale_height = scale_settings
-            .effective_time_scale_height()
-            .min(chart_panel.height)
-            .max(0.0);
-        let chart_width = (chart_panel.width - price_scale_width).max(0.0);
-        let available_height = (chart_panel.height - time_scale_height).max(0.0);
-
-        let (chart_x, price_scale_x) = match scale_settings.price_scale_position {
-            PriceScalePosition::Left => {
-                (chart_panel.x + price_scale_width, chart_panel.x)
-            }
-            PriceScalePosition::Right | PriceScalePosition::Hidden => {
-                (chart_panel.x, chart_panel.x + chart_width)
-            }
-        };
-        let (content_y, time_scale_y) = match scale_settings.time_scale_position {
-            TimeScalePosition::Top => {
-                (chart_panel.y + time_scale_height, chart_panel.y)
-            }
-            TimeScalePosition::Bottom | TimeScalePosition::Hidden => {
-                (chart_panel.y, chart_panel.y + available_height)
-            }
-        };
-
-        let main_chart = ChartAreaLayout {
-            chart: LayoutRect::new(chart_x, content_y, chart_width, 0.0),
-            price_scale: LayoutRect::new(price_scale_x, content_y, price_scale_width, 0.0),
-            time_scale: LayoutRect::new(chart_x, time_scale_y, chart_width, time_scale_height),
-            scale_corner: LayoutRect::new(price_scale_x, time_scale_y, price_scale_width, time_scale_height),
-        };
-
-        let sub_panes = vec![SubPaneLayout {
-            instance_id,
-            separator: LayoutRect::new(chart_panel.x, content_y, chart_panel.width, 0.0),
-            content: LayoutRect::new(chart_x, content_y, chart_width, available_height),
-            price_scale: LayoutRect::new(price_scale_x, content_y, price_scale_width, available_height),
-        }];
-
-        Self {
-            frame: FrameLayout::default(),
-            main_chart,
-            sub_panes,
-            total_chart_height: available_height,
+            expanded_pane,
         }
     }
 }
@@ -1120,6 +1154,7 @@ impl ExtendedFrameLayout {
                 sub_panes: Vec::new(),
                 total_chart_height: frame.chart_area.chart.height,
                 frame,
+                expanded_pane: None,
             };
         }
 
@@ -1212,6 +1247,7 @@ impl ExtendedFrameLayout {
             main_chart,
             sub_panes,
             total_chart_height,
+            expanded_pane: None,
         }
     }
 }
@@ -1375,5 +1411,91 @@ mod tests {
         assert_eq!(layout.time_scale.height, 30.0);
         assert_eq!(layout.scale_corner.x, 730.0);
         assert_eq!(layout.scale_corner.y, 570.0);
+    }
+
+    #[test]
+    fn test_from_proportions_regression_after_assemble_extraction() {
+        // Locks in from_proportions' normal-mode geometry across the
+        // assemble() extraction (pane_expanded's sibling) — same call as
+        // before, must produce the exact same shape.
+        let chart_panel = LayoutRect::new(0.0, 0.0, 800.0, 600.0);
+        let scale_settings = ScaleSettings::default();
+        let above_main: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let layout = ExtendedFrameLayout::from_proportions(
+            &chart_panel,
+            &[10, 20],
+            &[0.25, 0.25],
+            Some(0.5),
+            &scale_settings,
+            1.0,
+            &above_main,
+        );
+
+        assert_eq!(layout.expanded_pane, None);
+        assert_eq!(layout.sub_panes.len(), 2);
+        // Every slot got a real (non-zero) height — proportional mode, not collapsed.
+        assert!(layout.main_chart.chart.height > 0.0);
+        assert!(layout.sub_panes[0].content.height > 0.0);
+        assert!(layout.sub_panes[1].content.height > 0.0);
+        // Real 1px separators (not the pane-expanded zero-height trick).
+        assert_eq!(layout.sub_panes[0].separator.height, 1.0);
+        assert_eq!(layout.sub_panes[1].separator.height, 1.0);
+    }
+
+    #[test]
+    fn test_pane_expanded_main() {
+        let chart_panel = LayoutRect::new(0.0, 0.0, 800.0, 600.0);
+        let scale_settings = ScaleSettings::default();
+        let above_main: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let header = 28.0;
+        let layout = ExtendedFrameLayout::pane_expanded(
+            &chart_panel,
+            ExpandedPane::Main,
+            &[10, 20],
+            &scale_settings,
+            header,
+            &above_main,
+        );
+
+        let available_height = chart_panel.height - scale_settings.effective_time_scale_height();
+        assert_eq!(layout.expanded_pane, Some(ExpandedPane::Main));
+        assert_eq!(layout.sub_panes.len(), 2);
+        assert_eq!(layout.main_chart.chart.height, available_height - 2.0 * header);
+        assert_eq!(layout.sub_panes[0].content.height, header);
+        assert_eq!(layout.sub_panes[1].content.height, header);
+        assert_eq!(layout.sub_panes[0].separator.height, 0.0);
+        assert_eq!(layout.sub_panes[1].separator.height, 0.0);
+    }
+
+    #[test]
+    fn test_pane_expanded_sub_pane() {
+        let chart_panel = LayoutRect::new(0.0, 0.0, 800.0, 600.0);
+        let scale_settings = ScaleSettings::default();
+        let above_main: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let header = 28.0;
+        let layout = ExtendedFrameLayout::pane_expanded(
+            &chart_panel,
+            ExpandedPane::SubPane(20),
+            &[10, 20],
+            &scale_settings,
+            header,
+            &above_main,
+        );
+
+        let available_height = chart_panel.height - scale_settings.effective_time_scale_height();
+        assert_eq!(layout.expanded_pane, Some(ExpandedPane::SubPane(20)));
+        assert_eq!(layout.main_chart.chart.height, header);
+        // Non-target sub-pane (id 10) collapses to the header strip.
+        assert_eq!(layout.sub_panes[0].instance_id, 10);
+        assert_eq!(layout.sub_panes[0].content.height, header);
+        assert_eq!(layout.sub_panes[0].separator.height, 0.0);
+        // Target sub-pane (id 20) takes the remainder — every OTHER slot
+        // (main + the non-target sub-pane, 2 header strips total) is freed,
+        // same `available_height - header * sub_pane_count` the main-expand
+        // case above uses (sub_pane_count is the count of collapsed slots
+        // regardless of which slot is the expanded one).
+        assert_eq!(layout.sub_panes[1].instance_id, 20);
+        assert_eq!(layout.sub_panes[1].content.height, available_height - 2.0 * header);
+        assert_eq!(layout.sub_panes[1].separator.height, 0.0);
     }
 }

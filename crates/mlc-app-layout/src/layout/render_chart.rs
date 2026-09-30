@@ -47,7 +47,7 @@ use mlc_core::apply_opacity;
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::state::sub_pane_y_state::SubPaneYState;
 use crate::ui::icons::Icon;
-use crate::ui::modal_settings::SubPaneOverlayState;
+use crate::ui::modal_settings::{SubPaneOverlayState, ExpandedPane};
 use super::rects::{ChartAreaLayout, FrameLayout, LayoutRect, SubPaneLayout};
 use mlc_core::state::sub_pane_overlay::SubPaneOverlayResult;
 
@@ -133,6 +133,10 @@ pub struct ChartPanelRenderResult {
     pub sub_pane_ranges: Vec<(usize, f64, f64)>,
     /// Sub-pane overlay hit zones for button interaction.
     pub sub_pane_overlays: Vec<SubPaneOverlayResult>,
+    /// Main pane's own overlay button (Expand/Restore) hit zone. `None` when
+    /// the container has no sub-panes (owner rule: no button on a
+    /// single-pane chart) or the overlay bar is not currently visible.
+    pub main_pane_overlay: Option<SubPaneOverlayResult>,
     /// Loading spinner geometry: `Some((cx, cy, radius))` when this panel is
     /// currently in the loading state (bars empty, no data_error). Renderer
     /// composites the spinner as an OVERLAY layer (not inside chart-scene) so
@@ -147,6 +151,7 @@ impl ChartPanelRenderResult {
             corner_zones: ScaleCornerHitZones::default(),
             sub_pane_ranges: Vec::new(),
             sub_pane_overlays: Vec::new(),
+            main_pane_overlay: None,
             loading_spinner: None,
         }
     }
@@ -1318,6 +1323,12 @@ pub fn render_sub_pane(
     sub_pane_price_min: f64,
     sub_pane_price_max: f64,
     selected_indicator_id: Option<u64>,
+    // When `true`, this pane is collapsed to its header strip because some
+    // OTHER pane is exclusively expanded — draw background + separator
+    // only (handled below) and skip grid/series/signals/price-scale/
+    // drawing-primitives. The overlay button bar is rendered by the
+    // caller unconditionally, independent of this flag.
+    content_collapsed: bool,
 ) -> (f64, f64) {
     use mlc_core::indicator_source::IndicatorOutputRenderType;
 
@@ -1351,6 +1362,15 @@ pub fn render_sub_pane(
     ctx.draw_blur_background(content.x, content.y, content.width, content.height);
     ctx.set_fill_color(&state.theme.sub_pane_bg);
     ctx.fill_rect(content.x, content.y, content.width, content.height);
+
+    if content_collapsed {
+        // Pane-expand mode, some OTHER pane is expanded: this pane is a
+        // header strip — background + separator (above) and the overlay
+        // button bar (rendered by the caller) are enough. No grid, series,
+        // signals, price scale, or drawing primitives fit in
+        // PANE_HEADER_STRIP_HEIGHT. Auto-scale range is left untouched.
+        return (sub_pane_price_min, sub_pane_price_max);
+    }
 
     // OI Delta and Funding Rate draw through the ORDINARY output loop below:
     // the host resamples their bubble data onto the bar grid and publishes it
@@ -2122,6 +2142,97 @@ pub fn render_sub_pane_overlay(
         }
     }
 
+    result
+}
+
+/// Render the main pane's own overlay button — mirrors
+/// [`render_sub_pane_overlay`] but for the main chart, with exactly ONE
+/// button (Expand/Restore). Only meaningful to call when the container has
+/// at least one sub-pane (owner rule: no button on a single-pane chart) —
+/// the caller gates that, this function only handles the drawing.
+///
+/// Returns [`SubPaneOverlayResult`] with `expand_rect`/`restore_rect` set
+/// for hit-testing; `instance_id` is unused (0) since the main pane has no
+/// indicator instance identity.
+/// Whether the main pane's own Expand/Restore overlay button is eligible
+/// to render — owner rule: no button on a chart with zero sub-panes
+/// (nothing to expand relative to). Extracted as a pure predicate so the
+/// gating decision itself is unit-testable without a full render pass; the
+/// bottom-toolbar's own grid-level "expand" button uses the parallel
+/// `filter_bottom_sections_for_grid` check in `panel_app.rs`.
+pub fn main_pane_overlay_eligible(sub_pane_count: usize) -> bool {
+    sub_pane_count > 0
+}
+
+pub fn render_main_pane_overlay(
+    ctx: &mut dyn RenderContext,
+    chart_rect: &LayoutRect,
+    state: &SubPaneOverlayState,
+    is_expanded: bool,
+    frame_theme: &FrameTheme,
+    text_color: &str,
+) -> SubPaneOverlayResult {
+    use crate::ui::modal_settings::SubPaneButton;
+    use mlc_core::render::draw_svg_icon;
+
+    // Don't render if the pane is too small or the overlay isn't visible —
+    // same 20px floor render_sub_pane_overlay uses.
+    if chart_rect.height < 20.0 || !state.visible {
+        return SubPaneOverlayResult::default();
+    }
+
+    let icon_size = 14.0;
+    let button_size = 18.0;
+    let margin = 4.0;
+
+    let bar_x = chart_rect.x + chart_rect.width - button_size - margin;
+    let bar_y = chart_rect.y + margin;
+
+    // Draw background pill.
+    let bg_color = apply_opacity(&frame_theme.toolbar_bg, 0.80);
+    ctx.set_fill_color(&bg_color);
+    ctx.fill_rounded_rect(bar_x - 3.0, bar_y - 2.0, button_size + 6.0, button_size + 4.0, 3.0);
+
+    // Draw border.
+    let border_color = apply_opacity(&frame_theme.toolbar_border, 0.6);
+    ctx.set_stroke_color(&border_color);
+    ctx.set_stroke_width(0.5);
+    ctx.stroke_rounded_rect(bar_x - 3.0, bar_y - 2.0, button_size + 6.0, button_size + 4.0, 3.0);
+
+    let rect = LayoutRect::new(bar_x, bar_y, button_size, button_size);
+    let icon = if is_expanded { Icon::Collapse } else { Icon::Expand };
+    let button_type = if is_expanded { SubPaneButton::Restore } else { SubPaneButton::Expand };
+    let is_hovered = state.hovered_button == Some(button_type);
+
+    let color = if is_hovered {
+        "#2962ff".to_string()
+    } else {
+        apply_opacity(text_color, 0.6)
+    };
+
+    if is_hovered {
+        let hover_bg = apply_opacity(&frame_theme.toolbar_border, 0.4);
+        ctx.set_fill_color(&hover_bg);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 2.0);
+    }
+
+    let icon_offset = (button_size - icon_size) / 2.0;
+    draw_svg_icon(
+        ctx,
+        icon.svg(),
+        rect.x + icon_offset,
+        rect.y + icon_offset,
+        icon_size,
+        icon_size,
+        &color,
+    );
+
+    let mut result = SubPaneOverlayResult::default();
+    match button_type {
+        SubPaneButton::Expand => result.expand_rect = Some(rect),
+        SubPaneButton::Restore => result.restore_rect = Some(rect),
+        _ => {}
+    }
     result
 }
 
@@ -3140,26 +3251,27 @@ pub fn draw_frame_borders(
 // Full Chart Panel Rendering
 // =============================================================================
 
-/// Build an `ExtendedFrameLayout` where `maximized_id` receives the full
-/// `content_rect` height (minus time scale) and all other sub-panes and the
-/// main chart are collapsed to zero height.
+/// Build an `ExtendedFrameLayout` where `expanded` receives the full
+/// `content_rect` height (minus time scale, minus every other slot's header
+/// strip) and every other slot (main chart or sub-pane) collapses to
+/// `PANE_HEADER_STRIP_HEIGHT` instead of disappearing.
 ///
-/// Called by `render_full_chart_panel` when `maximized_sub_pane_id` is set.
-/// The input builders in `mlc-app` mirror this logic so click geometry agrees.
-fn build_maximized_layout(
+/// Called by `render_full_chart_panel` when `expanded_pane` is set. The
+/// input builders in `mlc-app` mirror this logic so click geometry agrees.
+fn build_pane_expanded_layout(
     content_rect: &super::rects::LayoutRect,
-    maximized_id: u64,
+    expanded: ExpandedPane,
     sub_pane_ids: &[u64],
     scale_settings: &mlc_core::scale_settings::ScaleSettings,
+    above_main_ids: &std::collections::HashSet<u64>,
 ) -> crate::layout::ExtendedFrameLayout {
-    let _ = sub_pane_ids; // full list not needed; we render only max pane
-    // Maximized = overlay: the pane covers the whole container content area,
-    // main chart gets a true zero-height rect (guarded by main_chart_visible
-    // at render time). No 26 px InnerLayout min strip.
-    crate::layout::ExtendedFrameLayout::maximized(
+    crate::layout::ExtendedFrameLayout::pane_expanded(
         content_rect,
-        maximized_id,
+        expanded,
+        sub_pane_ids,
         scale_settings,
+        mlc_core::types::PANE_HEADER_STRIP_HEIGHT,
+        above_main_ids,
     )
 }
 
@@ -3227,11 +3339,14 @@ pub struct ChartPanelRenderData<'a> {
     /// the panel instead of the generic "Loading..." label.  Cleared by the
     /// app on any successful bar delivery.
     pub data_error: Option<&'a str>,
-    /// When `Some`, this sub-pane instance id is currently maximized (fills
-    /// the sub-pane area; all other panes have near-zero proportions).  The
-    /// overlay button for this pane renders as Restore instead of Expand.
-    /// `None` means no pane is maximized (normal mode).
-    pub maximized_sub_pane_id: Option<u64>,
+    /// When `Some`, exactly one pane (main or a sub-pane by instance_id) is
+    /// exclusively expanded — every other pane collapses to a
+    /// `PANE_HEADER_STRIP_HEIGHT` header strip instead of disappearing.
+    /// `None` means no pane is expanded (normal proportional mode).
+    pub expanded_pane: Option<ExpandedPane>,
+    /// Main pane's own overlay button UI state (hover-triggered visibility).
+    /// Mirrors `sub_pane_overlay_states` but for the single main-chart slot.
+    pub main_pane_overlay_state: &'a SubPaneOverlayState,
     /// Set of sub-pane instance_ids that should render ABOVE the main chart.
     /// Pass `None` (or `Some` of an empty set) for all-below behaviour.
     pub above_main_ids: Option<&'a std::collections::HashSet<u64>>,
@@ -3353,21 +3468,24 @@ pub fn render_full_chart_panel(
         Vec::new()
     };
 
-    // Determine whether a sub-pane is currently maximized.  When maximized,
-    // the layout gives the full container area to that pane — main chart and
-    // all other panes collapse to zero height.  The normal from_proportions
-    // path is bypassed in this case so InnerLayout min-height guards never
-    // prevent the main chart from being fully hidden.
-    let maximized_id: Option<u64> = data.maximized_sub_pane_id
-        .filter(|iid| sub_pane_ids.contains(iid));
+    // Determine whether a pane is currently exclusively expanded.  When
+    // expanded, every OTHER slot (main chart or sub-pane) collapses to a
+    // fixed header-strip height instead of its proportional share.  The
+    // normal from_proportions path is bypassed in this case so InnerLayout
+    // min-height guards never fight the header-strip height.
+    let expanded_pane: Option<ExpandedPane> = data.expanded_pane.filter(|e| match e {
+        ExpandedPane::Main => true,
+        ExpandedPane::SubPane(iid) => sub_pane_ids.contains(iid),
+    });
 
-    // Resolve above-main set. When maximized, above-main is ignored — the
-    // maximized pane covers the whole area regardless.
+    // Resolve above-main set. When expanded, above-main still applies to
+    // z-order but every non-expanded slot is pinned to the header strip
+    // height regardless.
     let empty_above: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let above_main_ids = data.above_main_ids.unwrap_or(&empty_above);
 
-    let extended_layout = if let Some(max_iid) = maximized_id {
-        build_maximized_layout(content_rect, max_iid, &sub_pane_ids, data.scale_settings)
+    let extended_layout = if let Some(expanded) = expanded_pane {
+        build_pane_expanded_layout(content_rect, expanded, &sub_pane_ids, data.scale_settings, above_main_ids)
     } else {
         crate::layout::ExtendedFrameLayout::from_proportions(
             content_rect,
@@ -3381,9 +3499,13 @@ pub fn render_full_chart_panel(
         )
     };
     let main_chart = &extended_layout.main_chart;
-    // Guard: when the main chart area has no usable height (maximized sub-pane
-    // mode), skip all main-chart rendering passes.
-    let main_chart_visible = main_chart.chart.height >= 1.0;
+    // Main-chart CONTENT (series/overlays/alerts/drawings/price-scale) is
+    // skipped when a sub-pane is the expanded one — the main chart's own
+    // header strip still paints its background/border, just no chart data.
+    let main_collapsed = matches!(extended_layout.expanded_pane, Some(ExpandedPane::SubPane(_)));
+    // Guard: when the main chart area has no usable height, skip all
+    // main-chart rendering passes.
+    let main_chart_visible = main_chart.chart.height >= 1.0 && !main_collapsed;
 
     // Bug 2 fix: update viewport dimensions to match the computed layout so
     // that bar_to_x() and price_to_y() operate in the correct coordinate space.
@@ -3649,6 +3771,25 @@ pub fn render_full_chart_panel(
         }
     }
 
+    // 11b. Main pane's own overlay button (Expand/Restore) — only when the
+    // container has >= 1 sub-pane (owner rule: no button on a single-pane
+    // chart). Rendered regardless of main_chart_visible: the button lives on
+    // the main chart's own header strip, which stays painted even when its
+    // content is collapsed.
+    let main_pane_overlay = if main_pane_overlay_eligible(sub_pane_ids.len()) {
+        let is_expanded = matches!(extended_layout.expanded_pane, Some(ExpandedPane::Main));
+        Some(render_main_pane_overlay(
+            ctx,
+            &main_chart.chart,
+            data.main_pane_overlay_state,
+            is_expanded,
+            data.frame_theme,
+            &data.state.theme.text,
+        ))
+    } else {
+        None
+    };
+
     // 12. Sub-panes (indicators with pane_index > 0).
     let mut computed_ranges: Vec<(usize, f64, f64)> = Vec::new();
     let mut sub_pane_overlay_results: Vec<SubPaneOverlayResult> = Vec::new();
@@ -3660,6 +3801,12 @@ pub fn render_full_chart_panel(
                 Some(sp) => (sp.auto_scale, sp.price_min, sp.price_max),
                 None => (true, 0.0, 100.0),
             };
+            // is_maximized: this pane IS the one exclusively expanded.
+            // sub_collapsed: some OTHER pane is expanded, so this pane
+            // collapses to its header strip — no chart content, background
+            // + separator + overlay bar keep rendering unconditionally.
+            let is_maximized = expanded_pane == Some(ExpandedPane::SubPane(pane_layout.instance_id));
+            let sub_collapsed = expanded_pane.is_some() && !is_maximized;
             let (final_min, final_max) = render_sub_pane(
                 ctx,
                 pane_layout,
@@ -3676,8 +3823,9 @@ pub fn render_full_chart_panel(
                 price_min,
                 price_max,
                 data.selected_indicator_id,
+                sub_collapsed,
             );
-            if auto_scale {
+            if auto_scale && !sub_collapsed {
                 computed_ranges.push((pane_idx, final_min, final_max));
             }
 
@@ -3690,7 +3838,6 @@ pub fn render_full_chart_panel(
                 .unwrap_or_default();
             // is_hidden is always false here — hidden panes are filtered out of
             // sub_pane_ids via instance.visible check, so only visible panes render.
-            let is_maximized = data.maximized_sub_pane_id == Some(pane_layout.instance_id);
             let overlay_result = render_sub_pane_overlay(
                 ctx,
                 &pane_layout.content,
@@ -3825,6 +3972,7 @@ pub fn render_full_chart_panel(
         corner_zones,
         sub_pane_ranges: computed_ranges,
         sub_pane_overlays: sub_pane_overlay_results,
+        main_pane_overlay,
         loading_spinner: None,
     }
 }
@@ -4274,4 +4422,22 @@ fn unbounded_cull_skips(prim: &dyn mlc_core::drawing::primitives_v2::Primitive) 
     let skip_left = skip_time_both || ext == 1 || ext == 3;
     let skip_right = skip_time_both || ext == 2 || ext == 3;
     (skip_left, skip_right, skip_price, skip_price)
+}
+
+#[cfg(test)]
+mod main_pane_overlay_eligibility_tests {
+    //! Owner item 2: "the expand/suppress buttons are hidden when there is
+    //! nothing to expand (a chart with no sub-panes)."
+    use super::main_pane_overlay_eligible;
+
+    #[test]
+    fn zero_sub_panes_hides_the_main_overlay_button() {
+        assert!(!main_pane_overlay_eligible(0));
+    }
+
+    #[test]
+    fn any_sub_pane_shows_the_main_overlay_button() {
+        assert!(main_pane_overlay_eligible(1));
+        assert!(main_pane_overlay_eligible(3));
+    }
 }

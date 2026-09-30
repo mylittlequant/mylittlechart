@@ -189,7 +189,7 @@ pub use modal_state::{ModalState, OpenModal, SearchResult, IndicatorCategory, In
 // directly to build the indicator-settings-modal payload. This is the
 // doctrine §1A "CommandHistory-style" case: a type physically living in
 // mlc-core because a backend manager needs it, not because it's UI state.
-pub use modal_data::{SubPaneButton, SubPaneOverlayState, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
+pub use modal_data::{SubPaneButton, SubPaneOverlayState, ExpandedPane, IndicatorDisplayInfo, IndicatorParamDef, IndicatorParamType, IndicatorOutputDef, IndicatorOutputType};
 
 // PRESET_COLORS: STAYS IN mlc-core — genuine backend consumer
 // (`mlc-backend::tag::manager` uses it for auto-assigned tag colors).
