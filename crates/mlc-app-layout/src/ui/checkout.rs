@@ -53,6 +53,26 @@ pub fn entry_points_enabled() -> bool {
     ENTRY_POINTS.load(Ordering::Relaxed)
 }
 
+/// Release gate for buying an anonymous account. While it is `false` the client
+/// hides every way in: the "Buy an anonymous account" link on the sign-in
+/// overlay, the `anon_account` plan cards on the plans step and the "sign in
+/// with an account key" entry (an anonymous account is the only kind that has
+/// such a key). The state machine below keeps the whole anonymous flow — the
+/// key gate, the key entry, the anonymous invoice — so a release that ships the
+/// new key scheme flips this one constant.
+pub const ANON_PURCHASE_ENABLED: bool = false;
+
+/// Whether the sign-in overlay offers "Buy an anonymous account": the shell can
+/// run the checkout and the anonymous purchase is released.
+pub fn buy_anon_link_shown() -> bool {
+    anon_link_shown(entry_points_enabled(), ANON_PURCHASE_ENABLED)
+}
+
+/// The rule behind [`buy_anon_link_shown`], with both inputs explicit.
+fn anon_link_shown(entry_points: bool, anon_purchase_released: bool) -> bool {
+    entry_points && anon_purchase_released
+}
+
 // =============================================================================
 // Plans and holdings
 // =============================================================================
@@ -549,6 +569,10 @@ pub struct CheckoutState {
     pub error: Option<CheckoutError>,
     pub invoice: Option<InvoiceSession>,
     pub anon: Option<AnonSession>,
+    /// Whether the anonymous purchase is offered at all. Starts as
+    /// [`ANON_PURCHASE_ENABLED`]; a field so the flow behind the gate stays
+    /// testable while the constant is off.
+    pub anon_purchase: bool,
     /// Renewal date of a queued downgrade.
     pub scheduled_on: Option<String>,
     /// A sign-in with a typed account key is in flight.
@@ -580,6 +604,7 @@ impl Default for CheckoutState {
             error: None,
             invoice: None,
             anon: None,
+            anon_purchase: ANON_PURCHASE_ENABLED,
             scheduled_on: None,
             key_working: false,
             now_ms: 0,
@@ -664,10 +689,13 @@ impl CheckoutState {
 
     /// Plans to draw: accounts first, then tiers by price. On an onion host
     /// the clearnet account plans are dropped and off it the Tor ones are.
+    /// Anonymous-account plans are dropped while the anonymous purchase is off
+    /// ([`ANON_PURCHASE_ENABLED`]).
     pub fn visible_plans(&self) -> Vec<&PlanUi> {
         let mut plans: Vec<&PlanUi> = self
             .plans
             .iter()
+            .filter(|p| p.kind != PlanKind::AnonAccount || self.anon_purchase)
             .filter(|p| p.kind == PlanKind::Quant || p.onion_only == self.onion)
             .collect();
         plans.sort_by_key(|p| {
@@ -679,6 +707,13 @@ impl CheckoutState {
             (rank, p.price_usd)
         });
         plans
+    }
+
+    /// Whether the plans step offers "sign in with an account key": a signed-out
+    /// visitor, and only while the anonymous purchase is on (only an anonymous
+    /// account has such a key).
+    pub fn have_key_shown(&self) -> bool {
+        self.anon_purchase && !self.signed_in
     }
 
     /// How `plan` reads for the current account.
@@ -1004,7 +1039,7 @@ impl CheckoutState {
             }
             "have_code" => CheckoutEffect::OpenRedeem,
             "have_key" => {
-                if self.signed_in {
+                if !self.have_key_shown() {
                     return CheckoutEffect::None;
                 }
                 self.error = None;
@@ -1041,6 +1076,9 @@ impl CheckoutState {
             return;
         }
         let Some(plan) = self.plans.iter().find(|p| p.id == plan_id).cloned() else { return };
+        if plan.kind == PlanKind::AnonAccount && !self.anon_purchase {
+            return;
+        }
         let status = self.plan_status(&plan);
         if !status.is_actionable() {
             return;
@@ -1233,6 +1271,12 @@ mod tests {
 
     const NOW: u64 = 1_800_000_000_000;
 
+    /// A state with the anonymous purchase switched on: the flow behind the
+    /// release gate stays covered while [`ANON_PURCHASE_ENABLED`] is off.
+    fn anon_state() -> CheckoutState {
+        CheckoutState { anon_purchase: true, ..CheckoutState::default() }
+    }
+
     fn plan(id: &str, kind: PlanKind, price: u32, onion_only: bool) -> PlanUi {
         PlanUi {
             id: id.to_string(),
@@ -1269,7 +1313,7 @@ mod tests {
     }
 
     fn open_signed_in() -> CheckoutState {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(true);
         assert_eq!(s.take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -1407,7 +1451,7 @@ mod tests {
 
     #[test]
     fn a_signed_out_visitor_can_buy_only_the_anonymous_account() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.take_cmd(NOW);
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -1658,7 +1702,7 @@ mod tests {
 
     #[test]
     fn the_anonymous_key_is_gated_behind_the_saved_box_before_any_payment_detail() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.take_cmd(NOW);
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -1684,7 +1728,7 @@ mod tests {
 
     #[test]
     fn going_back_from_the_gate_drops_the_pending_account_and_its_key() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.apply(started("mlc-anon-account-v1", Some("KEY")), NOW);
         s.click("back", NOW);
@@ -1694,7 +1738,7 @@ mod tests {
 
     #[test]
     fn after_payment_the_signed_out_buyer_is_signed_in_with_the_key_and_the_modal_closes() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.take_cmd(NOW);
         s.apply(started("mlc-anon-account-v1", Some("KEY-1")), NOW);
@@ -1719,7 +1763,7 @@ mod tests {
 
     #[test]
     fn a_failed_key_sign_in_keeps_the_modal_and_offers_a_retry() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.apply(started("mlc-anon-account-v1", Some("KEY-2")), NOW);
         s.click("key_saved", NOW);
@@ -1754,7 +1798,7 @@ mod tests {
 
     #[test]
     fn a_new_anonymous_invoice_is_a_new_account_and_a_new_key() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
         s.click("plan:mlc-anon-account-v1", NOW);
@@ -1774,7 +1818,7 @@ mod tests {
 
     #[test]
     fn nothing_prints_the_account_key() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.apply(started("mlc-anon-account-v1", Some("SECRET-KEY-VALUE")), NOW);
         assert!(!format!("{s:?}").contains("SECRET-KEY-VALUE"));
@@ -1855,7 +1899,7 @@ mod tests {
 
     #[test]
     fn a_plan_list_failure_offers_a_retry_that_asks_again() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(true);
         s.take_cmd(NOW);
         s.apply(CheckoutEvent::Failed { op: CheckoutOp::LoadPlans, error: CheckoutError::Network }, NOW);
@@ -1907,7 +1951,7 @@ mod tests {
 
     #[test]
     fn a_signed_out_visitor_can_type_a_saved_key_and_is_signed_in() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.take_cmd(NOW);
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -1930,7 +1974,7 @@ mod tests {
 
     #[test]
     fn a_refused_typed_key_says_so_and_can_be_retyped() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.take_cmd(NOW);
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -1955,7 +1999,7 @@ mod tests {
         assert_eq!(s.click("have_key", NOW), CheckoutEffect::None);
         assert_eq!(s.step, CheckoutStep::Plans);
 
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.click("have_key", NOW);
         s.click("back", NOW);
@@ -1964,7 +2008,7 @@ mod tests {
 
     #[test]
     fn nothing_prints_a_typed_key() {
-        let mut s = CheckoutState::default();
+        let mut s = anon_state();
         s.open(false);
         s.click("have_key", NOW);
         s.submit_key("TYPED-SECRET");
@@ -2021,5 +2065,57 @@ mod tests {
         set_entry_points_enabled(true);
         assert!(entry_points_enabled());
         set_entry_points_enabled(before);
+    }
+
+    #[test]
+    fn the_anonymous_purchase_gate_is_off_in_this_release() {
+        assert!(!ANON_PURCHASE_ENABLED);
+        assert!(!CheckoutState::default().anon_purchase, "a fresh state carries the constant");
+    }
+
+    #[test]
+    fn the_gate_hides_the_anon_plan_cards_the_key_entry_and_the_overlay_link() {
+        // 1. The plans step: no anonymous card, the paid account and the tiers stay.
+        let mut s = CheckoutState::default();
+        s.open(false);
+        assert_eq!(s.take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
+        s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
+        let ids: Vec<&str> = s.visible_plans().iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["mlc-paid-account-v1", "mlc-monthly-20-v1", "mlc-monthly-50-v1", "mlc-monthly-100-v1"]
+        );
+        s.onion = true;
+        let onion_ids: Vec<&str> = s.visible_plans().iter().map(|p| p.id.as_str()).collect();
+        assert!(!onion_ids.iter().any(|id| id.contains("anon")), "the Tor anonymous plan is hidden too");
+        assert!(onion_ids.contains(&"mlc-paid-account-tor-v1"));
+        s.onion = false;
+        s.click("plan:mlc-anon-account-v1", NOW);
+        assert!(s.starting.is_none(), "a hidden card cannot be started");
+        assert_eq!(s.take_cmd(NOW), None);
+
+        // 2. The account-key entry: not offered, and the click does nothing.
+        assert!(!s.have_key_shown());
+        assert_eq!(s.click("have_key", NOW), CheckoutEffect::None);
+        assert_eq!(s.step, CheckoutStep::Plans);
+
+        // 3. The sign-in overlay link: hidden even with the checkout driver on.
+        assert!(!anon_link_shown(true, ANON_PURCHASE_ENABLED));
+        assert!(!buy_anon_link_shown());
+    }
+
+    #[test]
+    fn switching_the_gate_on_brings_all_three_entries_back() {
+        let mut s = anon_state();
+        s.open(false);
+        assert_eq!(s.take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
+        s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
+        assert!(s.visible_plans().iter().any(|p| p.kind == PlanKind::AnonAccount));
+        assert!(s.have_key_shown());
+        assert_eq!(s.click("have_key", NOW), CheckoutEffect::FocusKeyField);
+        assert!(anon_link_shown(true, true));
+        assert!(!anon_link_shown(false, true), "no checkout driver, no link");
+        s.signed_in = true;
+        assert!(!s.have_key_shown(), "a signed-in account never sees the key entry");
     }
 }

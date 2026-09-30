@@ -58,9 +58,10 @@ pub struct CloudLoginResult {
 }
 
 /// Height the "buy an anonymous account" link adds under the providers; zero
-/// while the shell has no checkout driver.
+/// while the shell has no checkout driver or the anonymous purchase is off
+/// (`ui::checkout::ANON_PURCHASE_ENABLED`).
 fn entry_link_h() -> f64 {
-    if crate::ui::checkout::entry_points_enabled() {
+    if crate::ui::checkout::buy_anon_link_shown() {
         26.0
     } else {
         0.0
@@ -187,16 +188,19 @@ fn draw_body(
                 btn_y += BTN_H + BTN_GAP;
             }
             // No provider account? An anonymous account is bought, not
-            // registered: the checkout opens on it.
-            crate::layout::modals::checkout::draw_entry_link(
-                ctx,
-                coord,
-                layer_id,
-                cx,
-                btn_y + 2.0,
-                mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
-                tt,
-            );
+            // registered: the checkout opens on it. Hidden while the anonymous
+            // purchase is off (`ui::checkout::ANON_PURCHASE_ENABLED`).
+            if crate::ui::checkout::buy_anon_link_shown() {
+                crate::layout::modals::checkout::draw_entry_link(
+                    ctx,
+                    coord,
+                    layer_id,
+                    cx,
+                    btn_y + 2.0,
+                    mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
+                    tt,
+                );
+            }
         }
 
         // Signing in, with the browser away at the provider. The device code
@@ -229,15 +233,17 @@ fn draw_body(
                 btn_y += BTN_H + BTN_GAP;
             }
 
-            crate::layout::modals::checkout::draw_entry_link(
-                ctx,
-                coord,
-                layer_id,
-                cx,
-                btn_y + 2.0,
-                mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
-                tt,
-            );
+            if crate::ui::checkout::buy_anon_link_shown() {
+                crate::layout::modals::checkout::draw_entry_link(
+                    ctx,
+                    coord,
+                    layer_id,
+                    cx,
+                    btn_y + 2.0,
+                    mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
+                    tt,
+                );
+            }
 
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(&tt.item_text_muted);

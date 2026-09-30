@@ -568,7 +568,7 @@ fn draw_plans(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64) ->
 
     cy += 4.0;
     c.link("have_code", c.t(CheckoutKey::HaveCode), x, cy, None);
-    if !st.signed_in {
+    if st.have_key_shown() {
         // Bought an anonymous account earlier? The key gets back into it.
         c.link("have_key", c.t(CheckoutKey::HaveKey), x, cy, Some(x + w));
     }
@@ -1249,8 +1249,8 @@ mod tests {
         }
     }
 
-    fn open_with_plans(signed_in: bool) -> CheckoutState {
-        let mut st = CheckoutState::default();
+    fn open_with_plans_and_gate(signed_in: bool, anon_purchase: bool) -> CheckoutState {
+        let mut st = CheckoutState { anon_purchase, ..CheckoutState::default() };
         st.open(signed_in);
         st.take_cmd(NOW);
         st.apply(
@@ -1267,6 +1267,12 @@ mod tests {
             NOW,
         );
         st
+    }
+
+    /// The plans step with the anonymous purchase switched on, so the anonymous
+    /// flow stays covered while `ANON_PURCHASE_ENABLED` is off.
+    fn open_with_plans(signed_in: bool) -> CheckoutState {
+        open_with_plans_and_gate(signed_in, true)
     }
 
     fn qr_document() -> QrMatrix {
@@ -1329,6 +1335,21 @@ mod tests {
             assert!(has_hit(&r, id), "missing hit {id}");
         }
         assert!(has_text(&ctx, "Buy") && has_text(&ctx, "Subscribe"));
+    }
+
+    #[test]
+    fn the_release_gate_keeps_the_anon_card_and_the_key_link_off_the_plans_step() {
+        // The state as the shell builds it: the gate constant decides.
+        for signed_in in [false, true] {
+            let st = open_with_plans_and_gate(signed_in, crate::ui::checkout::ANON_PURCHASE_ENABLED);
+            let (ctx, r) = render(&st);
+            assert!(!has_hit(&r, "plan:anon"), "no anonymous card (signed_in={signed_in})");
+            assert!(!has_text(&ctx, "Anonymous account"), "{:?}", ctx.texts);
+            assert!(!has_hit(&r, "have_key"), "no account-key entry (signed_in={signed_in})");
+            for id in ["plan:paid", "plan:q20", "plan:q50", "have_code"] {
+                assert!(has_hit(&r, id), "missing hit {id}");
+            }
+        }
     }
 
     #[test]

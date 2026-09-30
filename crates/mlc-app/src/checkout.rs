@@ -205,10 +205,13 @@ mod tests {
         ]
     }
 
-    /// An app with the checkout open on a loaded plan list.
+    /// An app with the checkout open on a loaded plan list. The anonymous
+    /// purchase is switched on so the flow behind the release gate
+    /// (`ANON_PURCHASE_ENABLED`) stays covered while the constant is off.
     async fn opened(signed_in: bool) -> ChartApp {
         set_entry_points_enabled(true);
         let mut app = app().await;
+        app.panel_app.checkout_state.anon_purchase = true;
         app.panel_app.user_settings_state.account_signed_in = signed_in;
         app.open_checkout();
         assert_eq!(app.checkout_take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
