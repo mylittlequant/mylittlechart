@@ -265,6 +265,11 @@ pub const SHARE_OPEN_INPUT: &str = "share_open_input";
 /// Nick field in the share-settings overlay.
 pub const SHARE_SETTINGS_NICK: &str = "share_settings_nick";
 
+/// Account-key box on the checkout modal's key-entry page (signed out: get
+/// back into an anonymous account bought earlier). The key is a credential:
+/// the box is cleared the moment the page is left.
+pub const CHECKOUT_KEY_INPUT: &str = "checkout_key_input";
+
 /// Nick search in the Friends tab. Adds the picked account as a friend.
 pub const FRIENDS_NICK: &str = "friends_nick";
 
@@ -337,6 +342,7 @@ pub fn known_field_ids() -> &'static [&'static str] {
         KEY_LABEL_INPUT,
         SHARE_OPEN_INPUT,
         SHARE_SETTINGS_NICK,
+        CHECKOUT_KEY_INPUT,
         FRIENDS_NICK,
     ]
 }

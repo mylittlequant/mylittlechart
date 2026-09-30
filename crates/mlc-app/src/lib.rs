@@ -33,6 +33,9 @@ pub mod focus;
 pub mod frame_lifecycle;
 pub mod input;
 pub mod chart_panel_app;
+mod checkout;
+#[cfg(feature = "cloud")]
+pub mod checkout_bridge;
 pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
@@ -223,6 +226,9 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // what makes `update_field` / `focus` / `on_char` actually land. A
     // field that is only drawn and never registered cannot take a caret.
     tf.register(text_input::SHARE_SETTINGS_NICK, TextFieldConfig::text().with_max_len(64));
+    // Account key of an anonymous account: 26 characters in groups of four;
+    // the box takes a little more so a pasted key with spaces stays editable.
+    tf.register(text_input::CHECKOUT_KEY_INPUT, TextFieldConfig::text().with_max_len(64));
     tf.register(text_input::FRIENDS_NICK, TextFieldConfig::text().with_max_len(64));
 }
 
@@ -11755,6 +11761,17 @@ impl ChartApp {
                     (so.input_rect.x, so.input_rect.y, so.input_rect.width, so.input_rect.height),
                     so.char_x_positions.clone(),
                 );
+            }
+            if let Some(ref co) = fr.checkout {
+                // The account-key box exists on the key-entry page only.
+                if co.input_rect.width > 0.0 {
+                    let wid = WidgetId::from(text_input::CHECKOUT_KEY_INPUT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &wid,
+                        (co.input_rect.x, co.input_rect.y, co.input_rect.width, co.input_rect.height),
+                        co.char_x_positions.clone(),
+                    );
+                }
             }
             if let Some(ref ss) = fr.share_settings {
                 let wid = WidgetId::from(text_input::SHARE_SETTINGS_NICK);

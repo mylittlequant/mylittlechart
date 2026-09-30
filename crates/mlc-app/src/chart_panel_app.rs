@@ -140,6 +140,11 @@ pub struct ChartPanelApp {
     /// public, so signed-out sessions open it too.
     pub share_open_state: ShareOpenState,
     pub share_settings_state: ShareSettingsState,
+    /// In-app checkout modal (plans, pay, anonymous key). Not
+    /// `cfg(feature = "cloud")`: the state and drawing are plain data, and the
+    /// entry-point buttons stay hidden until a shell with a driver switches
+    /// them on (`mlc_app_layout::ui::checkout::set_entry_points_enabled`).
+    pub checkout_state: mlc_app_layout::ui::checkout::CheckoutState,
     /// chart preset id -> live share token, filled when this chart is shared.
     pub chart_share_tokens: std::collections::HashMap<String, String>,
     /// Chart browser modal state (Open Chart).
@@ -189,6 +194,7 @@ impl ChartPanelApp {
             preset_name_input: PresetNameInputState::default(),
             share_open_state: ShareOpenState::default(),
             share_settings_state: ShareSettingsState::default(),
+            checkout_state: mlc_app_layout::ui::checkout::CheckoutState::default(),
             chart_share_tokens: std::collections::HashMap::new(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
@@ -1188,6 +1194,22 @@ impl ChartPanelApp {
                     ws_result,
                 );
             }
+        }
+
+        // Checkout — last, so it paints above whatever opened it (the Account
+        // tab's Upgrade button, the Messages notice) and, on its own
+        // `ModalOverlay` layer, wins their hit-test ties too.
+        if self.checkout_state.is_open {
+            result.checkout = Some(mlc_app_layout::layout::modals::checkout::render_checkout_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.checkout_state,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         result
