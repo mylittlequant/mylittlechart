@@ -23,6 +23,7 @@
 //! `X-Profile-Id` / `X-Device-Id`; sync endpoints additionally enforce the
 //! build attestation headers when the server has `BUILD_ATTEST_ENFORCE=true`.
 
+pub mod billing;
 pub mod models;
 
 /// The one refusal [`forum_v2_error_message`]/[`dm_error_message`] special-
@@ -44,6 +45,7 @@ mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::{FetchTransport, FriendRoster};
 
+pub use billing::*;
 pub use models::*;
 
 /// Build attestation values, produced at packaging time.
