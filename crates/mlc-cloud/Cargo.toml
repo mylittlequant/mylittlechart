@@ -12,6 +12,9 @@ path = "src/lib.rs"
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Already in the workspace lock (vault, messenger). The login-challenge
+# search hashes on the host and on wasm; this line adds no new crate.
+sha2 = "0.10"
 
 # ── wasm32 transport ─────────────────────────────────────────────────────────
 # Same pattern as mlc-vault: the fetch transport only compiles on wasm32;

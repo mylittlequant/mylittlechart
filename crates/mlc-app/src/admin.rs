@@ -125,6 +125,7 @@ impl ChartApp {
             }
             AdminAction::DismissInvite => self.panel_app.user_settings_state.admin.dismiss_invite(),
             AdminAction::RefreshInvites => self.panel_app.user_settings_state.admin.refresh_invites(),
+            AdminAction::SetLoginChallenge(on) => self.panel_app.user_settings_state.admin.set_login_challenge(on),
             AdminAction::RevokeInvite(invite_id) => {
                 self.panel_app.user_settings_state.admin.arm_revoke_invite(&invite_id);
             }

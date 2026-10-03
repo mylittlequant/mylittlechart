@@ -415,6 +415,11 @@ impl BillingError {
                 code: "decode".to_string(),
                 detail: None,
             },
+            CloudError::LoginChallenge(_) => Self {
+                status: 0,
+                code: "login_challenge".to_string(),
+                detail: None,
+            },
         }
     }
 

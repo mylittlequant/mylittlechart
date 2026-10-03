@@ -25,6 +25,7 @@
 
 pub mod billing;
 pub mod friends;
+pub mod login_challenge;
 pub mod models;
 pub mod staff;
 
@@ -106,6 +107,10 @@ pub enum CloudError {
     Unauthorized,
     /// 403 — build attestation rejected (or otherwise forbidden).
     Forbidden(String),
+    /// The login challenge is on, but this client will not solve it: the
+    /// kind is not `pow`, or the proof of work did not finish. Sign-in
+    /// stops; it does not try another kind.
+    LoginChallenge(String),
 }
 
 impl CloudError {
@@ -205,6 +210,7 @@ impl std::fmt::Display for CloudError {
             CloudError::Decode(e) => write!(f, "decode: {}", e),
             CloudError::Unauthorized => write!(f, "unauthorized"),
             CloudError::Forbidden(e) => write!(f, "forbidden: {}", e),
+            CloudError::LoginChallenge(e) => write!(f, "login challenge: {}", e),
         }
     }
 }

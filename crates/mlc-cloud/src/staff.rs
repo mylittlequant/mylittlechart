@@ -327,6 +327,7 @@ pub fn staff_error(e: &CloudError) -> StaffError {
         }
         CloudError::Transport(detail) => StaffError::Network { detail: detail.clone() },
         CloudError::Decode(detail) => StaffError::Server { detail: format!("unexpected reply: {detail}") },
+        CloudError::LoginChallenge(detail) => StaffError::Server { detail: detail.clone() },
     }
 }
 

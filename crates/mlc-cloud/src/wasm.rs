@@ -3,8 +3,9 @@
 //! One `XMLHttpRequest`-free implementation on top of `window.fetch` via
 //! `web-sys`. All endpoints are same-origin in production (`server_url = ""`),
 //! so no CORS preflight is involved beyond the custom `X-*` headers — the
-//! server must allow `Authorization`, `X-Profile-Id`, `X-Device-Id` and
-//! `X-Build-*` in its CORS config for cross-origin (dev) use.
+//! server must allow `Authorization`, `X-Profile-Id`, `X-Device-Id`,
+//! `X-Login-Challenge` and `X-Build-*` in its CORS config for cross-origin
+//! (dev) use.
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
@@ -20,6 +21,23 @@ use crate::{
     StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked, StaffMintRequest, StaffMintResponse,
     StaffPaidDays, StaffPaidDaysRequest, StaffUser,
 };
+
+/// `GET /api/auth/login-policy`. `kind` is empty when the server omits it
+/// (`{"on":false}`).
+#[derive(serde::Deserialize)]
+struct LoginPolicyWire {
+    on: bool,
+    #[serde(default)]
+    kind: String,
+}
+
+/// `GET /api/auth/challenge`.
+#[derive(serde::Deserialize)]
+struct LoginChallengeWire {
+    id: String,
+    kind: String,
+    difficulty: u32,
+}
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
 pub struct FetchTransport {
@@ -484,27 +502,69 @@ impl FetchTransport {
 
     // ── account-key sign-in ─────────────────────────────────────────────
 
+    /// `GET /api/auth/login-policy` — PUBLIC, no staff auth. `false` means a
+    /// sign-in post carries no `X-Login-Challenge` header.
+    pub async fn login_policy(&self) -> Result<bool, CloudError> {
+        Ok(self.fetch_login_policy().await?.on)
+    }
+
+    async fn fetch_login_policy(&self) -> Result<LoginPolicyWire, CloudError> {
+        let (status, body) = self.exchange_public("GET", "/api/auth/login-policy", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// The `X-Login-Challenge` value for a sign-in post, or `None` when the
+    /// policy is off. An unknown kind is an error — this does not fetch
+    /// another challenge and does not try to solve it.
+    async fn login_challenge_header(&self) -> Result<Option<String>, CloudError> {
+        let policy = self.fetch_login_policy().await?;
+        if !policy.on {
+            return Ok(None);
+        }
+        if policy.kind != "pow" {
+            return Err(CloudError::LoginChallenge(format!("unsupported kind: {}", policy.kind)));
+        }
+        let (status, body) = self.exchange_public("GET", "/api/auth/challenge", None, &[]).await?;
+        let challenge: LoginChallengeWire = self.decode_success(status, &body)?;
+        if challenge.kind != "pow" {
+            return Err(CloudError::LoginChallenge(format!("unsupported kind: {}", challenge.kind)));
+        }
+        let nonce = crate::login_challenge::solve_pow(&challenge.id, challenge.difficulty).ok_or_else(|| {
+            CloudError::LoginChallenge("proof of work was not solved".to_string())
+        })?;
+        Ok(Some(crate::login_challenge::challenge_header(&challenge.id, &nonce)))
+    }
+
+    /// [`Self::login_challenge_header`], then one public POST. The header is
+    /// attached only when the policy is on.
+    async fn exchange_login(&self, path: &str, payload: String) -> Result<(u16, String), CloudError> {
+        let header = self.login_challenge_header().await?;
+        let pair = header.as_ref().map(|value| ("X-Login-Challenge", value.as_str()));
+        let extra: &[(&str, &str)] = match &pair {
+            Some(entry) => std::slice::from_ref(entry),
+            None => &[],
+        };
+        self.exchange_public("POST", path, Some(payload), extra).await
+    }
+
     /// `POST /api/auth/account-key {credential}` — PUBLIC. An ACTIVE key
     /// account's credential (`hex(C)`) becomes a cookie session
     /// (`Set-Cookie: session_id`, `HttpOnly`); the same-origin browser stores
     /// it. A bad, unknown or still-pending credential all answer `401`.
+    /// A 403 from a rejected challenge comes back through [`Self::decode_success`].
     pub async fn account_key_sign_in(&self, credential: &str) -> Result<AccountKeySession, CloudError> {
         let payload = credential_body(credential)?;
-        let (status, body) = self
-            .exchange_public("POST", "/api/auth/account-key", Some(payload), &[])
-            .await?;
+        let (status, body) = self.exchange_login("/api/auth/account-key", payload).await?;
         self.decode_success(status, &body)
     }
 
     /// `POST /api/auth/invite/redeem {invite_code, credential}` — PUBLIC.
     /// Spends a registration invite on a new key account whose credential
     /// (`hex(C)`) the client derived; the answer is a cookie session, exactly
-    /// like [`Self::account_key_sign_in`].
+    /// like [`Self::account_key_sign_in`]. Same login-challenge header.
     pub async fn invite_redeem(&self, invite_code: &str, credential: &str) -> Result<AccountKeySession, CloudError> {
         let payload = invite_redeem_body(invite_code, credential)?;
-        let (status, body) = self
-            .exchange_public("POST", "/api/auth/invite/redeem", Some(payload), &[])
-            .await?;
+        let (status, body) = self.exchange_login("/api/auth/invite/redeem", payload).await?;
         self.decode_success(status, &body)
     }
 
@@ -785,6 +845,20 @@ impl FetchTransport {
         let path = format!("/api/staff/gift-batches/{}/revoke", encode_query_component(batch_id));
         let (status, body) = self.staff_exchange("POST", &path, Some("{}".to_string())).await?;
         self.decode_success(status, &body)
+    }
+
+    /// `PUT /api/staff/login-challenge {"on": bool}` — the admin switch for
+    /// the public login challenge. Same staff bearer as the invite routes.
+    /// The answer's `on` is what the server stored; a body without it keeps
+    /// the value that was sent.
+    pub async fn staff_login_challenge_set(&self, on: bool) -> Result<bool, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "on": on }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .staff_exchange("PUT", "/api/staff/login-challenge", Some(payload))
+            .await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        Ok(value.get("on").and_then(|v| v.as_bool()).unwrap_or(on))
     }
 
     /// `POST /api/staff/invites` — issue a registration invite. The code comes

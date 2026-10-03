@@ -4263,10 +4263,16 @@ pub enum AdminKey {
     ResultInviteDiscarded = 93,
     /// Placeholder of the invite form's nick box.
     PlaceholderInviteNick = 94,
+    /// Invites section: the login-challenge switch.
+    LoginChallenge = 95,
+    /// Login challenge required.
+    ChallengeOn = 96,
+    /// Login challenge not required.
+    ChallengeOff = 97,
 }
 
 impl AdminKey {
-    pub const COUNT: usize = 95;
+    pub const COUNT: usize = 98;
 
     /// Get translation for this key.
     #[inline]

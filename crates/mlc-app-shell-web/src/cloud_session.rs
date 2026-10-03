@@ -4297,6 +4297,9 @@ fn admin_failed(request: &AdminRequest, failure: AdminFailure) -> AdminOutcome {
         AdminRequest::IssueInvite { .. } => AdminOutcome::InviteIssued(Err(failure)),
         AdminRequest::LoadInvites => AdminOutcome::Invites(Err(failure)),
         AdminRequest::RevokeInvite { .. } => AdminOutcome::InviteRevoked(Err(failure)),
+        AdminRequest::LoadLoginChallenge | AdminRequest::SetLoginChallenge { .. } => {
+            AdminOutcome::LoginChallenge(Err(failure))
+        }
     }
 }
 
@@ -4423,6 +4426,18 @@ async fn run_admin(
         AdminRequest::RevokeInvite { invite_id, nick } => {
             AdminOutcome::InviteRevoked(match transport.staff_invite_revoke(&invite_id).await {
                 Ok(_) => Ok((nick, invite_id)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::LoadLoginChallenge => {
+            AdminOutcome::LoginChallenge(match transport.login_policy().await {
+                Ok(on) => Ok(on),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::SetLoginChallenge { on } => {
+            AdminOutcome::LoginChallenge(match transport.staff_login_challenge_set(on).await {
+                Ok(on) => Ok(on),
                 Err(e) => Err(admin_error(inner, &e)),
             })
         }

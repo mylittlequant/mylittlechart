@@ -268,6 +268,9 @@ pub enum AdminAction {
     DismissInvite,
     RefreshInvites,
     RevokeInvite(String),
+    /// Turn the login challenge on or off. The hit id is `login_challenge:on`
+    /// or `login_challenge:off`.
+    SetLoginChallenge(bool),
 }
 
 impl AdminAction {
@@ -294,6 +297,7 @@ impl AdminAction {
             Self::DismissInvite => "invite_done".to_string(),
             Self::RefreshInvites => "invite_refresh".to_string(),
             Self::RevokeInvite(id) => format!("invite_revoke:{id}"),
+            Self::SetLoginChallenge(on) => format!("login_challenge:{}", if *on { "on" } else { "off" }),
         };
         format!("user_settings:admin:{tail}")
     }
@@ -326,6 +330,11 @@ impl AdminAction {
                     "invite_revoke" if !arg.is_empty() => Some(Self::RevokeInvite(arg.to_string())),
                     "life_grant" => LifetimeKind::from_tag(arg).map(Self::LifetimeGrant),
                     "life_revoke" => LifetimeKind::from_tag(arg).map(Self::LifetimeRevoke),
+                    "login_challenge" => match arg {
+                        "on" => Some(Self::SetLoginChallenge(true)),
+                        "off" => Some(Self::SetLoginChallenge(false)),
+                        _ => None,
+                    },
                     _ => None,
                 }
             }
@@ -731,6 +740,10 @@ pub enum AdminRequest {
     IssueInvite { nick: String, paid_days: i64, note: String },
     LoadInvites,
     RevokeInvite { invite_id: String, nick: String },
+    /// `GET /api/auth/login-policy` — fills [`AdminState::login_challenge`].
+    LoadLoginChallenge,
+    /// `PUT /api/staff/login-challenge`.
+    SetLoginChallenge { on: bool },
 }
 
 /// What the shell hands back when a request settles.
@@ -750,6 +763,8 @@ pub enum AdminOutcome {
     Invites(Result<Vec<AdminInviteRow>, AdminFailure>),
     /// `(nick, invite id)` of the revoked invite.
     InviteRevoked(Result<(String, String), AdminFailure>),
+    /// The login-challenge flag, from a load or from a set.
+    LoginChallenge(Result<bool, AdminFailure>),
 }
 
 /// An action armed and waiting for the confirm click.
@@ -899,6 +914,9 @@ pub struct AdminState {
     pub batches: Option<Vec<AdminBatchRow>>,
     /// The invites table; `None` until the first fetch lands.
     pub invites: Option<Vec<AdminInviteRow>>,
+    /// Whether sign-in currently requires the login challenge. `None` until
+    /// the Invites section has loaded the public policy.
+    pub login_challenge: Option<bool>,
     /// The User section's card.
     pub user: Option<AdminUserCard>,
     /// Status line under the active section.
@@ -914,6 +932,9 @@ pub struct AdminState {
     batches_requested: bool,
     /// Same as `batches_requested`, for the invites table.
     invites_requested: bool,
+    /// The login-challenge flag has been asked for this visit. A failed load
+    /// stays failed until Refresh, the same way a failed batches load does.
+    login_challenge_requested: bool,
     /// The modal closed while a request was in flight; its outcome is dropped.
     discard_inflight: bool,
 }
@@ -951,14 +972,40 @@ impl AdminState {
         match self.section {
             AdminSection::Coupons if !self.batches_requested && self.batches.is_none() => self.refresh_batches(),
             AdminSection::Invites if !self.invites_requested && self.invites.is_none() => self.refresh_invites(),
+            AdminSection::Invites => self.queue_login_challenge_load(),
             _ => {}
         }
     }
 
-    /// Reload the invites table.
+    /// Reload the invites table. The login-challenge flag is loaded again
+    /// once this table answer lands.
     pub fn refresh_invites(&mut self) {
         if self.issue(AdminRequest::LoadInvites) {
             self.invites_requested = true;
+            self.login_challenge_requested = false;
+        }
+    }
+
+    /// Ask for the public login-policy flag, once per visit, and only while
+    /// the Invites section is the one on screen.
+    fn queue_login_challenge_load(&mut self) {
+        if self.section != AdminSection::Invites || self.login_challenge_requested {
+            return;
+        }
+        if self.issue(AdminRequest::LoadLoginChallenge) {
+            self.login_challenge_requested = true;
+        }
+    }
+
+    /// Queue the login-challenge switch. The value already on screen is not
+    /// sent again.
+    pub fn set_login_challenge(&mut self, on: bool) {
+        if self.login_challenge == Some(on) {
+            return;
+        }
+        if self.issue(AdminRequest::SetLoginChallenge { on }) {
+            self.notice = None;
+            self.confirm = None;
         }
     }
 
@@ -1134,6 +1181,7 @@ impl AdminState {
         self.busy = false;
         let refresh = matches!(outcome, AdminOutcome::Minted(Ok(_)) | AdminOutcome::BatchRevoked(Ok(_)));
         let refresh_invites = matches!(outcome, AdminOutcome::InviteIssued(Ok(_)) | AdminOutcome::InviteRevoked(Ok(_)));
+        let load_login_challenge = matches!(outcome, AdminOutcome::Invites(Ok(_)));
         if std::mem::take(&mut self.discard_inflight) {
             // The window closed while this ran. A mint's codes and an invite
             // code must not outlive the close, so they are dropped and the
@@ -1194,6 +1242,7 @@ impl AdminState {
             AdminOutcome::InviteRevoked(Ok((nick, _id))) => {
                 self.notice = Some(AdminNotice::Ok(AdminSuccess::InviteRevoked { nick }));
             }
+            AdminOutcome::LoginChallenge(Ok(on)) => self.login_challenge = Some(on),
             AdminOutcome::Minted(Err(f))
             | AdminOutcome::Batches(Err(f))
             | AdminOutcome::BatchRevoked(Err(f))
@@ -1202,12 +1251,18 @@ impl AdminState {
             | AdminOutcome::LifetimeRevoked(Err(f))
             | AdminOutcome::InviteIssued(Err(f))
             | AdminOutcome::Invites(Err(f))
-            | AdminOutcome::InviteRevoked(Err(f)) => self.notice = Some(AdminNotice::Failed(f)),
+            | AdminOutcome::InviteRevoked(Err(f))
+            | AdminOutcome::LoginChallenge(Err(f)) => self.notice = Some(AdminNotice::Failed(f)),
         }
         if refresh {
             self.issue(AdminRequest::LoadBatches);
         } else if refresh_invites {
             self.issue(AdminRequest::LoadInvites);
+        } else if load_login_challenge {
+            // The flag rides with the table: one load when the section's
+            // list arrives, and again after Refresh (that path clears
+            // `login_challenge_requested` before re-asking for the list).
+            self.queue_login_challenge_load();
         }
     }
 
@@ -2046,6 +2101,8 @@ mod tests {
             AdminAction::DismissInvite,
             AdminAction::RefreshInvites,
             AdminAction::RevokeInvite("inv_7".to_string()),
+            AdminAction::SetLoginChallenge(true),
+            AdminAction::SetLoginChallenge(false),
             AdminAction::Field(AdminField::InviteNick),
             AdminAction::Field(AdminField::InviteDays),
             AdminAction::Field(AdminField::InviteNote),
@@ -2175,6 +2232,9 @@ mod tests {
         st.auto_load(true);
         assert_eq!(st.take_request(), Some(AdminRequest::LoadInvites));
         st.apply(AdminOutcome::Invites(Ok(vec![invite_row("inv_1", "nix", InviteState::Open)])));
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadLoginChallenge));
+        st.apply(AdminOutcome::LoginChallenge(Ok(false)));
+        assert_eq!(st.login_challenge, Some(false));
         st.auto_load(true);
         assert!(st.pending.is_none(), "already loaded");
 
@@ -2225,5 +2285,41 @@ mod tests {
         assert!(lines[0].revocable && !lines[1].revocable);
         assert_eq!(lines[1].state, "Redeemed");
         assert_eq!(invite_headers(EN).len(), 5);
+    }
+
+    #[test]
+    fn the_login_challenge_switch_loads_with_invites_and_sends_only_a_change() {
+        let mut st = served();
+        st.set_section(AdminSection::Invites);
+        st.auto_load(true);
+        let _ = st.take_request();
+        st.apply(AdminOutcome::Invites(Ok(vec![])));
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadLoginChallenge));
+        st.apply(AdminOutcome::LoginChallenge(Ok(false)));
+        assert_eq!(st.login_challenge, Some(false));
+
+        st.set_login_challenge(false);
+        assert!(st.pending.is_none(), "the value already shown is not sent");
+        st.set_login_challenge(true);
+        assert_eq!(st.pending, Some(AdminRequest::SetLoginChallenge { on: true }));
+        let _ = st.take_request();
+        st.apply(AdminOutcome::LoginChallenge(Ok(true)));
+        assert_eq!(st.login_challenge, Some(true));
+        assert!(st.pending.is_none());
+    }
+
+    #[test]
+    fn a_failed_login_challenge_load_is_a_notice_and_is_not_retried() {
+        let mut st = served();
+        st.set_section(AdminSection::Invites);
+        st.auto_load(true);
+        let _ = st.take_request();
+        st.apply(AdminOutcome::Invites(Ok(vec![])));
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadLoginChallenge));
+        st.apply(AdminOutcome::LoginChallenge(Err(AdminFailure::Forbidden)));
+        assert!(matches!(st.notice, Some(AdminNotice::Failed(AdminFailure::Forbidden))));
+        assert!(st.login_challenge.is_none());
+        st.auto_load(true);
+        assert!(st.pending.is_none(), "a failed load is retried by Refresh, not in a loop");
     }
 }

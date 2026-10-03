@@ -597,9 +597,44 @@ fn coupons(ui: &mut Ui<'_>, admin: &AdminState, x: f64, mut cy: f64, cw: f64) ->
 // Invites
 // =============================================================================
 
+/// One row: "Login challenge" and the On / Off buttons. The button matching
+/// the loaded flag is drawn as the current one; both stay clickable so the
+/// tone stays visible (a same-value click does not send).
+fn login_challenge_row(ui: &mut Ui<'_>, admin: &AdminState, x: f64, cy: f64, cw: f64) -> f64 {
+    let lang = ui.lang;
+    let on_label = AdminKey::ChallengeOn.get(lang);
+    let off_label = AdminKey::ChallengeOff.get(lang);
+    let on_w = ui.btn_w(on_label);
+    let off_w = ui.btn_w(off_label);
+    let off_x = x + cw - off_w;
+    let on_x = off_x - GAP - on_w;
+    let label_w = (on_x - x - GAP).max(1.0);
+    let color = ui.tt.item_text.clone();
+    ui.text_fit(AdminKey::LoginChallenge.get(lang), x, cy + 5.0, label_w, FONT, &color);
+    let current = admin.login_challenge;
+    let enabled = !ui.busy;
+    ui.button(
+        &AdminAction::SetLoginChallenge(true),
+        on_label,
+        WidgetRect::new(on_x, cy, on_w, BTN_H),
+        if current == Some(true) { Tone::Primary } else { Tone::Neutral },
+        enabled,
+    );
+    ui.button(
+        &AdminAction::SetLoginChallenge(false),
+        off_label,
+        WidgetRect::new(off_x, cy, off_w, BTN_H),
+        if current == Some(false) { Tone::Primary } else { Tone::Neutral },
+        enabled,
+    );
+    cy + BTN_H + 12.0
+}
+
 fn invites(ui: &mut Ui<'_>, admin: &AdminState, x: f64, mut cy: f64, cw: f64) -> f64 {
     let lang = ui.lang;
     let busy = ui.busy;
+
+    cy = login_challenge_row(ui, admin, x, cy, cw);
 
     // ── Issue form ───────────────────────────────────────────────────────
     cy += ui.heading(AdminKey::InviteTitle.get(lang), x, cy);
@@ -1331,7 +1366,7 @@ mod tests {
         let mut st = admin_state();
         st.admin.set_section(AdminSection::Invites);
         let (texts, result) = render(&st);
-        for s in ["Issue a registration invite", "Issue invite", "Nick", "Days", "Note"] {
+        for s in ["Login challenge", "On", "Off", "Issue a registration invite", "Issue invite", "Nick", "Days", "Note"] {
             assert!(has(&texts, s), "{s}: {texts:?}");
         }
         for field in [AdminField::InviteNick, AdminField::InviteDays, AdminField::InviteNote] {
