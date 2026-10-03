@@ -6,6 +6,7 @@
 //! Core re-exports these via `pub use mlc_core::ui::modal_settings::*`.
 
 use crate::ui::admin_tab::{AdminRequest, AdminState};
+use crate::ui::friends::{FriendInviteRow, FriendNote};
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
 #[cfg(feature = "cloud")]
@@ -3934,19 +3935,29 @@ pub struct UserSettingsState {
     pub shares_tab_scroll: ScrollState,
     /// Rows of `GET /api/share/mine`, filled by the shell.
     pub share_rows: Vec<ShareAdminRow>,
-    /// Whether nick search in messenger and share may find this account.
-    /// Friends can still find a hidden account.
+    /// Whether nick search (friends, share, messenger) may find this account.
+    /// Off until the person turns it on: a hidden account is reached only
+    /// through a personal invite link or code.
     pub discoverable: bool,
     pub friend_nicks: Vec<String>,
+    /// Requests waiting for this account's Approve / Decline.
     pub friend_incoming: Vec<String>,
+    /// Requests this account sent, not yet approved.
     pub friend_outgoing: Vec<String>,
     pub friend_subscriptions: Vec<String>,
+    /// Accounts following this one (a requester is one until approved).
+    pub friend_subscribers: Vec<String>,
     pub friend_blocked: Vec<String>,
-    pub friend_invite: String,
+    /// My outstanding personal invite links.
+    pub friend_invites: Vec<FriendInviteRow>,
     /// Nick-search hits in the Friends tab. Nicks only.
     pub friend_hits: Vec<String>,
-    pub friend_note: String,
-    /// `load` | `discoverable` | `invite` | `add:{nick}`. The shell drains it.
+    /// The Friends tab's status line.
+    pub friend_note: Option<FriendNote>,
+    /// What the shell should do next, one at a time: `load` | `discoverable` |
+    /// `invite` (create a link) | `{action}:{nick}` (an action of
+    /// `mlc_cloud::FRIEND_ACTIONS`) | `irevoke:{token}` | `accept` (redeem the
+    /// box's link or code). The shell drains it.
     pub friend_cmd: Option<String>,
     pub share_status: String,
     /// Token of a pinned share whose Revoke click is waiting for Confirm.
@@ -4265,15 +4276,16 @@ impl Default for UserSettingsState {
             account_tab_scroll: ScrollState::default(),
             shares_tab_scroll: ScrollState::default(),
             share_rows: Vec::new(),
-            discoverable: true,
+            discoverable: false,
             friend_nicks: Vec::new(),
             friend_incoming: Vec::new(),
             friend_outgoing: Vec::new(),
             friend_subscriptions: Vec::new(),
+            friend_subscribers: Vec::new(),
             friend_blocked: Vec::new(),
-            friend_invite: String::new(),
+            friend_invites: Vec::new(),
             friend_hits: Vec::new(),
-            friend_note: String::new(),
+            friend_note: None,
             friend_cmd: None,
             share_status: String::new(),
             share_revoke_confirm: None,
@@ -4932,6 +4944,10 @@ pub struct CloudLoginState {
     pub is_dragging: bool,
     /// Offset from mouse to overlay top-left (for smooth dragging).
     pub drag_offset: Option<(f64, f64)>,
+    /// The page was opened with a personal friend-invite link while signed
+    /// out: the overlay says the invite is accepted once the person signs in.
+    /// Set by the shell at boot, cleared when it signs in.
+    pub friend_invite_pending: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -4948,6 +4964,7 @@ impl Default for CloudLoginState {
             position: None,
             is_dragging: false,
             drag_offset: None,
+            friend_invite_pending: false,
         }
     }
 }

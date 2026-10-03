@@ -34,6 +34,7 @@ use super::tables::{
     SHARE_VIEWER_KEY_TABLE,
     FORUM_KEY_TABLE,
     CHECKOUT_KEY_TABLE,
+    FRIENDS_KEY_TABLE,
 };
 
 // =============================================================================
@@ -4479,6 +4480,126 @@ impl uzor::i18n::Translate for CheckoutKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&CHECKOUT_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Friends Keys (Settings -> Friends, Account tab privacy toggle)
+// =============================================================================
+
+/// Translations for the friends surfaces: the hidden-by-default toggle, requests,
+/// subscribers and personal invite links.
+///
+/// Variant order is **frozen** — discriminant == row index in `FRIENDS_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum FriendsKey {
+    /// Account tab: the discoverable toggle's label.
+    ShowInSearch = 0,
+    /// Account tab: what a hidden account means.
+    ShowInSearchHint = 1,
+    /// Friends tab: nick search box hint.
+    NickPlaceholder = 2,
+    /// Every nick search and lookup that finds nothing. Hidden accounts read the same.
+    NoSuchUser = 3,
+    /// Button: send a friend request.
+    BtnRequest = 4,
+    /// Button: subscribe to a public account.
+    BtnSubscribe = 5,
+    /// Button: drop a subscription.
+    BtnUnsubscribe = 6,
+    /// Button: approve an incoming request.
+    BtnApprove = 7,
+    /// Button: decline an incoming request.
+    BtnDecline = 8,
+    /// Button: remove a friend.
+    BtnRemove = 9,
+    /// Button: block an account.
+    BtnBlock = 10,
+    /// Button: lift a block.
+    BtnUnblock = 11,
+    /// Button: create a personal invite link.
+    BtnCreateInvite = 12,
+    /// Button: copy to the clipboard.
+    BtnCopy = 13,
+    /// Button: revoke an invite link.
+    BtnRevoke = 14,
+    /// Button: redeem a pasted invite link or code.
+    BtnAcceptInvite = 15,
+    /// Section: requests to me.
+    SecIncoming = 16,
+    /// Section: requests I sent.
+    SecOutgoing = 17,
+    /// Section: friends.
+    SecFriends = 18,
+    /// Section: accounts subscribed to me (requesters until approved).
+    SecSubscribers = 19,
+    /// Section: accounts I subscribed to.
+    SecSubscriptions = 20,
+    /// Section: blocked accounts.
+    SecBlocked = 21,
+    /// Section: my personal invite links.
+    SecInvites = 22,
+    /// Empty requests list.
+    EmptyRequests = 23,
+    /// Empty friends list.
+    EmptyFriends = 24,
+    /// Empty subscribers list.
+    EmptySubscribers = 25,
+    /// Empty subscriptions list.
+    EmptySubscriptions = 26,
+    /// Empty blocked list.
+    EmptyBlocked = 27,
+    /// Empty invite-link list.
+    EmptyInvites = 28,
+    /// Invite link row; `{uses}`, `{max}`, `{date}`.
+    InviteMeta = 29,
+    /// Tag on a request I sent that is not approved yet.
+    Pending = 30,
+    /// Redeem box hint.
+    InviteCodePlaceholder = 31,
+    /// Status: copied to the clipboard.
+    NoteCopied = 32,
+    /// Status: request sent.
+    NoteRequested = 33,
+    /// Status: an invite link was opened while signed out.
+    NoteSignInToAccept = 34,
+    /// Status: invite accepted; `{nick}`.
+    NoteAccepted = 35,
+    /// Status: invite accepted, the server named no one.
+    NoteAcceptedAnon = 36,
+    /// Error: the nick is the caller's own.
+    ErrIsYou = 37,
+    /// Error: approve/decline with nothing pending.
+    ErrNoRequest = 38,
+    /// Error: the caller blocked that account.
+    ErrBlocked = 39,
+    /// Error: 429.
+    ErrRateLimited = 40,
+    /// Error: an invite link or code is not valid.
+    ErrInviteInvalid = 41,
+    /// Error: anything else.
+    ErrGeneric = 42,
+    /// Toggle state: on.
+    On = 43,
+    /// Toggle state: off.
+    Off = 44,
+}
+
+impl FriendsKey {
+    pub const COUNT: usize = 45;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&FRIENDS_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for FriendsKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&FRIENDS_KEY_TABLE[self as usize], lang_index)
     }
 }
 

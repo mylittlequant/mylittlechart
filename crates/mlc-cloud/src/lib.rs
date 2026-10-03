@@ -24,6 +24,7 @@
 //! build attestation headers when the server has `BUILD_ATTEST_ENFORCE=true`.
 
 pub mod billing;
+pub mod friends;
 pub mod models;
 pub mod staff;
 
@@ -44,9 +45,13 @@ pub const NICK_REQUIRED_SENTINEL: &str = "__mlc_nick_required__";
 mod wasm;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::{FetchTransport, FriendRoster};
+pub use wasm::FetchTransport;
 
 pub use billing::*;
+pub use friends::{
+    friend_error, invite_token_from_paste, FriendAccepted, FriendError, FriendInvite, FriendInviteCreated,
+    FriendRoster, FRIEND_ACTIONS,
+};
 pub use models::*;
 pub use staff::{
     staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffInvite, StaffInviteIssued, StaffInviteList, StaffInviteRequest,

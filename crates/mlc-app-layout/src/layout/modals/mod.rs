@@ -75,6 +75,7 @@ pub use compare_color_picker::render_compare_color_picker_popup;
 pub use chart_browser::{render_chart_browser, ChartBrowserResult};
 pub mod user_settings;
 mod user_settings_admin;
+mod user_settings_friends;
 pub use user_settings::render_user_settings_modal;
 pub mod welcome_wizard;
 pub use welcome_wizard::render_welcome_wizard;

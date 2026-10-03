@@ -7,8 +7,8 @@ edition.workspace = true
 name = "mlc_app_render_context_tiny_skia"
 
 [dependencies]
-uzor = "=1.5.2"
-uzor-render-tiny-skia = "=1.5.2"
+uzor = "=1.5.3"
+uzor-render-tiny-skia = "=1.5.3"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]

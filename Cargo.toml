@@ -79,30 +79,10 @@ strip = "none"
 opt-level = 2
 
 [patch.crates-io]
-# Local uzor path build. Pins are =1.5.2 = the LOCAL uzor tree version
-# (published is 1.5.1) — the exact pin must match the local tree or this
-# patch silently deactivates and mlc builds against crates.io (drifted
-# 2026-07-18: pins were =1.4.16 while the tree was 1.4.18 → per-element
-# stroke-width fix invisible). Keep pins == local uzor workspace version;
-# re-align on every uzor bump/publish.
-uzor                  = { path = "../uzor/uzor" }
-uzor-fonts            = { path = "../uzor/uzor-fonts" }
-uzor-window-web       = { path = "../uzor/uzor-window-web" }
-uzor-render-canvas2d  = { path = "../uzor/uzor-render-canvas2d" }
-uzor-text             = { path = "../uzor/uzor-text" }
-# The native renderers, on the same terms. They were pinned "=1.4.16" and
-# absent from this list, so every desktop build took them from crates.io
-# while the web renderer (uzor-render-canvas2d, above) came from the local
-# tree — the two surfaces drew with different code almost a version apart.
-# That is why a drawing primitive's control point had its outline in the
-# browser and not in the app (2026-09-03), and it is exactly the drift the
-# note above warns about.
-uzor-render-vello-gpu      = { path = "../uzor/uzor-render-vello-gpu" }
-uzor-render-wgpu-instanced = { path = "../uzor/uzor-render-wgpu-instanced" }
-uzor-render-vello-hybrid   = { path = "../uzor/uzor-render-vello-hybrid" }
-uzor-render-vello-cpu      = { path = "../uzor/uzor-render-vello-cpu" }
-uzor-render-tiny-skia      = { path = "../uzor/uzor-render-tiny-skia" }
-# Local dig3 path build — same policy as uzor. Pins stay at the published
+# uzor comes from crates.io. Published tip is 1.5.3 (owner 2026-10-03:
+# do not path-patch the local tree; its 1.6.0-dev label is not a release).
+# Pins below are "=1.5.3".
+# Local dig3 path build. Pins stay at the published
 # 0.3.25; the patch resolves them to the working tree so in-flight dig3
 # fixes are picked up without a publish round-trip. Keep pins == published
 # dig3 version on every bump; all three crates patched together so the

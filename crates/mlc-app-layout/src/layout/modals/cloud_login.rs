@@ -118,6 +118,16 @@ fn draw_entry_links(
     ly
 }
 
+/// Height of the "sign in to accept the friend invite" line, when the page
+/// was opened with such a link.
+fn invite_banner_h(state: &CloudLoginState) -> f64 {
+    if state.friend_invite_pending {
+        26.0
+    } else {
+        0.0
+    }
+}
+
 /// Body height per phase — the shell sizes the frame from this.
 fn content_height(state: &CloudLoginState) -> f64 {
     match &state.phase {
@@ -125,10 +135,12 @@ fn content_height(state: &CloudLoginState) -> f64 {
         CloudLoginPhase::ChooseProvider => {
             24.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP)
                 + entry_link_h()
+                + invite_banner_h(state)
         }
         CloudLoginPhase::AwaitingConfirm { .. } => {
             42.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP) + 18.0
                 + entry_link_h()
+                + invite_banner_h(state)
         }
         // Signed-in text + Sign out button only, now that the gift-code box
         // moved out (2026-09-23) — see this phase's own doc for why nothing
@@ -216,6 +228,7 @@ fn draw_body(
         // through a loopback redirect, so there is no code to display and
         // nothing to poll — the browser comes back to us.
         CloudLoginPhase::ChooseProvider => {
+            let y = y + draw_invite_banner(ctx, state, x, y, tt);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.set_font("13px sans-serif");
@@ -252,6 +265,7 @@ fn draw_body(
         // offering to open a page where it must be typed, asked the user to do
         // by hand what the URL already did (owner, 2026-09-04).
         CloudLoginPhase::AwaitingConfirm { .. } => {
+            let y = y + draw_invite_banner(ctx, state, x, y, tt);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.set_font("13px sans-serif");
@@ -352,6 +366,20 @@ fn draw_body(
     }
 }
 
+/// The "sign in to accept the friend invite" line; returns the height it took.
+fn draw_invite_banner(ctx: &mut dyn RenderContext, state: &CloudLoginState, x: f64, y: f64, tt: &ToolbarTheme) -> f64 {
+    let h = invite_banner_h(state);
+    if h > 0.0 {
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.set_font("600 12px sans-serif");
+        ctx.set_fill_color(&tt.accent);
+        let line = mlc_core::i18n::FriendsKey::NoteSignInToAccept.get(mlc_core::i18n::current_language());
+        ctx.fill_text(line, x, y);
+    }
+    h
+}
+
 /// Button fills: the gold CTA follows the brandbook, the rest follow the
 /// toolbar theme so hover/active match every other modal.
 enum BtnStyle {
@@ -419,6 +447,21 @@ mod tests {
         assert!(entry_links(false, true).is_empty(), "no checkout driver, no links");
         assert!(entry_links(true, false).is_empty(), "key accounts off, no links");
         assert!(entry_links(false, false).is_empty());
+    }
+
+    #[test]
+    fn a_friend_invite_link_opened_signed_out_adds_a_banner_line() {
+        let mut state = CloudLoginState::default();
+        state.phase = CloudLoginPhase::ChooseProvider;
+        let plain = content_height(&state);
+        state.friend_invite_pending = true;
+        assert_eq!(content_height(&state), plain + 26.0, "the banner takes its own row");
+        assert_eq!(
+            mlc_core::i18n::FriendsKey::NoteSignInToAccept.get(mlc_core::i18n::Language::En),
+            "Sign in to accept the friend invite."
+        );
+        state.friend_invite_pending = false;
+        assert_eq!(content_height(&state), plain);
     }
 
     #[test]

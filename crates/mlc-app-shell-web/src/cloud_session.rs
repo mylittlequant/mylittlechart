@@ -23,6 +23,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
+use mlc_app_layout::ui::friends::FriendNote;
 use mlc_app_layout::ui::admin_tab::{
     AdminBatchRow, AdminFailure, AdminInviteRow, AdminIssuedInvite, AdminLedgerRow, AdminLifetimeDone, AdminMinted,
     AdminOutcome, AdminRequest, AdminUserCard, InviteStamps, LifetimeKind,
@@ -192,10 +193,17 @@ enum FlowResult {
     },
 }
 
+/// What a finished friends request hands back to `poll_friends`.
 enum FriendApply {
-    List(mlc_cloud::FriendRoster),
-    Invite(String),
-    Note(String),
+    /// A fresh roster and invite-link list (each `None` when that read
+    /// failed), and the status line the request ends on.
+    Lists {
+        roster: Option<mlc_cloud::FriendRoster>,
+        invites: Option<Vec<mlc_cloud::FriendInvite>>,
+        note: Option<FriendNote>,
+        /// The redeem box's link was used: empty it.
+        clear_code: bool,
+    },
 }
 
 fn friend_query_token() -> Option<String> {
@@ -209,6 +217,73 @@ fn friend_query_token() -> Option<String> {
         }
     }
     None
+}
+
+/// Take `friend=` out of the address bar once its token was used, so a
+/// reload does not try the spent link again. Other parameters stay.
+fn clear_friend_query() {
+    let Some(window) = web_sys::window() else { return };
+    let location = window.location();
+    let (Ok(search), Ok(path)) = (location.search(), location.pathname()) else { return };
+    let kept: Vec<&str> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|part| !part.is_empty() && !part.starts_with("friend="))
+        .collect();
+    let url = if kept.is_empty() { path } else { format!("{path}?{}", kept.join("&")) };
+    if let Ok(history) = window.history() {
+        let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&url));
+    }
+}
+
+/// Re-read the roster and the invite links. Each is `None` when its read failed.
+async fn read_friend_lists(
+    transport: &FetchTransport,
+) -> (Option<mlc_cloud::FriendRoster>, Option<Vec<mlc_cloud::FriendInvite>>) {
+    (transport.account_friends().await.ok(), transport.account_friend_invites().await.ok())
+}
+
+/// Run one Friends command against the account routes and shape the result.
+async fn run_friend_cmd(
+    transport: &FetchTransport,
+    inner: &Rc<RefCell<Inner>>,
+    command: mlc_app::friends_bridge::FriendCmd,
+    discoverable: bool,
+) -> FriendApply {
+    use mlc_app::friends_bridge::{note_for_error, FriendCmd};
+    let failed = |e: &mlc_cloud::CloudError| {
+        mark_unauthorized(inner, e);
+        note_for_error(mlc_cloud::friend_error(e))
+    };
+    let mut note = None;
+    match command {
+        FriendCmd::Load => {}
+        FriendCmd::Discoverable => {
+            if let Err(e) = transport.account_set_discoverable(discoverable).await {
+                note = Some(failed(&e));
+            }
+        }
+        FriendCmd::CreateInvite => match transport.account_friend_invite_create().await {
+            Ok(made) => {
+                inner.borrow_mut().friend_clipboard = Some(mlc_app_layout::ui::friends::invite_link(&made.token));
+                note = Some(FriendNote::Copied);
+            }
+            Err(e) => note = Some(failed(&e)),
+        },
+        FriendCmd::RevokeInvite(token) => {
+            if let Err(e) = transport.account_friend_invite_revoke(&token).await {
+                note = Some(failed(&e));
+            }
+        }
+        FriendCmd::Act { action, nick } => match transport.account_friend_act(&nick, &action).await {
+            Ok(()) if action == "request" => note = Some(FriendNote::Requested),
+            Ok(()) => {}
+            Err(e) => note = Some(failed(&e)),
+        },
+        FriendCmd::Accept => {}
+    }
+    let (roster, invites) = read_friend_lists(transport).await;
+    FriendApply::Lists { roster, invites, note, clear_code: false }
 }
 
 /// What a live-socket callback saw. Queued by the callback, applied to the
@@ -367,7 +442,15 @@ struct Inner {
     /// A pull for this token answered 404: the share is gone.
     share_ops_gone: Option<String>,
     friend_busy: bool,
-    friend_accept_tried: bool,
+    /// The invite token the page was opened with (`/?friend=<token>`), until
+    /// it is accepted or found invalid.
+    friend_boot_token: Option<String>,
+    /// The signed-out visitor was already asked to sign in for that link.
+    friend_signin_asked: bool,
+    /// A freshly created invite link, for the app to put on the clipboard.
+    friend_clipboard: Option<String>,
+    /// The token came from the address bar: open the Friends tab on the result.
+    friend_open_tab_after: bool,
     friend_result: Option<FriendApply>,
     friend_lookup_q: String,
     friend_lookup_at_ms: f64,
@@ -629,7 +712,10 @@ impl CloudSession {
                 share_ops_push_ok: None,
                 share_ops_gone: None,
                 friend_busy: false,
-                friend_accept_tried: false,
+                friend_boot_token: friend_query_token(),
+                friend_signin_asked: false,
+                friend_clipboard: None,
+                friend_open_tab_after: false,
                 friend_result: None,
                 friend_lookup_q: String::new(),
                 friend_lookup_at_ms: 0.0,
@@ -1092,7 +1178,8 @@ impl CloudSession {
                         .collect::<Vec<_>>();
                     (hits, None)
                 }
-                Err(e) => (Vec::new(), Some(e.to_string())),
+                // A nick that is missing, hidden or refused reads the same: no hits.
+                Err(_) => (Vec::new(), None),
             };
             let mut guard = inner.borrow_mut();
             guard.share_lookup_busy = false;
@@ -1182,80 +1269,121 @@ impl CloudSession {
     }
 
     fn poll_friends(&self, chart: &mut ChartApp) {
+        use mlc_app::friends_bridge as bridge;
         if let Some(hits) = self.inner.borrow_mut().friend_hits_in.take() {
             chart.set_friend_hits(hits);
         }
+        if let Some(link) = self.inner.borrow_mut().friend_clipboard.take() {
+            chart.clipboard_text = Some(link);
+        }
         if let Some(apply) = self.inner.borrow_mut().friend_result.take() {
+            let open_tab = std::mem::take(&mut self.inner.borrow_mut().friend_open_tab_after);
             match apply {
-                FriendApply::List(roster) => {
+                FriendApply::Lists { roster, invites, note, clear_code } => {
                     let uss = &mut chart.panel_app.user_settings_state;
-                    uss.discoverable = roster.discoverable;
-                    uss.friend_nicks = roster.friends;
-                    uss.friend_incoming = roster.incoming;
-                    uss.friend_outgoing = roster.outgoing;
-                    uss.friend_subscriptions = roster.subscriptions;
-                    uss.friend_blocked = roster.blocked;
-                    if uss.friend_note != "Copied" {
-                        uss.friend_note.clear();
+                    if let Some(roster) = roster {
+                        bridge::apply_roster(uss, roster);
                     }
-                }
-                FriendApply::Invite(url) => {
-                    let full = format!("https://chart.example{url}");
-                    chart.panel_app.user_settings_state.friend_invite = full.clone();
-                    chart.clipboard_text = Some(full);
-                    chart.panel_app.user_settings_state.friend_note = "Copied".to_string();
-                }
-                FriendApply::Note(note) => {
-                    chart.panel_app.user_settings_state.friend_note = note;
+                    if let Some(invites) = invites {
+                        bridge::apply_invites(uss, invites);
+                    }
+                    if let Some(note) = note {
+                        uss.friend_note = Some(note);
+                    }
+                    if clear_code {
+                        chart.clear_friends_invite_code();
+                    }
+                    if open_tab {
+                        // A link opened from the address bar: show what came of it.
+                        let uss = &mut chart.panel_app.user_settings_state;
+                        uss.open();
+                        uss.set_tab(mlc_app_layout::ui::modal_settings::UserSettingsTab::Friends);
+                    }
                 }
             }
         }
-        if self.inner.borrow().friend_busy || !self.is_signed_in() {
+        if self.inner.borrow().friend_busy {
             return;
         }
-        if !self.inner.borrow().friend_accept_tried {
-            self.inner.borrow_mut().friend_accept_tried = true;
-            if let Some(token) = friend_query_token() {
+
+        // ── A `/?friend=<token>` link the page was opened with ────────────
+        // Signed out: ask once to sign in (the overlay says why); the link
+        // stays in the address bar, so the accept runs on its own after the
+        // sign-in. Signed in: accept it and show the result.
+        if !self.is_signed_in() {
+            let ask = {
+                let mut inner = self.inner.borrow_mut();
+                let ask = inner.friend_boot_token.is_some() && !inner.friend_signin_asked;
+                if ask {
+                    inner.friend_signin_asked = true;
+                }
+                ask
+            };
+            if ask {
+                chart.panel_app.cloud_login_state.friend_invite_pending = true;
+                chart.panel_app.cloud_login_state.open();
+            }
+            return;
+        }
+        chart.panel_app.cloud_login_state.friend_invite_pending = false;
+        let boot_token = self.inner.borrow_mut().friend_boot_token.take();
+        if let Some(token) = boot_token {
+            self.run_friend_accept(token, true);
+            return;
+        }
+
+        let Some(cmd) = chart.panel_app.user_settings_state.friend_cmd.take() else {
+            return;
+        };
+        let discoverable = chart.panel_app.user_settings_state.discoverable;
+        match bridge::parse_cmd(&cmd) {
+            bridge::FriendCmd::Accept => {
+                let pasted = chart.friends_invite_code();
+                match mlc_cloud::invite_token_from_paste(&pasted) {
+                    Some(token) => self.run_friend_accept(token, false),
+                    None => {
+                        chart.panel_app.user_settings_state.friend_note = Some(FriendNote::InviteInvalid);
+                    }
+                }
+            }
+            command => {
                 self.inner.borrow_mut().friend_busy = true;
                 let transport = self.inner.borrow().transport.snapshot();
                 let inner = self.inner.clone();
                 spawn_local(async move {
-                    let _ = transport.account_accept_friend(&token).await;
-                    if let Ok(roster) = transport.account_friends().await {
-                        inner.borrow_mut().friend_result = Some(FriendApply::List(roster));
-                    }
-                    inner.borrow_mut().friend_busy = false;
+                    let result = run_friend_cmd(&transport, &inner, command, discoverable).await;
+                    let mut guard = inner.borrow_mut();
+                    guard.friend_result = Some(result);
+                    guard.friend_busy = false;
                 });
-                return;
             }
         }
-        let cmd = chart.panel_app.user_settings_state.friend_cmd.take();
-        let Some(cmd) = cmd else {
-            return;
-        };
+    }
+
+    /// Redeem one invite token, then re-read the lists and say how it went.
+    /// `from_link`: the token came from the address bar, so the link is taken
+    /// out of it and the Friends tab opens on the result.
+    fn run_friend_accept(&self, token: String, from_link: bool) {
         self.inner.borrow_mut().friend_busy = true;
+        if from_link {
+            self.inner.borrow_mut().friend_open_tab_after = true;
+        }
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
-        let discoverable = chart.panel_app.user_settings_state.discoverable;
         spawn_local(async move {
-            let act = ["request", "approve", "remove", "block", "unblock", "subscribe", "unsubscribe"]
-                .iter()
-                .find_map(|action| cmd.strip_prefix(&format!("{action}:")).map(|nick| (*action, nick.to_string())));
-            let result = if cmd == "discoverable" {
-                let _ = transport.account_set_discoverable(discoverable).await;
-                transport.account_friends().await.ok().map(FriendApply::List)
-            } else if cmd == "invite" {
-                transport.account_friend_invite().await.ok().map(FriendApply::Invite)
-            } else if let Some((action, nick)) = act {
-                match transport.account_friend_act(&nick, action).await {
-                    Ok(()) => transport.account_friends().await.ok().map(FriendApply::List),
-                    Err(e) => Some(FriendApply::Note(e.to_string())),
+            let note = match transport.account_accept_friend(&token).await {
+                Ok(accepted) => mlc_app::friends_bridge::accepted_note(&accepted),
+                Err(e) => {
+                    mark_unauthorized(&inner, &e);
+                    mlc_app::friends_bridge::note_for_error(mlc_cloud::friend_error(&e))
                 }
-            } else {
-                transport.account_friends().await.ok().map(FriendApply::List)
             };
+            if from_link {
+                clear_friend_query();
+            }
+            let (roster, invites) = read_friend_lists(&transport).await;
             let mut guard = inner.borrow_mut();
-            guard.friend_result = result;
+            guard.friend_result = Some(FriendApply::Lists { roster, invites, note: Some(note), clear_code: true });
             guard.friend_busy = false;
         });
     }
@@ -1736,6 +1864,9 @@ impl CloudSession {
                         // differ from it if a nick was set on another
                         // device or via the API. Silent refresh: no system
                         // event, no toast.
+                        if let Some(discoverable) = resp.discoverable {
+                            chart.panel_app.user_settings_state.discoverable = discoverable;
+                        }
                         let label = resp.effective_label.unwrap_or(resp.display_name);
                         let stale = inner
                             .token

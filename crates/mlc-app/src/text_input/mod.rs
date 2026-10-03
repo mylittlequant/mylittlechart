@@ -272,6 +272,9 @@ pub const CHECKOUT_KEY_INPUT: &str = "checkout_key_input";
 /// Nick search in the Friends tab. Adds the picked account as a friend.
 pub const FRIENDS_NICK: &str = "friends_nick";
 
+/// Redeem box of the Friends tab: a pasted personal invite link or code.
+pub const FRIENDS_INVITE_CODE: &str = "friends_invite_code";
+
 /// The Admin tab's seven inputs (Settings -> Admin; the ids and bounds are
 /// defined next to the tab's state, `mlc_app_layout::ui::admin_tab::
 /// AdminField`, so the renderer and this store cannot disagree). Mint form:
@@ -288,6 +291,12 @@ pub const ADMIN_GRANT_DAYS: &str = mlc_app_layout::ui::admin_tab::FIELD_GRANT_DA
 pub const ADMIN_GRANT_NOTE: &str = mlc_app_layout::ui::admin_tab::FIELD_GRANT_NOTE;
 /// Admin tab, User section: exact nick to look up.
 pub const ADMIN_USER_NICK: &str = mlc_app_layout::ui::admin_tab::FIELD_USER_NICK;
+/// Admin tab, Invites section: nick of the account the invite makes.
+pub const ADMIN_INVITE_NICK: &str = mlc_app_layout::ui::admin_tab::FIELD_INVITE_NICK;
+/// Admin tab, Invites section: paid days the invite grants.
+pub const ADMIN_INVITE_DAYS: &str = mlc_app_layout::ui::admin_tab::FIELD_INVITE_DAYS;
+/// Admin tab, Invites section: optional note.
+pub const ADMIN_INVITE_NOTE: &str = mlc_app_layout::ui::admin_tab::FIELD_INVITE_NOTE;
 
 /// Inline fast-search text field hosted in the `symbol_selector` toolbar
 /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
@@ -360,6 +369,7 @@ pub fn known_field_ids() -> &'static [&'static str] {
         SHARE_SETTINGS_NICK,
         CHECKOUT_KEY_INPUT,
         FRIENDS_NICK,
+        FRIENDS_INVITE_CODE,
         ADMIN_MINT_DAYS,
         ADMIN_MINT_COUNT,
         ADMIN_MINT_NOTE,
@@ -367,5 +377,8 @@ pub fn known_field_ids() -> &'static [&'static str] {
         ADMIN_GRANT_DAYS,
         ADMIN_GRANT_NOTE,
         ADMIN_USER_NICK,
+        ADMIN_INVITE_NICK,
+        ADMIN_INVITE_DAYS,
+        ADMIN_INVITE_NOTE,
     ]
 }

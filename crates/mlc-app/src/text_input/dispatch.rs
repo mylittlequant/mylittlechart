@@ -131,6 +131,7 @@ impl ChartApp {
                 FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
                     | SHARE_SETTINGS_NICK
                     | FRIENDS_NICK
+                    | FRIENDS_INVITE_CODE
             );
         }
         // The Admin tab's seven inputs (`mlc_app_layout::ui::admin_tab`).
@@ -305,6 +306,7 @@ impl ChartApp {
             #[cfg(feature = "cloud")]
             SHARE_SETTINGS_NICK               => self.text_action_share_settings_nick(ch, action),
             FRIENDS_NICK                      => self.text_action_friends_nick(ch, action),
+            FRIENDS_INVITE_CODE               => self.text_action_friends_invite_code(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -1513,6 +1515,28 @@ impl ChartApp {
         }
         if let TextAction::Cancel = action {
             cancel(self);
+        }
+    }
+
+    /// Friends-tab redeem box. Enter redeems what was pasted; Escape leaves it.
+    fn text_action_friends_invite_code(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            if !chart.friends_invite_code().is_empty() {
+                chart.panel_app.user_settings_state.friend_cmd = Some("accept".to_string());
+            }
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => self.input_coordinator.borrow_mut().text_fields_mut().blur(),
+            _ => {}
         }
     }
 

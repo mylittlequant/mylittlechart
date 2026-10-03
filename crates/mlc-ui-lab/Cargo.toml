@@ -34,9 +34,9 @@ mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechar
 # uzor web bindings — wasm32-only at runtime, unconditional in Cargo.toml so
 # cargo can resolve the graph on native (the cfg-gate in src/lib.rs keeps the
 # code from compiling native-side).
-uzor                 = "=1.5.2"
-uzor-window-web      = "=1.5.2"
-uzor-render-canvas2d = "=1.5.2"
+uzor                 = "=1.5.3"
+uzor-window-web      = "=1.5.3"
+uzor-render-canvas2d = "=1.5.3"
 
 wasm-bindgen = "0.2"
 js-sys       = "0.3"

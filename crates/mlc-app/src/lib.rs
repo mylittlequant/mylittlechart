@@ -39,6 +39,8 @@ mod messenger_bridge;
 mod checkout;
 #[cfg(feature = "cloud")]
 pub mod checkout_bridge;
+#[cfg(feature = "cloud")]
+pub mod friends_bridge;
 pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
@@ -235,6 +237,8 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // the box takes a little more so a pasted key with spaces stays editable.
     tf.register(text_input::CHECKOUT_KEY_INPUT, TextFieldConfig::text().with_max_len(64));
     tf.register(text_input::FRIENDS_NICK, TextFieldConfig::text().with_max_len(64));
+    // Friends redeem box: a whole pasted invite link fits.
+    tf.register(text_input::FRIENDS_INVITE_CODE, TextFieldConfig::text().with_max_len(200));
     // Admin tab (Settings -> Admin): the seven inputs, capped by the tab's own
     // bounds (`AdminField::max_len`). Registered for the same reason as every
     // field above: an unregistered id can never hold a rect or a caret.
@@ -5937,6 +5941,18 @@ impl ChartApp {
 
     pub fn set_friend_hits(&mut self, hits: Vec<String>) {
         self.panel_app.user_settings_state.friend_hits = hits;
+    }
+
+    /// What is in the Friends tab's redeem box (a pasted invite link or code).
+    pub fn friends_invite_code(&self) -> String {
+        let wid = uzor::WidgetId::from(crate::text_input::FRIENDS_INVITE_CODE);
+        self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string()
+    }
+
+    /// Empty the redeem box once its link was used.
+    pub fn clear_friends_invite_code(&mut self) {
+        let wid = uzor::WidgetId::from(crate::text_input::FRIENDS_INVITE_CODE);
+        self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
     }
 
     pub fn set_share_settings_note(&mut self, note: String) {
@@ -11887,6 +11903,7 @@ impl ChartApp {
                     // `VAULT_TEXT_FIELDS` comment for why.
                     (text_input::KEY_LABEL_INPUT, "key_label"),
                     (text_input::FRIENDS_NICK, "friend_nick"),
+                    (text_input::FRIENDS_INVITE_CODE, "friend_code"),
                 ];
                 for &(store_id, ui_id) in VAULT_FIELDS {
                     if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {

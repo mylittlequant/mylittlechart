@@ -324,7 +324,15 @@ pub(crate) fn draw_lookup_dropdown(
     ctx.fill_rounded_rect(box_x, box_y, anchor.width, box_h, SETTINGS_BUTTON_RADIUS);
 
     if n == 0 {
-        draw_status(ctx, tt, box_x, box_y + 4.0, anchor.width, "No one found.", None);
+        draw_status(
+            ctx,
+            tt,
+            box_x,
+            box_y + 4.0,
+            anchor.width,
+            mlc_core::i18n::FriendsKey::NoSuchUser.get(mlc_core::i18n::current_language()),
+            None,
+        );
         return;
     }
     let mut ry = box_y + 4.0;

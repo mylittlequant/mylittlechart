@@ -12,7 +12,7 @@ mlc-app    = { path = "../mlc-app",    package = "mylittlechart-app"    }
 mlc-core   = { path = "../mlc-core",   package = "mylittlechart-core"   }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-uzor       = "=1.5.2"
+uzor       = "=1.5.3"
 web-time   = "1"
 # NO winit, NO arboard, NO wasm-bindgen, NO vello
 

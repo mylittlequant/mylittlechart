@@ -207,6 +207,10 @@ pub struct MeResponse {
     pub provider: String,
     /// All providers linked to this account.
     pub providers: Vec<ProviderInfo>,
+    /// Whether nick search may find this account. Hidden until turned on;
+    /// `None` from a server that predates the flag.
+    #[serde(default)]
+    pub discoverable: Option<bool>,
 }
 
 // =============================================================================

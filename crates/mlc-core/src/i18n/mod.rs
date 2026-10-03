@@ -89,6 +89,7 @@ pub use keys::{
     ForumKey,
     AdminKey,
     CheckoutKey,
+    FriendsKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.

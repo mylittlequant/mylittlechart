@@ -175,7 +175,7 @@ fn draw_body(
                 ctx.set_fill_color(&tt.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text("No one found.", x, y);
+                ctx.fill_text(mlc_core::i18n::FriendsKey::NoSuchUser.get(mlc_core::i18n::current_language()), x, y);
                 y += LABEL_H + GAP;
             }
         }

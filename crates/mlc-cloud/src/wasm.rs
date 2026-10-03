@@ -12,6 +12,7 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestCache, RequestInit, RequestMode, Response};
 
 use crate::billing::*;
+use crate::friends::{FriendAccepted, FriendInvite, FriendInviteCreated, FriendRoster};
 use crate::models::*;
 use crate::{
     BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffInvite, StaffInviteIssued,
@@ -21,16 +22,6 @@ use crate::{
 };
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
-#[derive(Clone, Debug, Default)]
-pub struct FriendRoster {
-    pub discoverable: bool,
-    pub friends: Vec<String>,
-    pub incoming: Vec<String>,
-    pub outgoing: Vec<String>,
-    pub subscriptions: Vec<String>,
-    pub blocked: Vec<String>,
-}
-
 pub struct FetchTransport {
     config: CloudConfig,
 }
@@ -584,26 +575,15 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
+    /// `GET /api/account/friends`.
     pub async fn account_friends(&self) -> Result<FriendRoster, CloudError> {
         let (status, body) = self.exchange("GET", "/api/account/friends", None, &[]).await?;
-        let value: serde_json::Value = self.decode_success(status, &body)?;
-        let names = |key: &str| -> Vec<String> {
-            value
-                .get(key)
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default()
-        };
-        Ok(FriendRoster {
-            discoverable: value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
-            friends: names("friends"),
-            incoming: names("incoming"),
-            outgoing: names("outgoing"),
-            subscriptions: names("subscriptions"),
-            blocked: names("blocked"),
-        })
+        self.decode_success(status, &body)
     }
 
+    /// `POST /api/account/friends {nick, action}` — `action` is one of
+    /// [`crate::FRIEND_ACTIONS`]. A nick that is unknown, hidden or blocked
+    /// answers the same `404`.
     pub async fn account_friend_act(&self, nick: &str, action: &str) -> Result<(), CloudError> {
         let payload = serde_json::to_string(&serde_json::json!({ "nick": nick, "action": action }))
             .map_err(|e| CloudError::Decode(e.to_string()))?;
@@ -611,30 +591,42 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
-    pub async fn account_set_discoverable(&self, on: bool) -> Result<(), CloudError> {
-        let payload = serde_json::to_string(&serde_json::json!({ "discoverable": on }))
+    /// `PUT /api/account/discoverable {on}` — whether nick search may find this
+    /// account. Returns the flag as the server now holds it.
+    pub async fn account_set_discoverable(&self, on: bool) -> Result<bool, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "on": on }))
             .map_err(|e| CloudError::Decode(e.to_string()))?;
-        let (status, body) = self.exchange("PATCH", "/api/account/privacy", Some(payload), &[]).await?;
-        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
-    }
-
-    pub async fn account_friend_invite(&self) -> Result<String, CloudError> {
-        let (status, body) = self.exchange("POST", "/api/account/friend-invites", Some("{}".to_string()), &[]).await?;
+        let (status, body) = self.exchange("PUT", "/api/account/discoverable", Some(payload), &[]).await?;
         let value: serde_json::Value = self.decode_success(status, &body)?;
-        Ok(value.get("url_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        Ok(value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(on))
     }
 
-    pub async fn account_add_friend(&self, nick: &str) -> Result<(), CloudError> {
-        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick }))
-            .map_err(|e| CloudError::Decode(e.to_string()))?;
-        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+    /// `POST /api/account/friend-invites {}` — a personal invite link (one use,
+    /// two weeks by default).
+    pub async fn account_friend_invite_create(&self) -> Result<FriendInviteCreated, CloudError> {
+        let (status, body) = self.exchange("POST", "/api/account/friend-invites", Some("{}".to_string()), &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/account/friend-invites` — my outstanding invite links.
+    pub async fn account_friend_invites(&self) -> Result<Vec<FriendInvite>, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/account/friend-invites", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `DELETE /api/account/friend-invites/{token}`.
+    pub async fn account_friend_invite_revoke(&self, token: &str) -> Result<(), CloudError> {
+        let path = format!("/api/account/friend-invites/{}", encode_query_component(token));
+        let (status, body) = self.exchange("DELETE", &path, None, &[]).await?;
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
-    pub async fn account_accept_friend(&self, token: &str) -> Result<(), CloudError> {
-        let path = format!("/api/account/friend-invites/{token}/accept");
+    /// `POST /api/account/friend-invites/{token}/accept`. Anything but a valid
+    /// invite is the same `400`.
+    pub async fn account_accept_friend(&self, token: &str) -> Result<FriendAccepted, CloudError> {
+        let path = format!("/api/account/friend-invites/{}/accept", encode_query_component(token));
         let (status, body) = self.exchange("POST", &path, Some("{}".to_string()), &[]).await?;
-        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+        self.decode_success(status, &body)
     }
 
     /// `GET /api/share/{token}/ops?after=`.

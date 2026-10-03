@@ -292,12 +292,13 @@ pub fn render_user_settings_modal(
                 content_w - padding * 2.0,
                 scroll_viewport_h,
             );
-            render_friends_tab(
+            super::user_settings_friends::render_friends_tab(
                 ctx,
                 viewport_rect,
                 state,
                 toolbar_theme,
                 frame_theme,
+                &scroll_widget_theme,
                 current_time_ms,
                 input_coordinator,
                 &layer_id,
@@ -979,209 +980,58 @@ fn render_add_key_view(
     y
 }
 
-fn render_friends_tab(
+/// The Account tab's "Show me in search" toggle and its one-line reason.
+/// Returns the y after the row.
+fn render_discoverable_row(
     ctx: &mut dyn RenderContext,
-    viewport: WidgetRect,
-    state: &UserSettingsState,
-    tt: &ToolbarTheme,
-    frame_theme: &FrameTheme,
-    current_time_ms: u64,
-    coord: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut crate::layout::render_frame::UserSettingsResult,
-) {
-    use uzor::WidgetId;
-
-    let x = viewport.x;
-    let mut y = viewport.y;
-    let w = viewport.width;
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    let findable = if state.discoverable { "Findable in search: on" } else { "Findable in search: off" };
-    ctx.fill_text(findable, x, y + 14.0);
-    let toggle = WidgetRect::new(x + w - 88.0, y, 80.0, 28.0);
-    ctx.set_fill_color(if state.discoverable { &tt.accent } else { &tt.dropdown_bg });
-    ctx.fill_rounded_rect(toggle.x, toggle.y, toggle.width, toggle.height, 6.0);
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text(if state.discoverable { "On" } else { "Off" }, toggle.center_x(), toggle.center_y());
-    coord.register_on_layer("user_settings:discoverable", toggle, Sense::CLICK, layer_id);
-    y += 40.0;
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("Friends still find you when this is off.", x, y + 8.0);
-    y += 28.0;
-
-    let glass = WidgetRect::new(x, y, 32.0, 32.0);
-    ctx.set_fill_color(&tt.dropdown_bg);
-    ctx.fill_rounded_rect(glass.x, glass.y, glass.width, glass.height, 6.0);
-    draw_svg_icon(ctx, Icon::Search.svg(), glass.x + 8.0, glass.y + 8.0, 16.0, 16.0, &tt.item_text);
-    coord.register_on_layer("user_settings:friend_nick", glass, Sense::CLICK, layer_id);
-
-    let field_rect = WidgetRect::new(x + 36.0, y, (w - 36.0).max(40.0), 32.0);
-    let wid = WidgetId::from("friends_nick");
-    let text = coord.text_fields().text(&wid).to_string();
-    let cursor = coord.text_fields().cursor(&wid);
-    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
-        Some((lo, hi)) => (Some(lo), Some(hi)),
-        None => (None, None),
-    };
-    let engaged = coord.text_fields().is_engaged(&wid);
-    let widget_theme = toolbar_to_widget_theme(tt, frame_theme);
-    let config = InputConfig::new(&text)
-        .with_focused(engaged)
-        .with_cursor(cursor)
-        .with_placeholder("Nick")
-        .with_selection(sel_start, sel_end);
-    let drawn = draw_input(ctx, &config, WidgetState::Normal, field_rect, &widget_theme);
-    coord.register_on_layer("user_settings:friend_nick", field_rect, Sense::CLICK | Sense::DRAG, layer_id);
-    result.content_items.push(("friend_nick".to_string(), field_rect));
-    result.input_char_positions.push(("friend_nick".to_string(), drawn.char_x_positions));
-    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
-        draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
-    }
-    y += 40.0;
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_font("12px sans-serif");
-    if state.friend_hits.is_empty() {
-        if text.trim().chars().count() >= 2 {
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.fill_text("No one found.", x, y + 8.0);
-            y += 22.0;
-        }
-    } else {
-        for nick in state.friend_hits.iter().take(6) {
-            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Request", "add"), ("Subscribe", "sub")]);
-        }
-    }
-    if !state.friend_note.is_empty() {
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text(&state.friend_note, x, y + 8.0);
-        y += 22.0;
-    }
-
-    let invite = WidgetRect::new(x, y, w, 32.0);
-    ctx.set_fill_color(&tt.dropdown_bg);
-    ctx.fill_rounded_rect(invite.x, invite.y, invite.width, invite.height, 6.0);
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_font("13px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("New friend invite link", invite.center_x(), invite.center_y());
-    coord.register_on_layer("user_settings:friend_invite", invite, Sense::CLICK, layer_id);
-    y += 40.0;
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    if !state.friend_invite.is_empty() {
-        let url_row = WidgetRect::new(x, y, w, 22.0);
-        ctx.fill_text(&state.friend_invite, x, y + 8.0);
-        coord.register_on_layer("user_settings:friend_copy", url_row, Sense::CLICK, layer_id);
-        y += 22.0;
-    }
-    ctx.set_fill_color(&tt.item_text);
-    ctx.fill_text("Requests", x, y + 8.0);
-    y += 22.0;
-    if state.friend_incoming.is_empty() && state.friend_outgoing.is_empty() {
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("No requests.", x, y + 8.0);
-        y += 22.0;
-    } else {
-        for nick in state.friend_incoming.iter().take(8) {
-            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Approve", "approve")]);
-        }
-        for nick in state.friend_outgoing.iter().take(8) {
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.fill_text(&format!("@{nick}  pending"), x, y + 8.0);
-            y += 22.0;
-        }
-    }
-    ctx.set_fill_color(&tt.item_text);
-    ctx.fill_text("Friends", x, y + 8.0);
-    y += 22.0;
-    if state.friend_nicks.is_empty() {
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("No one yet.", x, y + 8.0);
-        y += 22.0;
-    } else {
-        for nick in state.friend_nicks.iter().take(12) {
-            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Remove", "remove"), ("Block", "block")]);
-        }
-    }
-    ctx.set_fill_color(&tt.item_text);
-    ctx.fill_text("Subscriptions", x, y + 8.0);
-    y += 22.0;
-    if state.friend_subscriptions.is_empty() {
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("No subscriptions.", x, y + 8.0);
-        y += 22.0;
-    } else {
-        for nick in state.friend_subscriptions.iter().take(8) {
-            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unsubscribe", "unsub")]);
-        }
-    }
-    ctx.set_fill_color(&tt.item_text);
-    ctx.fill_text("Blocked", x, y + 8.0);
-    y += 22.0;
-    if state.friend_blocked.is_empty() {
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("No one blocked.", x, y + 8.0);
-    } else {
-        for nick in state.friend_blocked.iter().take(8) {
-            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unblock", "unblock")]);
-        }
-    }
-}
-
-fn friend_person_row(
-    ctx: &mut dyn RenderContext,
-    coord: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    tt: &ToolbarTheme,
     x: f64,
     y: f64,
     w: f64,
-    nick: &str,
-    actions: &[(&str, &str)],
+    state: &UserSettingsState,
+    tt: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
 ) -> f64 {
-    ctx.set_font("12px sans-serif");
+    use mlc_core::i18n::FriendsKey;
+    let lang = current_language();
+    let toggle = WidgetRect::new(x + w - 76.0, y, 76.0, 26.0);
+    let hit = format!("user_settings:{}", crate::ui::friends::hit::DISCOVERABLE);
+    let hovered = coord.is_hovered(&uzor::WidgetId::from(hit.as_str()));
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    let mut buttons: Vec<(f64, String, String)> = Vec::new();
-    let mut used = 0.0;
-    for (label, action) in actions.iter().rev() {
-        let bw = (label.len() as f64) * 7.2 + 18.0;
-        used += bw + 6.0;
-        buttons.push((bw, (*label).to_string(), (*action).to_string()));
-    }
-    let nick_chars = ((w - used - 8.0) / 7.0).floor().max(4.0) as usize;
-    let shown = {
-        let raw = format!("@{nick}");
-        if raw.chars().count() > nick_chars {
-            raw.chars().take(nick_chars).collect()
-        } else {
-            raw
-        }
+    let label = fit_text_to_width(ctx, FriendsKey::ShowInSearch.get(lang), (w - 76.0 - 12.0).max(40.0));
+    ctx.fill_text(&label, x, y + 13.0);
+    let fill = if state.discoverable {
+        &tt.accent
+    } else if hovered {
+        &tt.item_bg_hover
+    } else {
+        &tt.dropdown_bg
     };
-    ctx.set_fill_color(&tt.item_text);
-    ctx.fill_text(&shown, x, y + 13.0);
-    let mut bx = x + w;
-    for (bw, label, action) in buttons {
-        bx -= bw + 6.0;
-        let r = WidgetRect::new(bx, y + 1.0, bw, 24.0);
-        let hit = format!("user_settings:friend_{action}:{nick}");
-        let hovered = coord.is_hovered(&uzor::WidgetId::from(hit.as_str()));
-        ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
-        ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
-        ctx.set_fill_color(&tt.item_text);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(&label, r.center_x(), r.center_y());
-        coord.register_on_layer(hit.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
-        ctx.set_text_align(TextAlign::Left);
+    ctx.set_fill_color(fill);
+    ctx.fill_rounded_rect(toggle.x, toggle.y, toggle.width, toggle.height, 6.0);
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(toggle.x, toggle.y, toggle.width, toggle.height, 6.0);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(if state.discoverable { &tt.item_text_active } else { &tt.item_text });
+    ctx.set_text_align(TextAlign::Center);
+    let word = if state.discoverable { FriendsKey::On.get(lang) } else { FriendsKey::Off.get(lang) };
+    ctx.fill_text(word, toggle.center_x(), toggle.center_y());
+    coord.register_on_layer(hit.as_str(), toggle, Sense::CLICK | Sense::HOVER, layer_id);
+
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&tt.item_text, 0.75));
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let mut cy = y + 32.0;
+    for line in wrap_to_width(ctx, FriendsKey::ShowInSearchHint.get(lang), w) {
+        ctx.fill_text(&line, x, cy);
+        cy += 15.0;
     }
-    y + 30.0
+    cy + 12.0
 }
 
 fn render_shares_tab(
@@ -2491,6 +2341,10 @@ fn render_account_tab(
         }
         cy += seg_h + 16.0;
     }
+
+    // ── "Show me in search" — accounts are hidden by default; a hidden
+    // account is reached only through a personal invite link or code.
+    cy = render_discoverable_row(ctx, x, cy, available_w, state, toolbar_theme, input_coordinator, layer_id);
 
     // ── Tier / role ───────────────────────────────────────────────────────
     // Highest-ranked class only (a cumulative membership like
