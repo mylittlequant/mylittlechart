@@ -3147,20 +3147,25 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
     // ── Tab sync (mirror of scene_builder.rs:63-94 for the web shell) ─────────
     {
         let mut st = state.borrow_mut();
-        let open_tabs = &st.chart.panel_app.open_tabs;
-        let active_id = st.chart.panel_app.active_preset_id.clone();
-        let presets_guard = st.chart.core.presets();
-        let mut tabs: Vec<mlc_app_input_shell::Tab> = open_tabs
-            .iter()
-            .filter_map(|tab_id| {
-                presets_guard.get(tab_id).map(|p| mlc_app_input_shell::Tab {
-                    id: p.id.clone(),
-                    name: p.name.clone(),
-                    active: p.id == active_id,
+        let mut tabs: Vec<mlc_app_input_shell::Tab> = {
+            let open_tabs = &st.chart.panel_app.open_tabs;
+            let active_id = st.chart.panel_app.active_preset_id.clone();
+            let presets_guard = st.chart.core.presets();
+            open_tabs
+                .iter()
+                .filter_map(|tab_id| {
+                    presets_guard.get(tab_id).map(|p| mlc_app_input_shell::Tab {
+                        id: p.id.clone(),
+                        name: p.name.clone(),
+                        active: p.id == active_id,
+                    })
                 })
-            })
-            .collect();
-        drop(presets_guard);
+                .collect()
+        };
+        for tab in &mut tabs {
+            let base = tab.name.clone();
+            tab.name = st.chart.tab_display_name(&tab.id, &base);
+        }
         if tabs.is_empty() {
             tabs.push(mlc_app_input_shell::Tab {
                 id: "__fallback__".to_string(),

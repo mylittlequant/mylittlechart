@@ -114,6 +114,16 @@ fn fresh_preset_id(prefix: &str) -> String {
     format!("{prefix}_{created_at}_{suffix}")
 }
 
+/// Drop one trailing `" — {owner}"` that an older build baked into the
+/// share title. A title that merely contains an em dash stays intact.
+fn strip_legacy_owner_suffix(title: &str, owner_label: &str) -> String {
+    if owner_label.is_empty() {
+        return title.to_string();
+    }
+    let suffix = format!(" — {owner_label}");
+    title.strip_suffix(suffix.as_str()).unwrap_or(title).to_string()
+}
+
 impl ChartApp {
     /// Open a shared preset as a new, read-only tab.
     ///
@@ -149,7 +159,7 @@ impl ChartApp {
         preset.remap_ids_for_import(true);
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
-        preset.name = format!("{} — {}", meta.title, meta.owner_label);
+        preset.name = strip_legacy_owner_suffix(&meta.title, &meta.owner_label);
 
         self.share_keep_ids.insert(id.clone());
         self.readonly_preset_ids.insert(id.clone());
@@ -191,6 +201,18 @@ impl ChartApp {
         self.shared_chart_meta.get(preset_id)
     }
 
+    /// Tab-strip label. The stored preset name stays the base title. The
+    /// sharer suffix is display-only, so a clone or a later share does not
+    /// publish it as the next title.
+    pub fn tab_display_name(&self, preset_id: &str, base_name: &str) -> String {
+        match self.shared_chart_meta(preset_id) {
+            Some(meta) if !meta.owner_label.is_empty() => {
+                format!("{base_name} — {}", meta.owner_label)
+            }
+            _ => base_name.to_string(),
+        }
+    }
+
     /// Queue an "open this share" request. The shell drains it with
     /// [`Self::take_pending_open_share`], fetches the token's
     /// [`SharedChartMeta`] + frozen [`ChartPreset`] over HTTP (`ChartApp`
@@ -228,7 +250,8 @@ impl ChartApp {
     /// original. Returns the new preset id.
     /// Fork the shared tab that is already open. Copies symbols, primitive
     /// points, indicators and layout into a new writable tab named
-    /// `{title} — {owner} (clone)`. Does not fetch the preset again and
+    /// `{title} (clone)`. The sharer suffix stays on the link tab's display
+    /// label and is not copied into this name. Does not fetch the preset again and
     /// does not keep bar series — those reload from the exchange when the
     /// new tab materialises. Returns false when `token` is not an open
     /// shared tab or the caller has no clone right.
@@ -268,7 +291,8 @@ impl ChartApp {
         preset.remap_ids_for_import(false);
         let new_id = fresh_preset_id("preset");
         preset.id = new_id.clone();
-        preset.name = format!("{} — {} (clone)", meta.title, meta.owner_label);
+        let base = strip_legacy_owner_suffix(&meta.title, &meta.owner_label);
+        preset.name = format!("{base} (clone)");
         self.core.presets_mut().insert(new_id.clone(), preset);
         self.load_preset(&new_id);
         true
@@ -414,7 +438,7 @@ impl ChartApp {
         preset.remap_ids_for_import(true);
         preset.id = placeholder_id.to_string();
         self.share_keep_ids.insert(placeholder_id.to_string());
-        preset.name = format!("{} — {}", meta.title, meta.owner_label);
+        preset.name = strip_legacy_owner_suffix(&meta.title, &meta.owner_label);
 
         // A boot-time re-fetch (`UpdaterCommand::ReopenShare`) doesn't
         // round-trip the token through its outcome (it would be redundant —

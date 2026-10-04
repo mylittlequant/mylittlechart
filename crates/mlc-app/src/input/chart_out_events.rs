@@ -1827,6 +1827,19 @@ impl ChartApp {
             }
 
             ChartOutEvent::LoadPreset { id } => {
+                // `pending_cold_apply` is one slot. Web boot restores the
+                // saved preset (`new_window`) and then opens a share link
+                // (`open_shared_preset`) in the same call, before the host
+                // frame drains the slot. Overwriting it here used to drop
+                // the first restore, and the second handler then collected
+                // the still-unrestored grid back over that preset.
+                if self.pending_cold_apply.is_some() {
+                    sglog!(
+                        "[LoadPreset] id='{}' arrived with a cold-apply already queued — draining it first",
+                        id
+                    );
+                    self.drain_pending_cold_apply();
+                }
                 let _lp_total = web_time::Instant::now();
                 let prev_id = self.panel_app.active_preset_id.clone();
                 sglog!(

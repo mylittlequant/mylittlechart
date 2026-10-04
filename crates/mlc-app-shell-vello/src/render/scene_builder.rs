@@ -72,19 +72,25 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
 
     // Sync tabs from open_tabs order.
     {
-        let open_tabs = &pw.chart.panel_app.open_tabs;
-        let active_id = &pw.chart.panel_app.active_preset_id;
-        let presets_guard_sb = pw.chart.core.presets();
-        let mut tabs: Vec<chrome::Tab> = open_tabs
-            .iter()
-            .filter_map(|tab_id| {
-                presets_guard_sb.get(tab_id).map(|p| chrome::Tab {
-                    id: p.id.clone(),
-                    name: p.name.clone(),
-                    active: &p.id == active_id,
+        let mut tabs: Vec<chrome::Tab> = {
+            let open_tabs = &pw.chart.panel_app.open_tabs;
+            let active_id = &pw.chart.panel_app.active_preset_id;
+            let presets_guard_sb = pw.chart.core.presets();
+            open_tabs
+                .iter()
+                .filter_map(|tab_id| {
+                    presets_guard_sb.get(tab_id).map(|p| chrome::Tab {
+                        id: p.id.clone(),
+                        name: p.name.clone(),
+                        active: &p.id == active_id,
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        };
+        for tab in &mut tabs {
+            let base = tab.name.clone();
+            tab.name = pw.chart.tab_display_name(&tab.id, &base);
+        }
         if pw.skeleton {
             // Skeleton: no tabs at all, chrome draws only + and system buttons.
             tabs.clear();

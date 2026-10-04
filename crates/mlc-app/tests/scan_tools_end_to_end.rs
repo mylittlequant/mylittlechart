@@ -286,12 +286,18 @@ async fn new_app_with_bars(symbol: &str, bars: Vec<Bar>) -> (ChartApp, mlc_core:
 /// `chart_app_smoke.rs`'s own R23 test (`toolbar_dropdown_open_closes_the_
 /// open_settings_modal`) already exercises for `"cursor_tools"`.
 fn activate_tool_via_flyout(app: &mut ChartApp, dropdown_id: &str, action_id: &str) {
+    // A fresh profile already has quick-select memory, so the first click
+    // on the group button activates the remembered tool and does not open
+    // the flyout. The second click opens it
+    // (`ChartToolbarState::handle_toolbar_click_with_chart`).
+    app.dispatch_panel_click(&format!("toolbar:{dropdown_id}"), 0.0, 0.0);
     app.dispatch_panel_click(&format!("toolbar:{dropdown_id}"), 0.0, 0.0);
     assert_eq!(
         app.panel_app.toolbar_state.open_dropdown_id.as_deref(),
         Some(dropdown_id),
-        "the toolbar group button did not open its own flyout — action id \
-         routing changed, this test is not exercising the real path"
+        "the second click on the toolbar group button did not open its \
+         flyout — action id routing changed, this test is not exercising \
+         the real path"
     );
     app.dispatch_panel_click(&format!("dropdown:{dropdown_id}:{action_id}"), 0.0, 0.0);
 }

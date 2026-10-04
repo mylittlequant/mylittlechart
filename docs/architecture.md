@@ -12,7 +12,7 @@ mylittlechart (this repo)        — Desktop client. All local, no required serv
     +--- mylittlechart-landing   — Marketing site at chart.example. Not yet public.
 ```
 
-The desktop client can operate fully standalone. Network calls to the hosted server are optional. The local Agent API (`127.0.0.1:17420`) is always available regardless of network connectivity.
+The desktop client can operate fully standalone. Network calls to the hosted server are optional. The local Agent API (`127.0.0.1:17420`) listens only while an account is signed in and the Server toggle is on. Every request needs a Bearer key created in the app, and a sealed profile vault answers 423.
 
 ---
 

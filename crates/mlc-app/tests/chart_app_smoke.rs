@@ -930,6 +930,106 @@ async fn shared_chart_viewport_snaps_to_right_edge_like_any_other_hydration() {
     );
 }
 
+// Web boot calls `new_window` (cold LoadPreset, one-slot stash) and then
+// `open_shared_preset` before the host frame drains the slot. The second
+// LoadPreset must apply the queued preset before it collects the outgoing
+// grid, or the saved preset is overwritten with the unrestored window.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn share_boot_second_load_preset_keeps_the_queued_preset() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+
+    let own_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("new_empty seeds one active window");
+    let own_bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "AAAUSDT".to_string(), tf_h1());
+    app.attach_chart_to_tag(own_cid, own_bid);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&own_cid)
+            .expect("own window");
+        win.auto_tag_id = own_bid;
+        win.current_tag_id = own_bid;
+    }
+    app.core.bubbles_mut().set_bid_instrument_full(
+        own_bid, "AAAUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    app.collect_state_into_preset("grid_now", "Grid");
+
+    let mut saved = app.core.presets().get("grid_now").cloned()
+        .expect("collect_state_into_preset saved the live grid");
+    assert!(!saved.windows.is_empty(), "collected preset has a window to identify");
+    saved.id = "saved_a".to_string();
+    saved.name = "Saved A".to_string();
+    for w in saved.windows.iter_mut() {
+        w.symbol = "AAASAVED".to_string();
+    }
+    for b in saved.bubbles.iter_mut() {
+        b.symbol = "AAASAVED".to_string();
+    }
+    app.core.presets_mut().insert("saved_a".to_string(), saved.clone());
+
+    let mut other = saved;
+    other.id = "saved_b".to_string();
+    other.name = "Saved B".to_string();
+    for w in other.windows.iter_mut() {
+        w.symbol = "BBBSAVED".to_string();
+    }
+    for b in other.bubbles.iter_mut() {
+        b.symbol = "BBBSAVED".to_string();
+    }
+    app.core.presets_mut().insert("saved_b".to_string(), other);
+
+    app.load_preset("saved_a");
+    assert!(
+        app.pending_cold_apply.is_some(),
+        "the first LoadPreset must stash a cold apply, not finish it inline"
+    );
+    app.load_preset("saved_b");
+
+    let kept = app.core.presets().get("saved_a")
+        .expect("saved_a still registered")
+        .windows[0].symbol.clone();
+    assert_eq!(
+        kept, "AAASAVED",
+        "the second LoadPreset overwrote the queued preset with the unrestored grid"
+    );
+    let queued = app.pending_cold_apply.as_ref()
+        .expect("the second preset stays queued")
+        .preset.id.clone();
+    assert_eq!(queued, "saved_b");
+
+    let shared = app.core.presets().get("grid_now").cloned()
+        .expect("grid preset still present");
+    let meta = mlc_app::SharedChartMeta {
+        token: "tok-boot".to_string(),
+        title: "Untitled 2 — admin".to_string(),
+        owner_label: "admin".to_string(),
+        kind: "live".to_string(),
+        rights: vec!["read".to_string(), "clone".to_string()],
+        expires_at: "2099-01-01T00:00:00Z".to_string(),
+        revision: 0,
+    };
+    let shared_id = app.open_shared_preset(meta, shared)
+        .expect("open_shared_preset accepts the collected preset");
+    let stored = app.core.presets().get(&shared_id).expect("shared preset stored").name.clone();
+    assert_eq!(stored, "Untitled 2", "the sharer suffix must not be stored on the preset");
+    assert_eq!(
+        app.tab_display_name(&shared_id, &stored),
+        "Untitled 2 — admin",
+        "the tab strip still shows the sharer"
+    );
+    app.drain_pending_cold_apply();
+    assert!(app.clone_open_share_locally("tok-boot"), "clone right was granted");
+    let clone_id = app.panel_app.active_preset_id.clone();
+    assert_eq!(
+        app.core.presets().get(&clone_id).expect("clone stored").name,
+        "Untitled 2 (clone)",
+        "a clone must not carry the sharer suffix into the next share title"
+    );
+}
+
 // ─── Test 5+6: Order Flow Scan — owner bug, prod 0.5.617, 2026-09-25 ─────────
 //
 // "Order Flow scan doesn't work." Root cause (see

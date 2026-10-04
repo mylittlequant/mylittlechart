@@ -1,12 +1,12 @@
 # Agent API Reference
 
-The Agent API is a local HTTP server embedded in the mylittlechart process. It starts automatically when the application launches and is available at:
+The Agent API is a local HTTP server embedded in the mylittlechart process. It listens while an account is signed in and the Server toggle (User Settings → Server) is on:
 
 ```
 http://127.0.0.1:17420
 ```
 
-The server binds only to `127.0.0.1`. It is not reachable from the network. There is no authentication — access is restricted to local processes on the same machine.
+The server binds only to `127.0.0.1`. It is not reachable from the network. Every request needs `Authorization: Bearer <key>`, where `<key>` is the hex key shown once when it was created in the app. A `ReadOnly` key may only read; any `POST`/`PATCH`/`DELETE` needs a `Control` key. While the profile vault is sealed every authenticated route answers `423 Locked`. `POST /api/v1/vault/unlock` and `GET /api/v1/vault/status` are the only routes that take no bearer. Other answers: `401` missing or unknown key, `403` role or tier too low, `429` after repeated failures.
 
 All write operations (viewport, symbol switch, indicator CRUD, primitives CRUD) are asynchronous: the handler queues a command and returns `202 Accepted` immediately. The render thread applies the command on the next frame.
 
