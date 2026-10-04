@@ -387,6 +387,7 @@ impl ChartApp {
                 self.panel_app.chart_settings_state.instrument_wick_enabled,
                 panel.bar_family_wicks,
             ),
+            border_effective: self.panel_app.chart_settings_state.instrument_border_enabled,
             trade_archive_available,
         };
         let chart_rect = mlc_core::chart::ChartRect::new(

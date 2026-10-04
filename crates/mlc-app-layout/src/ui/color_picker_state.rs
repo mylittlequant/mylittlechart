@@ -222,9 +222,17 @@ impl ColorPickerL1Config {
         let opacity_row_height = 24.0; // Toggle button height (no extra padding needed)
 
         let width = padding * 2.0 + self.columns as f64 * (self.swatch_size + self.gap) - self.gap;
+        let saved_colors_height = if self.custom_colors.is_empty() {
+            0.0
+        } else {
+            let cols = self.columns.max(1);
+            let saved_rows = (self.custom_colors.len() + cols - 1) / cols;
+            saved_rows as f64 * (self.swatch_size + self.gap) + 4.0
+        };
         let height = padding * 2.0
             + rows as f64 * (self.swatch_size + self.gap) - self.gap  // Palette
-            + 8.0 + custom_row_height  // Custom colors section
+            + 8.0 + custom_row_height  // Current swatch + "+"
+            + saved_colors_height
             + 12.0 + opacity_row_height; // Opacity section (12.0 = gap before opacity row)
 
         (width, height)
@@ -557,12 +565,24 @@ impl ColorPickerState {
         }
     }
 
-    /// Add current color to custom colors
-    pub fn add_to_custom(&mut self) {
-        let color = self.hsv.to_hex();
-        if !self.custom_colors.contains(&color) && self.custom_colors.len() < MAX_CUSTOM_COLORS {
-            self.custom_colors.push(color);
+    /// Append `color` as an opaque `#rrggbb`. No duplicates, cap [`MAX_CUSTOM_COLORS`].
+    /// Returns whether the list grew.
+    pub fn add_color_to_custom(&mut self, color: &str) -> bool {
+        if color.is_empty() {
+            return false;
         }
+        let normalized = mlc_core::with_alpha(color, 1.0);
+        let duplicate = self.custom_colors.iter().any(|existing| existing.eq_ignore_ascii_case(&normalized));
+        if duplicate || self.custom_colors.len() >= MAX_CUSTOM_COLORS {
+            return false;
+        }
+        self.custom_colors.push(normalized);
+        true
+    }
+
+    /// Add the L2 HSV color to custom colors.
+    pub fn add_to_custom(&mut self) {
+        self.add_color_to_custom(&self.hsv.to_hex());
     }
 
     /// Get the final color with opacity applied as rgba() string
@@ -760,8 +780,9 @@ impl ColorPickerState {
         window_h: f64,
         color: Option<&str>,
     ) {
-        // Calculate popup size for L1
-        let config = ColorPickerL1Config::default();
+        // Size includes the saved custom row, or the popup clips it.
+        let mut config = ColorPickerL1Config::default();
+        config.custom_colors = self.custom_colors.clone();
         let (popup_w, popup_h) = config.calculate_size();
         let margin = 4.0;
 
@@ -826,6 +847,31 @@ mod opacity_tests {
         assert_eq!(smart.current_color, "#808080");
         smart.set_opacity(0.25);
         assert_eq!(smart.get_final_color(), "rgba(128,128,128,0.25)");
+    }
+
+    #[test]
+    fn add_color_to_custom_dedups_and_caps_at_ten() {
+        let mut picker = ColorPickerState::new();
+        assert!(picker.add_color_to_custom("#AABBCC"));
+        assert!(!picker.add_color_to_custom("#aabbcc"));
+        assert_eq!(picker.custom_colors, vec!["#aabbcc".to_string()]);
+        assert!(picker.add_color_to_custom("rgba(1,2,3,0.5)"));
+        assert_eq!(picker.custom_colors[1], "#010203");
+        for i in 0..20 {
+            picker.add_color_to_custom(&format!("#{:06x}", i + 16));
+        }
+        assert_eq!(picker.custom_colors.len(), MAX_CUSTOM_COLORS);
+    }
+
+    #[test]
+    fn l1_size_grows_by_one_row_when_ten_custom_colors_are_saved() {
+        let empty = ColorPickerL1Config::default().calculate_size();
+        let mut full = ColorPickerL1Config::default();
+        full.custom_colors = (0..MAX_CUSTOM_COLORS).map(|i| format!("#{:06x}", i)).collect();
+        let grown = full.calculate_size();
+        assert_eq!(grown.0, empty.0);
+        let row = full.swatch_size + full.gap + 4.0;
+        assert!((grown.1 - empty.1 - row).abs() < 0.01, "one wrapped row: {} vs {}", grown.1, empty.1);
     }
 
     #[test]

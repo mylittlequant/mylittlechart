@@ -2568,6 +2568,127 @@ impl ChartApp {
         }
     }
 
+    /// `true` when an open popup already consumed this click (it was closed,
+    /// or it was the only legal target and the caller must not also run the
+    /// control underneath). `false` means dispatch the click normally.
+    pub(crate) fn exclusive_overlay_swallows_click(&mut self, widget_id: Option<&str>) -> bool {
+        if self.any_color_picker_open() {
+            if widget_id.is_some_and(|id| id.starts_with("color_picker_")) {
+                return false;
+            }
+            self.close_open_color_pickers_one_level();
+            return true;
+        }
+        if self.panel_app.sync_color_grid.is_open() {
+            if widget_id.is_some_and(|id| id.starts_with("sync_color_grid")) {
+                return false;
+            }
+            self.panel_app.sync_color_grid.close();
+            return true;
+        }
+        if self.panel_app.context_menu_state.is_open() {
+            if widget_id.is_some_and(|id| id.starts_with("context_menu:")) {
+                return false;
+            }
+            self.panel_app.context_menu_state.close();
+            return true;
+        }
+        let settings = &self.panel_app.chart_settings_state;
+        if settings.active_dropdown.is_some() || settings.template_dropdown_open {
+            let on_menu = widget_id.is_some_and(|id| {
+                id.contains("dropdown_option:")
+                    || id.contains(":footer:template_")
+                    || id == "chart_settings:template"
+                    || id.contains("dropdown_menu:")
+                    || id.contains("dropdown_cycle:")
+            });
+            if on_menu {
+                return false;
+            }
+            self.panel_app.chart_settings_state.active_dropdown = None;
+            self.panel_app.chart_settings_state.template_dropdown_open = false;
+            return true;
+        }
+        if self.panel_app.toolbar_state.open_dropdown_id.is_some()
+            || self.trading_header_tb.open_dropdown_id.is_some()
+            || self.inline_dropdown_open()
+        {
+            let on_menu = widget_id.is_some_and(|id| {
+                id.starts_with("dropdown:") || id.starts_with("inline:") || id.starts_with("inline_dropdown:")
+            });
+            if on_menu {
+                return false;
+            }
+            self.close_toolbar_and_inline_dropdowns();
+            return true;
+        }
+        let layer_name = self.input_coordinator.borrow_mut().topmost_modal_layer().map(|id| id.0.clone());
+        if let Some(layer_name) = layer_name {
+            let on_layer = widget_id.is_some_and(|id| {
+                id == layer_name || id.strip_prefix(layer_name.as_str()).is_some_and(|rest| rest.starts_with(':'))
+            });
+            if on_layer {
+                return false;
+            }
+            if !self.close_topmost_known_modal_layer() {
+                self.close_open_modals();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn any_color_picker_open(&self) -> bool {
+        self.panel_app.chart_settings_state.color_picker.is_open()
+            || self.panel_app.primitive_settings_state.color_picker.is_open()
+            || self.panel_app.indicator_settings_state.color_picker.is_open()
+            || self.panel_app.compare_settings_state.color_picker.is_open()
+            || self.panel_app.panel_color_picker.is_open()
+    }
+
+    fn close_open_color_pickers_one_level(&mut self) {
+        if self.panel_app.chart_settings_state.color_picker.is_open() {
+            self.panel_app.chart_settings_state.close_color_picker_one_level();
+        }
+        if self.panel_app.primitive_settings_state.color_picker.is_open() {
+            self.panel_app.primitive_settings_state.close_color_picker_one_level();
+        }
+        if self.panel_app.indicator_settings_state.color_picker.is_open() {
+            self.panel_app.indicator_settings_state.close_color_picker_one_level();
+        }
+        if self.panel_app.compare_settings_state.color_picker.is_open() {
+            self.panel_app.compare_settings_state.close_color_picker();
+        }
+        if self.panel_app.panel_color_picker.is_open() {
+            self.panel_app.close_panel_color_tag_picker_one_level();
+        }
+    }
+
+    fn inline_dropdown_open(&self) -> bool {
+        let toolbar = &self.panel_app.toolbar_state;
+        toolbar.open_inline_style_dropdown
+            || toolbar.open_inline_width_dropdown
+            || toolbar.open_inline_wave_dropdown
+            || toolbar.open_inline_wave_next_dropdown
+    }
+
+    fn close_toolbar_and_inline_dropdowns(&mut self) {
+        self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.panel_app.toolbar_state.open_dropdown_position = None;
+        self.panel_app.toolbar_state.hovered_dropdown_item = None;
+        self.trading_header_tb.open_dropdown_id = None;
+        self.trading_header_tb.hovered_dropdown_item = None;
+        self.panel_app.toolbar_state.open_inline_style_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_width_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
+        self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
+        self.panel_app.toolbar_state.pending_wave_slot = None;
+        self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+        self.granularity_edit = None;
+        self.granularity_drag_pending = None;
+        self.granularity_drag = None;
+    }
+
     /// Close transient overlays (toolbar dropdowns, context menu, sidebar
     /// dropdowns, agent popups) that should dismiss on any "outside" click.
     /// Called when click lands on canvas (or any non-overlay widget) so that
@@ -2995,6 +3116,15 @@ impl ChartApp {
                     }
                     _ => {
                         log::warn!("[ChartApp] Unhandled DM chat-row context action: {}", action);
+                    }
+                }
+            }
+            ContextMenuTarget::PriceScale => {
+                if action == "precision:auto" {
+                    self.set_user_price_precision(None);
+                } else if let Some(rest) = action.strip_prefix("precision:") {
+                    if let Ok(n) = rest.parse::<usize>() {
+                        self.set_user_price_precision(Some(n));
                     }
                 }
             }

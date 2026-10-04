@@ -650,6 +650,42 @@ pub fn render_settings_modal(
 
     end_modal_shell(ctx, input_coordinator, &spec, &modal_theme, &shell, &layer_id, &priority_regions);
 
+    // Footer and resize grips register after the dropdown, so they steal
+    // clicks from a menu painted on top. `pop_layer` does not drop the
+    // layer; re-registering here makes the menu the last hit target.
+    if chart_settings_state.template_dropdown_open {
+        if let Some((_, rect)) = result.footer_buttons.iter().find(|(id, _)| id == "template_dropdown_menu") {
+            input_coordinator.register_on_layer(
+                "chart_settings:footer:template_dropdown_menu",
+                uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                uzor::input::Sense::CLICK,
+                &layer_id,
+            );
+        }
+        for (id, rect) in &result.footer_buttons {
+            if id == "template_dropdown_menu" {
+                continue;
+            }
+            input_coordinator.register_on_layer(
+                format!("chart_settings:footer:{id}"),
+                uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+                &layer_id,
+            );
+        }
+    }
+    for (item_id, item_rect) in &result.content_items {
+        if !item_id.starts_with("dropdown_option:") {
+            continue;
+        }
+        input_coordinator.register_on_layer(
+            format!("chart_settings:item:{item_id}"),
+            uzor::types::Rect::new(item_rect.x, item_rect.y, item_rect.width, item_rect.height),
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+            &layer_id,
+        );
+    }
+
     result
 }
 

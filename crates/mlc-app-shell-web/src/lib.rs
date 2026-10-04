@@ -738,11 +738,11 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // preference instead of silently defaulting to dark (owner's ruling
     // 2026-08-31) — this is also what the wizard's Theme page opens on.
     let applied_theme_preset: String = if !profile.ui.active_theme.is_empty() {
-        app.panel_app.theme_manager.set_preset(&profile.ui.active_theme);
+        app.set_chart_theme(&profile.ui.active_theme);
         profile.ui.active_theme.clone()
     } else {
         let preset = preferred_theme_from_browser();
-        app.panel_app.theme_manager.set_preset(preset);
+        app.set_chart_theme(preset);
         preset.to_string()
     };
     if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {

@@ -1998,9 +1998,7 @@ impl App<'_> {
         chart.set_alert_secrets_store(self.alert_secrets_store.clone());
         chart.refresh_alert_secrets_mirror();
         // Apply the app-level theme so new windows start with the correct preset.
-        if !self.app_state.theme_preset.is_empty() {
-            chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);
-        }
+        chart.set_chart_theme(&self.app_state.theme_preset);
         // Domain data (watchlists, presets, templates, snapshots) needs no
         // sync here anymore — `chart.core` IS `self.core` (Phase A, shared
         // Arc<BackendCore>), already seeded once at startup / profile-switch
@@ -2542,9 +2540,7 @@ impl App<'_> {
                 chart.refresh_alert_secrets_mirror();
 
                 // Apply the app-level theme.
-                if !theme_preset.is_empty() {
-                    chart.panel_app.theme_manager.set_preset(&theme_preset);
-                }
+                chart.set_chart_theme(&theme_preset);
                 chart.sidebar_state.connector_enabled = chart.core.user().connector_enabled().clone();
                 {
                     let drawing_styles = chart.core.user().snapshots().last_used_drawing_styles.clone();
@@ -4078,6 +4074,17 @@ impl App<'_> {
             profile.ui.drawings_locked = core_ui.drawings_locked;
             profile.ui.drawings_visible = core_ui.drawings_visible;
         }
+        // Candle colors and the custom palette live on the core profile
+        // (mutated in place). `self.profile` is a stale copy, so a save
+        // that starts from it would drop them. The theme NAME below stays
+        // a name; these fields override the factory colors when present.
+        profile.ui.candle_up_body = core_ui.candle_up_body.clone();
+        profile.ui.candle_down_body = core_ui.candle_down_body.clone();
+        profile.ui.candle_up_wick = core_ui.candle_up_wick.clone();
+        profile.ui.candle_down_wick = core_ui.candle_down_wick.clone();
+        profile.ui.candle_up_border = core_ui.candle_up_border.clone();
+        profile.ui.candle_down_border = core_ui.candle_down_border.clone();
+        profile.ui.custom_colors = core_ui.custom_colors.clone();
         profile.ui.active_theme = self.app_state.theme_preset.clone();
         profile.ui.device_name = self.app_state.device_name.clone();
         profile.domain.app_version = self.app_state.app_version.clone();
@@ -5110,7 +5117,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if let Some(ref preset) = new_theme {
                 self.app_state.theme_preset = preset.clone();
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.theme_manager.set_preset(preset);
+                    pw.chart.set_chart_theme(preset);
                 }
             }
         }

@@ -2353,7 +2353,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::SetTheme(name) => {
-                self.panel_app.theme_manager.set_preset(name);
+                self.set_chart_theme(name);
                 // Signal the App-level coordinator to propagate this change to all windows.
                 self.theme_changed = Some(name.to_string());
                 log::debug!("[ChartApp] SetTheme: preset={}", name);

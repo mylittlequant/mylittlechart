@@ -233,6 +233,15 @@ impl ChartApp {
                 // `favorite_primitives` above.
                 collapsed_flyout_sections: self.panel_app.toolbar_state.collapsed_flyout_sections.clone(),
                 share_rights_preset: existing.ui.share_rights_preset.clone(),
+                // Candle appearance and the custom palette are written
+                // in-place on the core profile (same path as scroll_speed).
+                candle_up_body: existing.ui.candle_up_body.clone(),
+                candle_down_body: existing.ui.candle_down_body.clone(),
+                candle_up_wick: existing.ui.candle_up_wick.clone(),
+                candle_down_wick: existing.ui.candle_down_wick.clone(),
+                candle_up_border: existing.ui.candle_up_border.clone(),
+                candle_down_border: existing.ui.candle_down_border.clone(),
+                custom_colors: existing.ui.custom_colors.clone(),
             },
         }
     }

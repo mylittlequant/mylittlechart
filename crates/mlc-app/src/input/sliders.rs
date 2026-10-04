@@ -554,7 +554,204 @@ impl ChartApp {
                 series.candle_up_border = Some(mlc_core::with_alpha(&up, alpha));
                 series.candle_down_border = Some(mlc_core::with_alpha(&down, alpha));
             }
-            other => log::debug!("[ChartApp] apply_candle_opacity: unknown row: {}", other),
+            other => {
+                log::debug!("[ChartApp] apply_candle_opacity: unknown row: {}", other);
+                return;
+            }
+        }
+        if row == "border" {
+            let on = alpha > 0.001;
+            let state = &mut self.panel_app.chart_settings_state;
+            state.instrument_border_enabled = on;
+            if on {
+                state.remembered_border_alpha_up = Some(alpha);
+                state.remembered_border_alpha_down = Some(alpha);
+            }
+        }
+        self.drain_candle_appearance();
+    }
+
+    /// Copy the live candle colors into the user profile and mark it dirty.
+    /// Same writer as [`Self::set_input_speed`]: the shell saves `profile.json`.
+    pub(crate) fn drain_candle_appearance(&mut self) {
+        let series = self.panel_app.theme_manager.current().series.clone();
+        {
+            let mut user = self.core.user_mut();
+            let ui = &mut user.profile_mut().ui;
+            ui.candle_up_body = Some(series.candle_up_body);
+            ui.candle_down_body = Some(series.candle_down_body);
+            ui.candle_up_wick = Some(series.candle_up_wick);
+            ui.candle_down_wick = Some(series.candle_down_wick);
+            ui.candle_up_border = series.candle_up_border;
+            ui.candle_down_border = series.candle_down_border;
+        }
+        self.profile_dirty = true;
+    }
+
+    /// Write the shared custom palette into the profile and every picker.
+    pub(crate) fn publish_custom_palette(&mut self, colors: Vec<String>) {
+        {
+            let mut user = self.core.user_mut();
+            user.profile_mut().ui.custom_colors = colors.clone();
+        }
+        self.sync_custom_palette(&colors);
+        self.profile_dirty = true;
+    }
+
+    fn sync_custom_palette(&mut self, colors: &[String]) {
+        let owned = colors.to_vec();
+        self.panel_app.chart_settings_state.color_picker.custom_colors = owned.clone();
+        self.panel_app.primitive_settings_state.color_picker.custom_colors = owned.clone();
+        self.panel_app.indicator_settings_state.color_picker.custom_colors = owned.clone();
+        self.panel_app.compare_settings_state.color_picker.custom_colors = owned.clone();
+        self.panel_app.panel_color_picker.custom_colors = owned;
+    }
+
+    /// Apply the factory theme named `name`, then the profile's candle
+    /// colors on top. An empty name leaves the current theme in place.
+    /// Missing profile fields leave the factory color.
+    pub fn set_chart_theme(&mut self, name: &str) {
+        if !name.is_empty() {
+            self.panel_app.theme_manager.set_preset(name);
+        }
+        self.apply_saved_candle_appearance();
+    }
+
+    /// Overlay profile candle colors and the custom palette onto the live
+    /// theme. Does not mark the profile dirty.
+    pub fn apply_saved_candle_appearance(&mut self) {
+        let (up_body, down_body, up_wick, down_wick, up_border, down_border, colors) = {
+            let user = self.core.user();
+            let ui = &user.profile().ui;
+            (
+                ui.candle_up_body.clone(),
+                ui.candle_down_body.clone(),
+                ui.candle_up_wick.clone(),
+                ui.candle_down_wick.clone(),
+                ui.candle_up_border.clone(),
+                ui.candle_down_border.clone(),
+                ui.custom_colors.clone(),
+            )
+        };
+        {
+            let series = &mut self.panel_app.theme_manager.current_mut().series;
+            if let Some(color) = up_body {
+                series.candle_up_body = color;
+            }
+            if let Some(color) = down_body {
+                series.candle_down_body = color;
+            }
+            if let Some(color) = up_wick {
+                series.candle_up_wick = color;
+            }
+            if let Some(color) = down_wick {
+                series.candle_down_wick = color;
+            }
+            if let Some(color) = up_border {
+                series.candle_up_border = Some(color);
+            }
+            if let Some(color) = down_border {
+                series.candle_down_border = Some(color);
+            }
+        }
+        let both_off = {
+            let series = &self.panel_app.theme_manager.current().series;
+            match (&series.candle_up_border, &series.candle_down_border) {
+                (Some(up), Some(down)) => {
+                    mlc_core::color_alpha(up) <= 0.001 && mlc_core::color_alpha(down) <= 0.001
+                }
+                _ => false,
+            }
+        };
+        if both_off {
+            self.panel_app.chart_settings_state.instrument_border_enabled = false;
+        }
+        self.sync_custom_palette(&colors);
+    }
+
+    /// Uncheck stores each side's non-zero alpha and writes alpha 0 (RGB kept).
+    /// Recheck restores that alpha. Body alpha is only the fallback when
+    /// nothing non-zero was remembered.
+    pub(crate) fn toggle_instrument_border(&mut self) {
+        let enabling = !self.panel_app.chart_settings_state.instrument_border_enabled;
+        let remembered_up = self.panel_app.chart_settings_state.remembered_border_alpha_up;
+        let remembered_down = self.panel_app.chart_settings_state.remembered_border_alpha_down;
+        let (up_color, down_color, remember_up, remember_down) = {
+            let series = &self.panel_app.theme_manager.current().series;
+            let up_src = series
+                .candle_up_border
+                .clone()
+                .unwrap_or_else(|| series.candle_up_body.clone());
+            let down_src = series
+                .candle_down_border
+                .clone()
+                .unwrap_or_else(|| series.candle_down_body.clone());
+            if enabling {
+                let up_alpha = remembered_up
+                    .filter(|alpha| *alpha > 0.001)
+                    .unwrap_or_else(|| mlc_core::color_alpha(&series.candle_up_body));
+                let down_alpha = remembered_down
+                    .filter(|alpha| *alpha > 0.001)
+                    .unwrap_or_else(|| mlc_core::color_alpha(&series.candle_down_body));
+                (
+                    mlc_core::with_alpha(&up_src, up_alpha),
+                    mlc_core::with_alpha(&down_src, down_alpha),
+                    Some(up_alpha),
+                    Some(down_alpha),
+                )
+            } else {
+                let up_alpha = mlc_core::color_alpha(&up_src);
+                let down_alpha = mlc_core::color_alpha(&down_src);
+                (
+                    mlc_core::with_alpha(&up_src, 0.0),
+                    mlc_core::with_alpha(&down_src, 0.0),
+                    if up_alpha > 0.001 { Some(up_alpha) } else { remembered_up },
+                    if down_alpha > 0.001 { Some(down_alpha) } else { remembered_down },
+                )
+            }
+        };
+        {
+            let series = &mut self.panel_app.theme_manager.current_mut().series;
+            series.candle_up_border = Some(up_color);
+            series.candle_down_border = Some(down_color);
+        }
+        let state = &mut self.panel_app.chart_settings_state;
+        state.instrument_border_enabled = enabling;
+        state.remembered_border_alpha_up = remember_up;
+        state.remembered_border_alpha_down = remember_down;
+        self.drain_candle_appearance();
+    }
+
+    /// Checkbox follows the border colors just written. A non-zero alpha is
+    /// remembered for that side only.
+    pub(crate) fn sync_border_checkbox_from_series(&mut self) {
+        let (up_alpha, down_alpha) = {
+            let series = &self.panel_app.theme_manager.current().series;
+            let up_alpha = series.candle_up_border.as_deref().map(mlc_core::color_alpha).unwrap_or(1.0);
+            let down_alpha = series.candle_down_border.as_deref().map(mlc_core::color_alpha).unwrap_or(1.0);
+            (up_alpha, down_alpha)
+        };
+        let state = &mut self.panel_app.chart_settings_state;
+        state.instrument_border_enabled = up_alpha > 0.001 || down_alpha > 0.001;
+        if up_alpha > 0.001 {
+            state.remembered_border_alpha_up = Some(up_alpha);
+        }
+        if down_alpha > 0.001 {
+            state.remembered_border_alpha_down = Some(down_alpha);
+        }
+    }
+
+    /// One precision for the settings dropdown and the price-scale menu.
+    /// Writes `scale_settings` and the scale the formatter reads.
+    pub fn set_user_price_precision(&mut self, precision: Option<usize>) {
+        let precision = match precision {
+            Some(n) if n <= 8 => Some(n),
+            Some(_) => return,
+            None => None,
+        };
+        if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+            window.scale_settings.user_precision = precision;
+            window.set_price_precision(precision);
         }
     }
 }
@@ -593,6 +790,12 @@ mod candle_opacity_tests {
         assert_eq!(app.panel_app.theme_manager.current().series.candle_up_body, "rgba(128,128,128,0.7)");
         app.apply_slider_value("candle_opacity:body", 1.0);
         assert_eq!(app.panel_app.theme_manager.current().series.candle_up_body, "#808080");
+        assert!(app.profile_dirty, "a candle edit drains into the profile");
+        assert_eq!(
+            app.core.user().profile().ui.candle_up_body.as_deref(),
+            Some("#808080"),
+            "the profile keeps the user's grey"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -664,5 +867,129 @@ mod candle_opacity_tests {
         assert_eq!(series.candle_down_wick, "rgba(101,67,33,0.5)");
         assert_eq!(series.candle_up_border.as_deref(), Some("rgba(171,205,239,0.25)"));
         assert_eq!(series.candle_down_border.as_deref(), Some("rgba(64,64,64,0.25)"), "an unset border follows its body");
+        {
+            let user = app.core.user();
+            let ui = &user.profile().ui;
+            assert_eq!(ui.candle_up_border.as_deref(), Some("rgba(171,205,239,0.25)"));
+            assert_eq!(ui.candle_down_border.as_deref(), Some("rgba(64,64,64,0.25)"));
+        }
+        assert!(app.panel_app.chart_settings_state.instrument_border_enabled);
+        let snapshot = app.build_chart_settings_data();
+        assert_eq!(snapshot.instrument.border_up_color, "rgba(171,205,239,0.25)");
+        assert_ne!(snapshot.instrument.border_up_color, snapshot.instrument.body_up_color);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn unchecking_the_border_zeros_alpha_and_recheck_restores_it() {
+        let mut app = app().await;
+        {
+            let series = &mut app.panel_app.theme_manager.current_mut().series;
+            series.candle_up_body = "#112233".to_string();
+            series.candle_down_body = "#445566".to_string();
+            series.candle_up_border = Some("#abcdef".to_string());
+            series.candle_down_border = Some("rgba(10,20,30,0.4)".to_string());
+        }
+        app.toggle_instrument_border();
+        let series = &app.panel_app.theme_manager.current().series;
+        assert_eq!(series.candle_up_border.as_deref(), Some("rgba(171,205,239,0)"));
+        assert_eq!(series.candle_down_border.as_deref(), Some("rgba(10,20,30,0)"));
+        assert_eq!(series.candle_up_body, "#112233", "body rgb stays put");
+        assert!(!app.panel_app.chart_settings_state.instrument_border_enabled);
+        assert_eq!(
+            app.core.user().profile().ui.candle_up_border.as_deref(),
+            Some("rgba(171,205,239,0)")
+        );
+
+        // Body alpha changes must not become the restore value.
+        app.panel_app.theme_manager.current_mut().series.candle_up_body = "rgba(17,34,51,0.2)".to_string();
+        app.toggle_instrument_border();
+        let series = &app.panel_app.theme_manager.current().series;
+        assert_eq!(series.candle_up_border.as_deref(), Some("#abcdef"));
+        assert_eq!(series.candle_down_border.as_deref(), Some("rgba(10,20,30,0.4)"));
+        assert!(app.panel_app.chart_settings_state.instrument_border_enabled);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recheck_without_a_remembered_alpha_uses_the_body_alpha_once() {
+        let mut app = app().await;
+        {
+            let series = &mut app.panel_app.theme_manager.current_mut().series;
+            series.candle_up_body = "rgba(9,9,9,0.3)".to_string();
+            series.candle_down_body = "rgba(8,8,8,0.6)".to_string();
+            series.candle_up_border = Some("rgba(1,2,3,0)".to_string());
+            series.candle_down_border = Some("rgba(4,5,6,0)".to_string());
+        }
+        app.toggle_instrument_border();
+        assert!(app.panel_app.chart_settings_state.remembered_border_alpha_up.is_none());
+        app.toggle_instrument_border();
+        assert_eq!(
+            app.panel_app.theme_manager.current().series.candle_up_border.as_deref(),
+            Some("rgba(1,2,3,0.3)"),
+            "with nothing remembered, the body alpha is the restore value"
+        );
+        app.panel_app.theme_manager.current_mut().series.candle_up_body = "#ffffff".to_string();
+        assert_eq!(
+            app.panel_app.theme_manager.current().series.candle_up_border.as_deref(),
+            Some("rgba(1,2,3,0.3)"),
+            "body alpha is not a live binding after the restore"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn saved_candle_colors_override_the_factory_theme() {
+        let mut app = app().await;
+        {
+            let mut user = app.core.user_mut();
+            let ui = &mut user.profile_mut().ui;
+            ui.candle_up_body = Some("#010203".to_string());
+            ui.candle_up_border = Some("rgba(1,2,3,0)".to_string());
+            ui.candle_down_border = Some("rgba(4,5,6,0)".to_string());
+            ui.custom_colors = vec!["#aabbcc".to_string()];
+        }
+        app.profile_dirty = false;
+        app.set_chart_theme("light");
+        assert_eq!(app.panel_app.theme_manager.current().series.candle_up_body, "#010203");
+        assert!(!app.panel_app.chart_settings_state.instrument_border_enabled);
+        assert_eq!(
+            app.panel_app.chart_settings_state.color_picker.custom_colors,
+            vec!["#aabbcc".to_string()]
+        );
+        assert!(!app.profile_dirty, "loading appearance does not rewrite the profile");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn price_precision_setter_writes_the_scale_and_the_settings() {
+        let mut app = app().await;
+        app.set_user_price_precision(Some(4));
+        let window = app.panel_app.panel_grid.active_container().expect("a chart window");
+        assert_eq!(window.scale_settings.user_precision, Some(4));
+        assert_eq!(window.price_scale().user_precision, Some(4));
+        app.set_user_price_precision(None);
+        let window = app.panel_app.panel_grid.active_container().expect("a chart window");
+        assert_eq!(window.scale_settings.user_precision, None);
+        assert_eq!(window.price_scale().user_precision, None);
+        app.set_user_price_precision(Some(9));
+        let window = app.panel_app.panel_grid.active_container().expect("a chart window");
+        assert_eq!(window.price_scale().user_precision, None, "above 8 is not a precision");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_open_dropdown_swallows_the_click_under_it() {
+        let mut app = app().await;
+        app.panel_app.chart_settings_state.is_open = true;
+        app.panel_app.chart_settings_state.active_dropdown = Some("precision".to_string());
+        assert!(!app.exclusive_overlay_swallows_click(Some("chart_settings:item:dropdown_option:precision:4")));
+        assert_eq!(
+            app.panel_app.chart_settings_state.active_dropdown.as_deref(),
+            Some("precision")
+        );
+        assert!(app.exclusive_overlay_swallows_click(Some("chart_settings:footer:ok")));
+        assert!(app.panel_app.chart_settings_state.active_dropdown.is_none());
+        assert!(app.panel_app.chart_settings_state.is_open, "the parent modal stays");
+
+        app.panel_app.chart_settings_state.color_picker.open_l1(0.0, 0.0, Some("#808080"));
+        assert!(app.exclusive_overlay_swallows_click(Some("chart_settings:footer:ok")));
+        assert!(!app.panel_app.chart_settings_state.color_picker.is_open());
+        assert!(app.panel_app.chart_settings_state.is_open);
     }
 }

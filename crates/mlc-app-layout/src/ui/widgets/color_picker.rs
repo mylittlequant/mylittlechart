@@ -128,7 +128,30 @@ pub fn draw_color_picker_l1(
 
     y += 10.0 * (config.swatch_size + config.gap) + 8.0;
 
-    // Draw custom colors row
+    // Saved custom colors, above the current swatch and "+".
+    if !config.custom_colors.is_empty() {
+        let cols = config.columns.max(1);
+        for (idx, color) in config.custom_colors.iter().enumerate() {
+            let row = idx / cols;
+            let col = idx % cols;
+            let x = content.x + col as f64 * (config.swatch_size + config.gap);
+            let swatch_y = y + row as f64 * (config.swatch_size + config.gap);
+            let swatch_rect = WidgetRect::new(x, swatch_y, config.swatch_size, config.swatch_size);
+            let is_hovered = hovered_swatch == Some(color.as_str());
+            let is_selected = config.current_color.as_deref() == Some(color.as_str());
+            ctx.set_fill_color(color);
+            ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, config.swatch_radius);
+            if is_selected || is_hovered {
+                ctx.set_stroke_color("#ffffff");
+                ctx.set_stroke_width(if is_selected { 2.0 } else { 1.0 });
+                ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, config.swatch_radius);
+            }
+            result.swatch_rects.push((color.clone(), swatch_rect));
+        }
+        let saved_rows = (config.custom_colors.len() + cols - 1) / cols;
+        y += saved_rows as f64 * (config.swatch_size + config.gap) + 4.0;
+    }
+
     // Current color swatch (larger)
     let current_swatch_size = config.swatch_size + 4.0;
     if let Some(ref current) = config.current_color {

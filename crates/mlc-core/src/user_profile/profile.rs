@@ -966,6 +966,25 @@ pub struct ProfileUiSettings {
     /// can look and clone, nobody but the author can edit.
     #[serde(default = "default_share_rights_preset")]
     pub share_rights_preset: String,
+
+    /// Candle colors the user set. `None` keeps the factory theme color.
+    /// Opacity is the alpha of the color string, not a separate field.
+    /// Missing keys on an old `profile.json` stay `None`.
+    #[serde(default)]
+    pub candle_up_body: Option<String>,
+    #[serde(default)]
+    pub candle_down_body: Option<String>,
+    #[serde(default)]
+    pub candle_up_wick: Option<String>,
+    #[serde(default)]
+    pub candle_down_wick: Option<String>,
+    #[serde(default)]
+    pub candle_up_border: Option<String>,
+    #[serde(default)]
+    pub candle_down_border: Option<String>,
+    /// Color-picker custom swatches, shared by every picker. Empty means none.
+    #[serde(default)]
+    pub custom_colors: Vec<String>,
 }
 
 fn default_share_rights_preset() -> String {
@@ -1040,6 +1059,13 @@ impl ProfileUiSettings {
             community_messages_size: None,
             collapsed_flyout_sections: std::collections::BTreeSet::new(),
             share_rights_preset: default_share_rights_preset(),
+            candle_up_body: None,
+            candle_down_body: None,
+            candle_up_wick: None,
+            candle_down_wick: None,
+            candle_up_border: None,
+            candle_down_border: None,
+            custom_colors: Vec::new(),
         }
     }
 }
@@ -1668,6 +1694,14 @@ mod json_compat_tests {
         // (shared-tab-reload-anchor arc, 2026-09-23) — must default to
         // empty, never fail deserialization.
         assert!(profile.ui.open_shared_tabs.is_empty());
+        // Fixture predates candle appearance and the custom palette.
+        assert!(profile.ui.candle_up_body.is_none());
+        assert!(profile.ui.candle_down_body.is_none());
+        assert!(profile.ui.candle_up_wick.is_none());
+        assert!(profile.ui.candle_down_wick.is_none());
+        assert!(profile.ui.candle_up_border.is_none());
+        assert!(profile.ui.candle_down_border.is_none());
+        assert!(profile.ui.custom_colors.is_empty());
     }
 
     #[test]

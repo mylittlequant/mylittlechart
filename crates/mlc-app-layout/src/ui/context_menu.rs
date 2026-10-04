@@ -23,6 +23,8 @@ pub enum ContextMenuTarget {
     Signal(usize),
     /// Chart background
     ChartBackground,
+    /// The price scale (main chart or a sub-pane). Precision lives here.
+    PriceScale,
     /// An indicator by instance ID
     Indicator(u64),
     /// A color tag for a leaf panel

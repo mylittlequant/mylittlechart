@@ -2456,6 +2456,9 @@ impl ChartContainer {
         self.price_scale.base_price = price_persist.base_price;
         self.price_scale.width = price_persist.width;
         self.price_scale.user_precision = price_persist.user_precision;
+        // The settings label reads `scale_settings`; the formatter reads
+        // `price_scale`. Keep them the same value after a reload.
+        self.scale_settings.user_precision = price_persist.user_precision;
     }
 
     /// Set the viewport's bar count to `new_count` (bookkeeping only, no

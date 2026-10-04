@@ -130,7 +130,13 @@ impl ChartApp {
                     "panel"     => Some(&mut self.panel_app.panel_color_picker),
                     _           => None,
                 };
+                let mut appended = None;
                 if let Some(picker) = picker {
+                    // "+" saves the current swatch and still opens the mixer.
+                    let current = picker.current_color.clone();
+                    if picker.add_color_to_custom(&current) {
+                        appended = Some(picker.custom_colors.clone());
+                    }
                     picker.open_l2();
                     // Immediately activate hex editing so on_drag_start works
                     // without requiring an extra click to warm up geometry.
@@ -140,6 +146,9 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&hex_id, &hex);
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&hex_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::HEX_COLOR);
+                }
+                if let Some(colors) = appended {
+                    self.publish_custom_palette(colors);
                 }
             }
             ColorPickerL1HitResult::OpacitySlider(opacity) => {
@@ -348,12 +357,16 @@ impl ChartApp {
                 match source {
                     "primitive" => {
                         self.panel_app.primitive_settings_state.color_picker.add_to_custom();
+                        let colors = self.panel_app.primitive_settings_state.color_picker.custom_colors.clone();
+                        self.publish_custom_palette(colors);
                         let final_color = self.panel_app.primitive_settings_state.color_picker.get_final_color();
                         self.apply_primitive_color(&final_color);
                         self.panel_app.primitive_settings_state.close_color_picker();
                     }
                     "indicator" => {
                         self.panel_app.indicator_settings_state.color_picker.add_to_custom();
+                        let colors = self.panel_app.indicator_settings_state.color_picker.custom_colors.clone();
+                        self.publish_custom_palette(colors);
                         let final_color = self.panel_app.indicator_settings_state.color_picker.get_final_color();
                         let field = self.panel_app.indicator_settings_state.color_picker_field.clone();
                         if let Some(ref f) = field { self.apply_indicator_color(f, &final_color); }
@@ -361,6 +374,8 @@ impl ChartApp {
                     }
                     "chart" => {
                         self.panel_app.chart_settings_state.color_picker.add_to_custom();
+                        let colors = self.panel_app.chart_settings_state.color_picker.custom_colors.clone();
+                        self.publish_custom_palette(colors);
                         let final_color = self.panel_app.chart_settings_state.color_picker.get_final_color();
                         let field = self.panel_app.chart_settings_state.color_picker_field.clone();
                         if let Some(ref f) = field { self.apply_chart_settings_color(f, &final_color); }
@@ -368,12 +383,16 @@ impl ChartApp {
                     }
                     "compare" => {
                         self.panel_app.compare_settings_state.color_picker.add_to_custom();
+                        let colors = self.panel_app.compare_settings_state.color_picker.custom_colors.clone();
+                        self.publish_custom_palette(colors);
                         let final_color = self.panel_app.compare_settings_state.color_picker.get_final_color();
                         self.apply_compare_color(&final_color);
                         self.panel_app.compare_settings_state.close_color_picker();
                     }
                     "panel" => {
                         self.panel_app.panel_color_picker.add_to_custom();
+                        let colors = self.panel_app.panel_color_picker.custom_colors.clone();
+                        self.publish_custom_palette(colors);
                         let final_color = self.panel_app.panel_color_picker.get_final_color();
                         if self.panel_app.sync_color_grid.adding_custom_color {
                             // Adding custom color to grid — push the color and reopen grid.
@@ -927,6 +946,17 @@ impl ChartApp {
                     log::debug!("[ChartApp] apply_chart_settings_color: unknown field '{}' = {}", other, color);
                 }
             }
+        }
+        if matches!(
+            field,
+            "body_up_color" | "body_down_color"
+                | "border_up_color" | "border_down_color"
+                | "wick_up_color" | "wick_down_color"
+        ) {
+            if field.starts_with("border_") {
+                self.sync_border_checkbox_from_series();
+            }
+            self.drain_candle_appearance();
         }
         self.autosave_snapshot();
         self.snapshot_chart_settings_to_user_manager();

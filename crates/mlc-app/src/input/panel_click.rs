@@ -7446,31 +7446,31 @@ impl ChartApp {
                 }
                 "wizard_theme_dark" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
-                    self.panel_app.theme_manager.set_preset("dark");
+                    self.set_chart_theme("dark");
                     self.theme_changed = Some("dark".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → dark");
                 }
                 "wizard_theme_light" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "light".to_string();
-                    self.panel_app.theme_manager.set_preset("light");
+                    self.set_chart_theme("light");
                     self.theme_changed = Some("light".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → light");
                 }
                 "wizard_theme_high_contrast" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast".to_string();
-                    self.panel_app.theme_manager.set_preset("high_contrast");
+                    self.set_chart_theme("high_contrast");
                     self.theme_changed = Some("high_contrast".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → high_contrast");
                 }
                 "wizard_theme_high_contrast_mono" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast_mono".to_string();
-                    self.panel_app.theme_manager.set_preset("high_contrast_mono");
+                    self.set_chart_theme("high_contrast_mono");
                     self.theme_changed = Some("high_contrast_mono".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → high_contrast_mono");
                 }
                 "wizard_theme_mascot" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "mascot".to_string();
-                    self.panel_app.theme_manager.set_preset("mascot");
+                    self.set_chart_theme("mascot");
                     self.theme_changed = Some("mascot".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → mascot");
                 }
@@ -7480,7 +7480,7 @@ impl ChartApp {
                 // wizard's row list entirely, so they get no click id here.
                 "wizard_theme_surf" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "surf".to_string();
-                    self.panel_app.theme_manager.set_preset("surf");
+                    self.set_chart_theme("surf");
                     self.theme_changed = Some("surf".to_string());
                     log::debug!("[ChartApp] wizard: theme selected → surf");
                 }

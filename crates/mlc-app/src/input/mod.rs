@@ -400,6 +400,11 @@ impl ChartApp {
         // Drop the RefMut borrow before calling dispatch_panel_click (which needs &mut self).
         let clicked_widget_id = self.input_coordinator.borrow_mut().process_click(x, y)
             .map(|w| w.as_str().to_string());
+        // An open dropdown, color picker, or modal owns the click. Outside
+        // closes that layer and does not activate whatever sits under it.
+        if self.exclusive_overlay_swallows_click(clicked_widget_id.as_deref()) {
+            return;
+        }
         if let Some(id) = clicked_widget_id {
             // Trading center chart scale-corner buttons (A/M cycle,
             // lin/log/% mode) live INSIDE the container body widget —
@@ -958,6 +963,22 @@ impl ChartApp {
             Some(e) => e,
             None => { _fallback_rc = self.build_extended_layout(); &_fallback_rc }
         };
+
+        // The scale's own menu. Content hit-testing treats this rect as a miss.
+        let on_price_scale = extended.main_chart.price_scale.contains(x, y)
+            || extended.sub_panes.iter().any(|pane| pane.price_scale.contains(x, y));
+        if on_price_scale {
+            let current = self.panel_app.panel_grid.active_container()
+                .map(|window| window.price_scale().user_precision)
+                .unwrap_or(None);
+            self.panel_app.context_menu_state.open_smart(
+                x, y,
+                ContextMenuTarget::PriceScale,
+                build_price_scale_precision_menu(current),
+                w, h,
+            );
+            return;
+        }
 
         // Pre-extract active-window data needed by the indicator closures.
         // Done before the mutable borrow of panel_grid inside handle_right_click.
@@ -10703,6 +10724,33 @@ fn tags_tabs_active_scroll(
 ///
 /// This is a standalone version of `MenuCatalog::chart_context_menu()` from the
 /// core crate, avoiding a dependency on core from chart-app.
+fn build_price_scale_precision_menu(current: Option<usize>) -> Vec<ContextMenuItemState> {
+    use mlc_core::i18n::{SettingsKey, t_settings};
+    const LABELS: [&str; 9] = [
+        "0 (1)",
+        "1 (0.1)",
+        "2 (0.01)",
+        "3 (0.001)",
+        "4 (0.0001)",
+        "5 (0.00001)",
+        "6 (0.000001)",
+        "7 (0.0000001)",
+        "8 (0.00000001)",
+    ];
+    let mut items = Vec::with_capacity(1 + LABELS.len());
+    items.push(
+        ContextMenuItemState::action("precision:auto", t_settings(SettingsKey::PrecisionAuto))
+            .with_checkbox(current.is_none()),
+    );
+    for (n, label) in LABELS.iter().enumerate() {
+        items.push(
+            ContextMenuItemState::action(format!("precision:{n}"), *label)
+                .with_checkbox(current == Some(n)),
+        );
+    }
+    items
+}
+
 fn build_chart_background_menu() -> Vec<ContextMenuItemState> {
     use mlc_core::i18n::{MenuKey, current_language};
     let lang = current_language();

@@ -340,8 +340,7 @@ impl ChartApp {
                     log::debug!("[ChartApp] instrument:body_enabled = {}", self.panel_app.chart_settings_state.instrument_body_enabled);
                 }
                 "border_enabled" => {
-                    self.panel_app.chart_settings_state.instrument_border_enabled =
-                        !self.panel_app.chart_settings_state.instrument_border_enabled;
+                    self.toggle_instrument_border();
                     log::debug!("[ChartApp] instrument:border_enabled = {}", self.panel_app.chart_settings_state.instrument_border_enabled);
                 }
                 "wick_enabled" => {
@@ -863,7 +862,7 @@ impl ChartApp {
         if let Some(field) = item_id.strip_prefix("appearance:") {
             // Theme preset buttons
             if let Some(theme_id) = field.strip_prefix("theme_") {
-                self.panel_app.theme_manager.set_preset(theme_id);
+                self.set_chart_theme(theme_id);
                 // Signal the App-level coordinator to propagate this change to all windows.
                 self.theme_changed = Some(theme_id.to_string());
                 log::debug!("[ChartApp] theme preset: {}", theme_id);
@@ -1135,6 +1134,17 @@ impl ChartApp {
                     }
                     log::debug!("[ChartApp] instrument:line_markers_size = {}px", px);
                 }
+                "precision" => {
+                    let precision = if value == "auto" {
+                        Some(None)
+                    } else {
+                        value.parse::<usize>().ok().filter(|n| *n <= 8).map(Some)
+                    };
+                    if let Some(precision) = precision {
+                        self.set_user_price_precision(precision);
+                        log::debug!("[ChartApp] precision = {:?}", precision);
+                    }
+                }
                 "candle_style" => {
                     // Skin texture layer manual pick — sets the candle
                     // draw-form on the runtime theme; glow follows.
@@ -1161,10 +1171,11 @@ impl ChartApp {
         if let Some(name) = item_id.strip_prefix("dropdown_cycle:") {
             match name {
                 "precision" => {
-                    if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
-                        w.scale_settings.user_precision = cycle_precision(w.scale_settings.user_precision);
-                        w.set_price_precision(w.scale_settings.user_precision);
-                        log::debug!("[ChartApp] precision cycled: {:?}", w.scale_settings.user_precision);
+                    let next = self.panel_app.panel_grid.active_container()
+                        .map(|w| cycle_precision(w.scale_settings.user_precision));
+                    if let Some(next) = next {
+                        self.set_user_price_precision(next);
+                        log::debug!("[ChartApp] precision cycled: {:?}", next);
                     }
                 }
                 "timezone" => {

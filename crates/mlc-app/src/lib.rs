@@ -6653,6 +6653,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         overlay_panel.bar_family_wicks,
                     ),
+                    border_effective: self.panel_app.chart_settings_state.instrument_border_enabled,
                     trade_archive_available: overlay_trade_archive_available,
                 };
                 if let Some(mut render_state) = overlay_bubble_mgr.render_state_for(
@@ -6776,6 +6777,7 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.instrument_wick_enabled,
                     single_panel.bar_family_wicks,
                 ),
+                border_effective: self.panel_app.chart_settings_state.instrument_border_enabled,
                 trade_archive_available: single_overlay_trade_archive_available,
             };
             if let Some(mut render_state) = single_overlay_bubble_mgr.render_state_for(
@@ -7275,6 +7277,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         split_panel.bar_family_wicks,
                     ),
+                    border_effective: self.panel_app.chart_settings_state.instrument_border_enabled,
                     trade_archive_available: split_trade_archive_available,
                 };
                 let mut render_state = match split_bubble_mgr.render_state_for(
@@ -7977,6 +7980,7 @@ impl ChartApp {
                         self.panel_app.chart_settings_state.instrument_wick_enabled,
                         single_window_panel.bar_family_wicks,
                     ),
+                    border_effective: self.panel_app.chart_settings_state.instrument_border_enabled,
                     trade_archive_available: single_window_trade_archive_available,
                 };
                 single_window_bubble_mgr.render_state_for(
@@ -14449,8 +14453,8 @@ impl ChartApp {
                 body_up_color:  series.candle_up_body.clone(),
                 body_down_color: series.candle_down_body.clone(),
                 border_enabled: css.instrument_border_enabled,
-                border_up_color: series.candle_up_body.clone(),
-                border_down_color: series.candle_down_body.clone(),
+                border_up_color: series.candle_up_border.clone().unwrap_or_else(|| series.candle_up_body.clone()),
+                border_down_color: series.candle_down_border.clone().unwrap_or_else(|| series.candle_down_body.clone()),
                 wick_enabled:   css.instrument_wick_enabled,
                 wick_up_color:  series.candle_up_wick.clone(),
                 wick_down_color: series.candle_down_wick.clone(),

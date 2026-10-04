@@ -1080,6 +1080,11 @@ pub struct ChartSettingsState {
     pub instrument_body_enabled: bool,
     /// Instrument checkbox: border enabled
     pub instrument_border_enabled: bool,
+    /// Last non-zero up-border alpha, so unchecking can come back.
+    /// Session only — the color string in the profile is what reloads.
+    pub remembered_border_alpha_up: Option<f64>,
+    /// Last non-zero down-border alpha. Independent of the up side.
+    pub remembered_border_alpha_down: Option<f64>,
     /// Instrument checkbox: wick enabled
     pub instrument_wick_enabled: bool,
     /// Footprint checkbox: draw ABS-marker (absorption tint + "ABS" label).
@@ -1131,6 +1136,8 @@ impl Default for ChartSettingsState {
             instrument_use_prev_close: false,
             instrument_body_enabled: true,
             instrument_border_enabled: true,
+            remembered_border_alpha_up: None,
+            remembered_border_alpha_down: None,
             instrument_wick_enabled: true,
             footprint_show_abs_markers: true,
             footprint_show_volume_text: true,

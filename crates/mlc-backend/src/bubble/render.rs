@@ -85,6 +85,9 @@ pub struct ChartWindowRenderInputs<'a> {
     /// value. Resolved at the render-state build boundary (this struct) —
     /// `chart_type` itself is NOT threaded into the renderer.
     pub wicks_effective: bool,
+    /// Candle border stroke. The settings checkbox. Alpha 0 on the theme
+    /// border color is the same visual: no border.
+    pub border_effective: bool,
     /// Whether the venue publishes a bulk daily trade-archive for this
     /// bubble's `(exchange, account_type)` — resolved by the caller (`mlc-app`,
     /// which holds `Arc<BackendCore>`) via
@@ -194,7 +197,7 @@ pub fn build_chart_render_state<'a>(
         timeframe_interval_ms,
         scale_settings: Some(window.scale_settings),
         body_enabled: true,
-        border_enabled: true,
+        border_enabled: window.border_effective,
         wick_enabled: window.wicks_effective,
         use_prev_close: false,
         footprint_bars: bubble.footprint_bars.as_deref(),
