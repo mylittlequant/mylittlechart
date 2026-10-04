@@ -7032,6 +7032,47 @@ impl MessengerFolderSel {
     }
 }
 
+/// Pencil menu and the create/join dialogs it opens. Group member ids are
+/// opaque user-id strings. Titles and the join query live in the text-field
+/// store (`dm_group_title`, `dm_group_member`, `dm_channel_title`,
+/// `dm_channel_topic`, `dm_join_query`), not here.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MessengerDialog {
+    Pencil,
+    Group { members: Vec<String>, members_can_add: bool },
+    Channel,
+    Join,
+}
+
+/// Draft of a custom folder. `tag: None` creates one. Icon index follows
+/// `FolderIcon` declaration order: 0 Candles, 1 Folder, 2 Group, 3 Channel,
+/// 4 Bookmark, 5 Person. The name lives in the `dm_folder_name` text field.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderEditor {
+    pub tag: Option<String>,
+    pub icon_idx: u8,
+    pub all_dms: bool,
+    pub all_groups: bool,
+    pub all_channels: bool,
+    pub rooms: Vec<String>,
+    pub exclude_muted: bool,
+    pub exclude_read: bool,
+    pub exclude_archived: bool,
+}
+
+/// A chart card waiting for the user to pick a room ("Send to chat").
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PendingChartSend {
+    pub symbol: String,
+    pub timeframe: String,
+    pub venue: String,
+    pub note: String,
+    pub share_token: Option<String>,
+}
+
 /// State for the Community modal (Forum + Messages). Pure UI state + the
 /// forum-v2/DM state it now owns — effects live in the shell driver, same
 /// mailbox contract as [`CloudOverlayState`].
@@ -7113,6 +7154,17 @@ pub struct CommunityState {
     /// every frame; the legacy DM path stays `false`, which hides the
     /// stickers tab.
     pub messenger_stickers: bool,
+    /// Provider reports `Capabilities::chart_card_send`. Same refresh as
+    /// `messenger_stickers`. Hides the paperclip and "Send to chat".
+    pub messenger_chart_cards: bool,
+    /// Pencil menu or a create/join dialog. `None` while closed.
+    pub messenger_dialog: Option<MessengerDialog>,
+    /// Folder editor. `None` while closed.
+    pub messenger_folder_editor: Option<FolderEditor>,
+    /// Paperclip menu (one row: current chart).
+    pub messenger_attach_open: bool,
+    /// Room picker for sending the active chart into a chat.
+    pub messenger_send_chart: Option<PendingChartSend>,
 }
 
 #[cfg(feature = "cloud")]
@@ -7139,6 +7191,11 @@ impl Default for CommunityState {
             messenger_room: None,
             messenger_picker: None,
             messenger_stickers: false,
+            messenger_chart_cards: false,
+            messenger_dialog: None,
+            messenger_folder_editor: None,
+            messenger_attach_open: false,
+            messenger_send_chart: None,
         }
     }
 }
@@ -7187,6 +7244,10 @@ impl CommunityState {
             self.forward_target_picker = None;
             self.messenger_reply_preview = None;
             self.messenger_picker = None;
+            self.messenger_dialog = None;
+            self.messenger_folder_editor = None;
+            self.messenger_attach_open = false;
+            self.messenger_send_chart = None;
         }
     }
 
@@ -7201,6 +7262,10 @@ impl CommunityState {
         self.forward_target_picker = None;
         self.messenger_reply_preview = None;
         self.messenger_picker = None;
+        self.messenger_dialog = None;
+        self.messenger_folder_editor = None;
+        self.messenger_attach_open = false;
+        self.messenger_send_chart = None;
     }
 
     /// Back to the chat list (outside-provider mode).
@@ -7211,6 +7276,10 @@ impl CommunityState {
         self.forward_target_picker = None;
         self.messenger_reply_preview = None;
         self.messenger_picker = None;
+        self.messenger_dialog = None;
+        self.messenger_folder_editor = None;
+        self.messenger_attach_open = false;
+        self.messenger_send_chart = None;
     }
 
     pub fn close(&mut self) {

@@ -62,8 +62,10 @@ impl ChartPanelApp {
     /// the same room.
     pub fn set_messenger_provider(&mut self, provider: Option<Box<dyn MessengerProvider + Send>>) {
         let stickers = provider.as_ref().is_some_and(|provider| provider.capabilities().stickers);
+        let chart_cards = provider.as_ref().is_some_and(|provider| provider.capabilities().chart_card_send);
         self.community_state.set_messenger_external(provider.is_some());
         self.community_state.messenger_stickers = stickers;
+        self.community_state.messenger_chart_cards = chart_cards;
         self.messenger = MessengerBridge { provider, ..MessengerBridge::default() };
     }
 
@@ -219,7 +221,9 @@ impl ChartPanelApp {
         // Before the vault/counter early-returns below: the sticker tab is a
         // per-frame capability read, including while the driver is not Ready.
         let stickers = self.messenger.provider.as_deref().is_some_and(|provider| provider.capabilities().stickers);
+        let chart_cards = self.messenger.provider.as_deref().is_some_and(|provider| provider.capabilities().chart_card_send);
         self.community_state.messenger_stickers = stickers;
+        self.community_state.messenger_chart_cards = chart_cards;
         let Some(provider) = self.messenger.provider.as_deref() else { return };
 
         if self.community_state.dm.lookup_query.is_some() {

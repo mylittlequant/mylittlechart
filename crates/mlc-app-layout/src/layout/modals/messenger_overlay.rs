@@ -229,8 +229,9 @@ const PINBAR_H: f64 = 40.0;
 const JUMP_D: f64 = 38.0;
 /// The composer's own attach/emoji icon buttons — concept `.ib{width:30px;
 /// height:30px}` either side of the draft field (`.cin`'s own clip/smile
-/// icons). Attach stays inert. Emoji toggles the picker [`draw_chat_pane`]
-/// paints after the composer.
+/// icons). The paperclip draws only while an external provider reports
+/// chart-card send; it sends the open room the current chart. Emoji toggles
+/// the picker [`draw_chat_pane`] paints after the composer.
 const COMPOSER_ICON_D: f64 = 30.0;
 
 /// A `$SYMBOL` cashtag pill inline in message text (concept `.sym`) —
@@ -339,15 +340,27 @@ pub(crate) fn draw(
     draw_soft_divider_v(ctx, x + RAIL_W, y, viewport_h, tt);
     draw_soft_divider_v(ctx, pane_x - COL_GAP / 2.0, y, viewport_h, tt);
 
-    draw_chat_list(
-        ctx, coord, layer_id, list_x, y, list_w, viewport_h, state, provider, ft, tt, current_time_ms,
-        result, list_result,
-    );
-
-    draw_chat_pane(
-        ctx, coord, layer_id, pane_x, y, pane_w, viewport_h, state, provider, caps, ft, tt,
-        current_time_ms, result,
-    );
+    if state.messenger_external && state.messenger_folder_editor.is_some() {
+        super::messenger_dialogs::draw_folder_editor(
+            ctx, coord, layer_id, list_x, y, (w - RAIL_W).max(0.0), viewport_h, state, provider, ft, tt,
+            current_time_ms, result, list_result,
+        );
+    } else {
+        draw_chat_list(
+            ctx, coord, layer_id, list_x, y, list_w, viewport_h, state, provider, ft, tt, current_time_ms,
+            result, list_result,
+        );
+        draw_chat_pane(
+            ctx, coord, layer_id, pane_x, y, pane_w, viewport_h, state, provider, caps, ft, tt,
+            current_time_ms, result,
+        );
+    }
+    if state.messenger_external {
+        super::messenger_dialogs::draw_popups(
+            ctx, coord, layer_id, x, y, w, viewport_h, list_x, list_w, CHAT_FILTER_ROW_H, state, provider, caps,
+            ft, tt, current_time_ms, result,
+        );
+    }
 }
 
 /// Column gap between the chat list and the chat pane — same numeric value
@@ -913,8 +926,10 @@ fn draw_chat_list(
     let mut ly = scrollable.content_y();
     let lw = scrollable.content_width();
 
+    let pencil_lit = state.dm.new_conversation_open
+        || matches!(state.messenger_dialog, Some(crate::ui::modal_settings::MessengerDialog::Pencil));
     ly += draw_chat_filter_row(
-        ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, state.dm.new_conversation_open, result,
+        ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, pencil_lit, result,
     );
 
     if state.dm.new_conversation_open {
@@ -1439,15 +1454,20 @@ fn draw_pin_bar(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, item: &mlc_
 }
 
 /// The headline of the chat pane while no room is open. With an external
-/// provider the two dock states that need no room to be seen surface here:
-/// another tab holds the messenger (`ActiveElsewhere`), or the driver is still
-/// booting / failed to boot (`Locked` — the provider's own error line is drawn
-/// above this headline).
+/// provider, NeedsSetup, Unverified, and ActiveElsewhere each have their own
+/// line. Locked says the messenger is connecting. A room that is already
+/// open keeps its ciphertext timeline when the vault is Locked.
 fn empty_pane_headline(vault_state: VaultState, external: bool) -> &'static str {
+    let select = "Select a conversation from the list on the left, or start a new one above.";
+    if !external {
+        return select;
+    }
     match vault_state {
-        VaultState::ActiveElsewhere if external => UserSettingsKey::MessengerActiveElsewhere.get(current_language()),
-        VaultState::Locked if external => UserSettingsKey::MessengerConnecting.get(current_language()),
-        _ => "Select a conversation from the list on the left, or start a new one above.",
+        VaultState::ActiveElsewhere => UserSettingsKey::MessengerActiveElsewhere.get(current_language()),
+        VaultState::Locked => UserSettingsKey::MessengerConnecting.get(current_language()),
+        VaultState::NeedsSetup => "Set up messaging on this account before chats can open.",
+        VaultState::Unverified => "This device is not verified. Encrypted chats stay sealed until it is.",
+        VaultState::Ready => select,
     }
 }
 
@@ -1548,6 +1568,14 @@ fn draw_chat_pane(
         draw_chat_header_group(ctx, x, body_y, w, &room.name, &subtitle, accent, tt);
     }
     draw_header_icons(ctx, coord, layer_id, x, body_y, w, tt);
+
+    // Needs setup, an unverified device, and "open in another tab" replace
+    // the feed and the composer with one line. Locked keeps the ciphertext
+    // timeline and the existing dock (a sealed vault is not an error).
+    if external && matches!(vault_state, VaultState::NeedsSetup | VaultState::Unverified | VaultState::ActiveElsewhere) {
+        draw_status(ctx, tt, x, body_y + CHAT_HEADER_H + 12.0, w, empty_pane_headline(vault_state, true), None);
+        return;
+    }
 
     let mut feed_top = body_y + CHAT_HEADER_H;
     let pinned_item = timeline.iter().find(|i| i.pinned);
@@ -2184,21 +2212,27 @@ fn draw_composer(
         ctx.fill_text(&hint, x, row_cy);
         return None;
     }
-    // Normal — one row: attach + a fully-rounded draft field + emoji + a
-    // round accent send button (concept `.cin`: `.ib` + `.field` + `.ib` +
-    // `.send`, `gap:4px`). Attach stays inert. The emoji rect goes back to
-    // the caller, which paints the picker after any full-pane scrim.
+    // Normal — draft field + emoji + send. The paperclip is only there when
+    // an external provider can send a chart card; otherwise that slot's
+    // width goes back to the field.
     let draft_field_id: &str = match &state.dm.view {
         crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } => draft_field_id.as_str(),
         _ if external => DM_DRAFT_FIELD,
         _ => return None,
     };
+    let show_attach = external && state.messenger_chart_cards;
     let icon_y = row_y + (COMPOSER_FIELD_H - COMPOSER_ICON_D) / 2.0;
-    let attach_rect = WidgetRect::new(x, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
-    draw_composer_icon_button(ctx, coord, layer_id, "cloud_overlay:dm:attach", attach_rect, ComposerIcon::Attach, tt);
+    let attach_w = if show_attach { COMPOSER_ICON_D + COMPOSER_GAP } else { 0.0 };
+    if show_attach {
+        let attach_rect = WidgetRect::new(x, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
+        draw_composer_icon_button(ctx, coord, layer_id, "cloud_overlay:dm:attach", attach_rect, ComposerIcon::Attach, tt);
+        if state.messenger_attach_open {
+            draw_attach_menu(ctx, coord, layer_id, attach_rect, tt);
+        }
+    }
 
-    let field_x = x + COMPOSER_ICON_D + COMPOSER_GAP;
-    let field_w = (w - COMPOSER_ICON_D * 2.0 - COMPOSER_GAP * 3.0 - COMPOSER_SEND_D).max(60.0);
+    let field_x = x + attach_w;
+    let field_w = (w - attach_w - COMPOSER_ICON_D - COMPOSER_GAP * 2.0 - COMPOSER_SEND_D).max(60.0);
     let field_rect = WidgetRect::new(field_x, row_y, field_w, COMPOSER_FIELD_H);
     let (rect, chars) = draw_field_shaped(
         ctx, coord, layer_id, "cloud_overlay:dm:draft_input", draft_field_id, field_rect,
@@ -2213,6 +2247,37 @@ fn draw_composer(
     let send_rect = WidgetRect::new(emoji_rect.x + COMPOSER_ICON_D + COMPOSER_GAP, row_y, COMPOSER_SEND_D, COMPOSER_SEND_D);
     draw_send_button(ctx, coord, layer_id, send_rect, tt);
     Some(emoji_rect)
+}
+
+/// One row above the paperclip: send the chart that is open now into this room.
+fn draw_attach_menu(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    anchor: WidgetRect,
+    tt: &ToolbarTheme,
+) {
+    let menu_w = 160.0;
+    let menu_h = 32.0;
+    let x = anchor.x;
+    let y = anchor.y - menu_h - 4.0;
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(x, y, menu_w, menu_h, 6.0);
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, y, menu_w, menu_h, 6.0);
+    let row = WidgetRect::new(x + 4.0, y + 4.0, menu_w - 8.0, menu_h - 8.0);
+    let id = "cloud_overlay:dm:attach_chart";
+    if coord.is_hovered(&WidgetId::from(id)) {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(row.x, row.y, row.width, row.height, 4.0);
+    }
+    ctx.set_font("12.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Current chart", row.x + 8.0, row.center_y());
+    coord.register_on_layer(id, row, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 /// The composer's own attach/emoji icon (concept `.ib`).
@@ -2571,6 +2636,12 @@ fn chart_card_height() -> f64 {
     CARD_MARGIN_TOP + CARD_CHART_H + 1.0 + CARD_INFO_H + CARD_MARGIN_BOTTOM
 }
 
+/// A share token can sit in a widget id only when it has no `:` or space.
+/// Anything else still draws the card, without Open/Clone.
+fn chart_token_clickable(token: &str) -> bool {
+    !token.is_empty() && !token.contains(':') && !token.contains(' ')
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_bubble(
     ctx: &mut dyn RenderContext,
@@ -2663,7 +2734,7 @@ fn draw_bubble(
     }
 
     if let Some(c) = card {
-        draw_chart_card(ctx, text_left, cy, (text_right - text_left).min(CARD_W), c, tt);
+        draw_chart_card(ctx, coord, layer_id, text_left, cy, (text_right - text_left).min(CARD_W), c, tt);
         cy += chart_card_height();
     }
 
@@ -2732,11 +2803,11 @@ fn draw_bubble(
     // actually reports read receipts (`Capabilities::receipts`) AND
     // `read_by` is non-empty.
     ctx.set_font("10.5px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
     let time_y = cy + line_count as f64 * BUBBLE_LINE_H;
     let clock = clock_hm(item.ts);
     let mut label = if item.edited { format!("edited {clock}") } else { clock };
-    if mine && !visual.mono {
+    let failed = mine && !visual.mono && matches!(item.send_state, SendState::Failed { .. });
+    if mine && !visual.mono && !failed {
         let tick = match &item.send_state {
             SendState::LocalEcho | SendState::Sending => "\u{2022}",
             SendState::Failed { .. } => "!",
@@ -2748,7 +2819,20 @@ fn draw_bubble(
     let time_x = bx + bubble_w - BUBBLE_PAD_H;
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(&label, time_x, time_y);
+    if failed {
+        let bang = "!";
+        let bang_w = ctx.measure_text(bang).max(8.0);
+        ctx.set_fill_color(&tt.danger);
+        ctx.fill_text(bang, time_x, time_y);
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text(&label, time_x - bang_w - 4.0, time_y);
+        let hit = WidgetRect::new(time_x - bang_w, time_y, bang_w, BUBBLE_TIME_H);
+        let id = format!("cloud_overlay:dm:retry:{}", item.event_id.as_str());
+        coord.register_on_layer(id.as_str(), hit, Sense::CLICK, layer_id);
+    } else {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text(&label, time_x, time_y);
+    }
     if visual.mono {
         let label_w = ctx.measure_text(&label);
         draw_lock_glyph(ctx, time_x - label_w - 7.0, time_y + 5.0, 8.0, &tt.item_text_muted);
@@ -2904,7 +2988,16 @@ fn draw_quote(
 /// this file never otherwise touches) — [`ToolbarTheme::success`]/`danger`
 /// stand in, the same teal/red pairing the Dark preset already uses for
 /// both concepts.
-fn draw_chart_card(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, card: &SharedChartCard, tt: &ToolbarTheme) -> f64 {
+fn draw_chart_card(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    card: &SharedChartCard,
+    tt: &ToolbarTheme,
+) -> f64 {
     let top = y + CARD_MARGIN_TOP;
     let total_h = CARD_CHART_H + 1.0 + CARD_INFO_H;
     ctx.set_fill_color(&tt.background);
@@ -2918,32 +3011,41 @@ fn draw_chart_card(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, card: &S
     let info_y = top + CARD_CHART_H + 1.0;
     draw_soft_divider_h(ctx, x, info_y, w, tt);
 
+    let token = card.share_token.as_deref().filter(|token| chart_token_clickable(token));
     let label_open = "Open";
     let label_clone = "Clone";
     ctx.set_font("600 11.5px sans-serif");
-    let open_w = ctx.measure_text(label_open) + 16.0;
-    let clone_w = ctx.measure_text(label_clone) + 16.0;
     let btn_h = 24.0;
     let btn_y = info_y + (CARD_INFO_H - btn_h) / 2.0;
-    let clone_rect = WidgetRect::new(x + w - 9.0 - clone_w, btn_y, clone_w, btn_h);
-    let open_rect = WidgetRect::new(clone_rect.x - 6.0 - open_w, btn_y, open_w, btn_h);
-
-    ctx.set_fill_color(&tt.button_bg);
-    ctx.fill_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
-    ctx.set_stroke_color(&tt.divider_soft);
-    ctx.stroke_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label_open, open_rect.center_x(), open_rect.center_y());
-
-    ctx.set_fill_color(&tt.accent);
-    ctx.fill_rounded_rect(clone_rect.x, clone_rect.y, clone_rect.width, clone_rect.height, 4.0);
-    ctx.set_fill_color(contrasting_text_color(&tt.accent));
-    ctx.fill_text(label_clone, clone_rect.center_x(), clone_rect.center_y());
-
     let text_x = x + 9.0;
-    let text_right = (open_rect.x - 8.0).max(text_x);
+    let text_right = if let Some(token) = token {
+        let open_w = ctx.measure_text(label_open) + 16.0;
+        let clone_w = ctx.measure_text(label_clone) + 16.0;
+        let clone_rect = WidgetRect::new(x + w - 9.0 - clone_w, btn_y, clone_w, btn_h);
+        let open_rect = WidgetRect::new(clone_rect.x - 6.0 - open_w, btn_y, open_w, btn_h);
+
+        ctx.set_fill_color(&tt.button_bg);
+        ctx.fill_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
+        ctx.set_stroke_color(&tt.divider_soft);
+        ctx.stroke_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
+        ctx.set_fill_color(&tt.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label_open, open_rect.center_x(), open_rect.center_y());
+
+        ctx.set_fill_color(&tt.accent);
+        ctx.fill_rounded_rect(clone_rect.x, clone_rect.y, clone_rect.width, clone_rect.height, 4.0);
+        ctx.set_fill_color(contrasting_text_color(&tt.accent));
+        ctx.fill_text(label_clone, clone_rect.center_x(), clone_rect.center_y());
+
+        let open_id = format!("cloud_overlay:dm:card_open:{token}");
+        let clone_id = format!("cloud_overlay:dm:card_clone:{token}");
+        coord.register_on_layer(open_id.as_str(), open_rect, Sense::CLICK, layer_id);
+        coord.register_on_layer(clone_id.as_str(), clone_rect, Sense::CLICK, layer_id);
+        (open_rect.x - 8.0).max(text_x)
+    } else {
+        x + w - 9.0
+    };
     ctx.set_font("600 12px sans-serif");
     ctx.set_fill_color(&tt.item_text);
     ctx.set_text_align(TextAlign::Left);
@@ -3752,7 +3854,17 @@ mod tests {
         assert_eq!(empty_pane_headline(VaultState::Locked, true), UserSettingsKey::MessengerConnecting.get(lang));
         let select = "Select a conversation from the list on the left, or start a new one above.";
         assert_eq!(empty_pane_headline(VaultState::Ready, true), select);
+        assert_eq!(
+            empty_pane_headline(VaultState::NeedsSetup, true),
+            "Set up messaging on this account before chats can open."
+        );
+        assert_eq!(
+            empty_pane_headline(VaultState::Unverified, true),
+            "This device is not verified. Encrypted chats stay sealed until it is."
+        );
         assert_eq!(empty_pane_headline(VaultState::Locked, false), select, "the DM path keeps its own lock UI");
         assert_eq!(empty_pane_headline(VaultState::ActiveElsewhere, false), select);
+        assert_eq!(empty_pane_headline(VaultState::NeedsSetup, false), select);
+        assert_eq!(empty_pane_headline(VaultState::Unverified, false), select);
     }
 }

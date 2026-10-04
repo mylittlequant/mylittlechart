@@ -129,6 +129,12 @@ impl ChartApp {
             is_early_field |= matches!(
                 focused_id.as_str(),
                 FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
+                    | DM_GROUP_TITLE
+                    | DM_GROUP_MEMBER
+                    | DM_CHANNEL_TITLE
+                    | DM_CHANNEL_TOPIC
+                    | DM_JOIN_QUERY
+                    | DM_FOLDER_NAME
                     | SHARE_SETTINGS_NICK
                     | FRIENDS_NICK
                     | FRIENDS_INVITE_CODE
@@ -303,6 +309,14 @@ impl ChartApp {
             DM_PEER                           => self.text_action_dm_peer(ch, action),
             #[cfg(feature = "cloud")]
             DM_CHAT_FILTER                    => self.text_action_dm_chat_filter(ch, action),
+            #[cfg(feature = "cloud")]
+            DM_GROUP_TITLE | DM_CHANNEL_TITLE | DM_CHANNEL_TOPIC | DM_FOLDER_NAME => {
+                self.text_action_dm_plain(ch, action)
+            }
+            #[cfg(feature = "cloud")]
+            DM_GROUP_MEMBER                   => self.text_action_dm_group_member(ch, action),
+            #[cfg(feature = "cloud")]
+            DM_JOIN_QUERY                     => self.text_action_dm_join_query(ch, action),
             #[cfg(feature = "cloud")]
             SHARE_SETTINGS_NICK               => self.text_action_share_settings_nick(ch, action),
             FRIENDS_NICK                      => self.text_action_friends_nick(ch, action),
@@ -1455,6 +1469,50 @@ impl ChartApp {
                 let term = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
                 self.panel_app.messenger_search_users(&term);
             }
+        }
+    }
+
+    /// Dialog fields that only store text. Escape blurs. Enter does not submit.
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_plain(&mut self, ch: char, action: TextAction) {
+        if ch == '\x1b' || matches!(action, TextAction::Cancel) {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        }
+    }
+
+    /// Member search inside the new-group dialog. Enqueues `SearchUsers`
+    /// without arming the new-DM lookup dropdown (`lookup_query` stays
+    /// untouched — that dropdown is a different surface).
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_group_member(&mut self, ch: char, action: TextAction) {
+        if ch == '\x1b' || matches!(action, TextAction::Cancel) {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if ch == '\r' || ch == '\n' || matches!(action, TextAction::Commit(_)) {
+            return;
+        }
+        let wid = WidgetId::from(crate::text_input::DM_GROUP_MEMBER);
+        let term = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+        if !term.is_empty() {
+            self.panel_app.messenger_enqueue(mlc_messenger_model::MessengerIntent::SearchUsers { term });
+        }
+    }
+
+    /// Public-channel search inside the join dialog.
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_join_query(&mut self, ch: char, action: TextAction) {
+        if ch == '\x1b' || matches!(action, TextAction::Cancel) {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if ch == '\r' || ch == '\n' || matches!(action, TextAction::Commit(_)) {
+            return;
+        }
+        let wid = WidgetId::from(crate::text_input::DM_JOIN_QUERY);
+        let term = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+        if !term.is_empty() {
+            self.panel_app.messenger_enqueue(mlc_messenger_model::MessengerIntent::SearchPublicRooms { term });
         }
     }
 

@@ -517,6 +517,9 @@ pub fn chart_toolbar_render_toolbars(
     // leaks into the PNG. Callers with no capture concept of their own
     // (embedded headers) pass `false`, unchanged from today.
     is_capturing_screenshot: bool,
+    // Globe dropdown's "Send to chat" row. False hides it. Embedded
+    // headers have no share globe and pass false.
+    send_to_chat: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -1639,7 +1642,7 @@ pub fn chart_toolbar_render_toolbars(
         let dropdown_result = if is_capturing_screenshot {
             None
         } else if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal, account_signed_in)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal, account_signed_in, send_to_chat)
         } else {
             None
         };
@@ -2009,6 +2012,7 @@ fn chart_toolbar_render_dropdown(
     split_symbol_compare: bool,
     quicksearch_minimal: bool,
     account_signed_in: bool,
+    send_to_chat: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -2050,9 +2054,9 @@ fn chart_toolbar_render_dropdown(
         // fresh here so it always reflects the active chart_type/instrument.
         let mut items = if dropdown_id == "timeframe_selector" {
             resolution_param_dropdown_items(active_chart_type)
-                .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in))?
+                .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in, send_to_chat))?
         } else {
-            chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in)?
+            chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in, send_to_chat)?
         };
 
         // Granularity favorites (user-granularity-templates-inner arc, кусок
@@ -3644,6 +3648,7 @@ fn chart_toolbar_find_dropdown_items(
     presets: &[mlc_core::PresetSummary],
     active_preset_id: &str,
     account_signed_in: bool,
+    send_to_chat: bool,
 ) -> Option<Vec<DropdownItemDef>> {
         // Special case: symbol_selector's inline fast-search dropdown
         // (symbol-search-compare-inner arc, Wave 2, кусок 4). The toolbar
@@ -3700,11 +3705,15 @@ fn chart_toolbar_find_dropdown_items(
         // that constant's own doc for why this builder, not static
         // `ToolbarItemDef` data, owns the row list).
         if dropdown_id == "share_chart" {
-            return Some(vec![
+            let mut items = vec![
                 DropdownItemDef::action("share_chart", "Share live chart").with_icon(ToolbarIconId::new("Globe")),
                 DropdownItemDef::action(mlc_core::toolbar::OPEN_SHARE_ACTION_ID, "Open shared chart…"),
                 DropdownItemDef::action(mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID, "Share settings…"),
-            ]);
+            ];
+            if send_to_chat {
+                items.push(DropdownItemDef::action("share_send_chat", "Send to chat"));
+            }
+            return Some(items);
         }
 
         // Special case: the favorites bar's "+" picker (favorite-primitives

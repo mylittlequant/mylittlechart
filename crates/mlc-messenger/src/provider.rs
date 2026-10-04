@@ -54,9 +54,9 @@ pub const SLICE_CAPABILITIES: Capabilities = Capabilities {
     receipts: true,
     forward: true,
     stickers: true,
-    // Cards are received and shown (and forwarded when their share policy
-    // allows), but nothing here builds or sends one yet.
-    chart_card_send: false,
+    // Cards are received, shown, forwarded when their share policy allows,
+    // and sent via [`MessengerIntent::SendChartCard`].
+    chart_card_send: true,
 };
 
 /// `m.tag`'s pinned-room tag name (client-server API convention).
@@ -605,12 +605,14 @@ fn shared_chart_of(content: &ItemContent) -> Option<SharedChartCard> {
         .or_else(|| content.get("share").and_then(|share| share.get("allow_forward")))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    let share_token = content.get("share_token").and_then(serde_json::Value::as_str).filter(|token| !token.is_empty()).map(str::to_string);
     Some(SharedChartCard {
         symbol: text("symbol"),
         timeframe: text("timeframe"),
         venue: text("venue"),
         note: text("note"),
         allow_forward,
+        share_token,
     })
 }
 
@@ -1143,6 +1145,25 @@ fn apply_intent<C: RecordCodec>(core: &mut MessengerCore<C>, intent: MessengerIn
             // (`alt`, what a client without the pack shows) is the id.
             let alt = id.clone();
             core.dispatch(MessengerCommand::SendSticker { room_id, pack, id, alt, txn_id: None }, now_ms)
+        }
+        MessengerIntent::SendChartCard { room, body, symbol, timeframe, venue, note, allow_forward, share_token } => {
+            let room_id = require_room(core, &room)?;
+            if symbol.trim().is_empty() {
+                return Err(MessengerError::IntentRefused("chart card requires a symbol".to_string()));
+            }
+            let mut content = serde_json::json!({
+                "msgtype": "org.mylittlechart.chart",
+                "body": body,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "venue": venue,
+                "note": note,
+                "allow_forward": allow_forward,
+            });
+            if let Some(token) = share_token {
+                content["share_token"] = serde_json::Value::String(token);
+            }
+            core.dispatch(MessengerCommand::SendChartCard { room_id, content, txn_id: None }, now_ms)
         }
         MessengerIntent::Forward { from_room, event_id, to_room } => {
             let from = require_room(core, &from_room)?;
@@ -1908,10 +1929,45 @@ mod tests {
     }
 
     #[test]
-    fn the_slice_reports_stickers_and_forward_and_not_chart_card_sending() {
+    fn the_slice_reports_stickers_forward_and_chart_card_sending() {
         assert!(SLICE_CAPABILITIES.stickers);
         assert!(SLICE_CAPABILITIES.forward);
-        assert!(!SLICE_CAPABILITIES.chart_card_send, "no chart card is built or sent by this engine yet");
+        assert!(SLICE_CAPABILITIES.chart_card_send);
+    }
+
+    #[test]
+    fn send_chart_card_becomes_an_m_room_message_with_chart_msgtype() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &group_sync_body("@alice:example.org", "!g:example.org", "s1"));
+
+        apply_intent(
+            &mut core,
+            MessengerIntent::SendChartCard {
+                room: RoomId::from("!g:example.org"),
+                body: "BTCUSDT 1h".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                timeframe: "1h".to_string(),
+                venue: "BINANCE".to_string(),
+                note: "desk".to_string(),
+                allow_forward: false,
+                share_token: Some("tok123".to_string()),
+            },
+            0,
+        )
+        .expect("send chart card applies");
+
+        let sends = released_sends(&mut core);
+        assert_eq!(sends.len(), 1, "one send request");
+        assert!(sends[0].path.contains("m.room.message"), "the event type is m.room.message: {}", sends[0].path);
+        let body = sends[0].body.clone().expect("a body");
+        assert_eq!(body["msgtype"], "org.mylittlechart.chart");
+        assert_eq!(body["symbol"], "BTCUSDT");
+        assert_eq!(body["share_token"], "tok123");
+        assert_eq!(body["allow_forward"], false);
+
+        let room_id = crate::ids::RoomId::parse("!g:example.org").expect("room id");
+        let last = core.timeline(&room_id).and_then(|timeline| timeline.items().last()).expect("local echo");
+        assert!(matches!(last.content, crate::room::timeline::ItemContent::ChartCard { .. }), "echo is a chart card");
     }
 
     #[test]
@@ -2031,6 +2087,7 @@ mod tests {
                 venue: "binance".to_string(),
                 note: "SMC scan".to_string(),
                 allow_forward: true,
+                share_token: None,
             })
         );
         assert_eq!(card.content, MessageContent::Text("BTCUSDT 4h".to_string()), "the fallback line rides beside the card");

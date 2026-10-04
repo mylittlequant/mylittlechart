@@ -99,6 +99,8 @@ pub mod dm_overlay;
 #[cfg(feature = "cloud")]
 pub mod messenger_overlay;
 #[cfg(feature = "cloud")]
+pub mod messenger_dialogs;
+#[cfg(feature = "cloud")]
 pub mod community;
 #[cfg(feature = "cloud")]
 pub use community::{render_community_modal, CommunityListPaneResult, CommunityResult};

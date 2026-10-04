@@ -114,7 +114,7 @@ use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
 use crate::room::timeline::{
     interpret_content, ForwardRefusal, ItemContent, SendState, Timeline, EVENT_STICKER, KEY_FORWARDED,
-    KEY_FORWARDED_FROM, STICKER_URL_SCHEME,
+    KEY_FORWARDED_FROM, MSGTYPE_CHART_CARD, STICKER_URL_SCHEME,
 };
 use crate::room::RoomKind;
 use crate::store::sealed::SealedRecordCodec;
@@ -388,6 +388,21 @@ pub enum MessengerCommand {
         /// The event `body`: the fallback text for a client without the
         /// pack.
         alt: String,
+        /// A caller-supplied transaction id; `None` mints a fresh one.
+        txn_id: Option<TxnId>,
+    },
+    /// Sends one shared chart card (`m.room.message`, `msgtype:
+    /// org.mylittlechart.chart`) through the same per-room send pipeline as
+    /// [`MessengerCommand::SendSticker`]. `content` is the plaintext event
+    /// body and already includes `msgtype`. Local echo is
+    /// [`ItemContent::ChartCard`] via [`interpret_content`].
+    /// Refused ([`MessengerError::IntentRefused`]) when `content` is not
+    /// that msgtype.
+    SendChartCard {
+        /// The room to send into.
+        room_id: RoomId,
+        /// The event's plaintext content, including `msgtype`.
+        content: serde_json::Value,
         /// A caller-supplied transaction id; `None` mints a fresh one.
         txn_id: Option<TxnId>,
     },
@@ -2160,6 +2175,16 @@ impl<C: RecordCodec> MessengerCore<C> {
                     "info": { "pack": pack, "id": id },
                 });
                 let payload = SendPayload::Event { event_type: EVENT_STICKER.to_string(), content };
+                self.start_new_send(room_id, payload, txn_id, now_ms)?;
+            }
+            MessengerCommand::SendChartCard { room_id, content, txn_id } => {
+                let msgtype = content.get("msgtype").and_then(serde_json::Value::as_str);
+                if !content.is_object() || msgtype != Some(MSGTYPE_CHART_CARD) {
+                    return Err(MessengerError::IntentRefused(
+                        "chart card content must be an org.mylittlechart.chart object".to_string(),
+                    ));
+                }
+                let payload = SendPayload::Event { event_type: "m.room.message".to_string(), content };
                 self.start_new_send(room_id, payload, txn_id, now_ms)?;
             }
             MessengerCommand::Forward { from_room, event_id, to_room, txn_id } => {

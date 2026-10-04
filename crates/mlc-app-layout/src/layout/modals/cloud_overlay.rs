@@ -175,6 +175,21 @@ pub struct CloudOverlayResult {
     /// `draw_chat_filter_row`).
     pub dm_chat_filter_rect: Option<WidgetRect>,
     pub dm_chat_filter_char_positions: Vec<f64>,
+    /// New-group / new-channel / join / folder-editor fields. `None` while
+    /// that dialog is closed — the app still pushes a zero rect so a closed
+    /// dialog does not keep a stale caret hit target.
+    pub dm_group_title_rect: Option<WidgetRect>,
+    pub dm_group_title_chars: Vec<f64>,
+    pub dm_group_member_rect: Option<WidgetRect>,
+    pub dm_group_member_chars: Vec<f64>,
+    pub dm_channel_title_rect: Option<WidgetRect>,
+    pub dm_channel_title_chars: Vec<f64>,
+    pub dm_channel_topic_rect: Option<WidgetRect>,
+    pub dm_channel_topic_chars: Vec<f64>,
+    pub dm_join_query_rect: Option<WidgetRect>,
+    pub dm_join_query_chars: Vec<f64>,
+    pub dm_folder_name_rect: Option<WidgetRect>,
+    pub dm_folder_name_chars: Vec<f64>,
     /// DM Conversation view's message-bubble text geometry — one entry per
     /// WRAPPED LINE of every bubble currently on screen, for HOST-SIDE
     /// line-level text selection (owner ruling 2026-09-10: the DM pane

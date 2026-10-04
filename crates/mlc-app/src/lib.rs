@@ -36,6 +36,8 @@ pub mod input;
 pub mod chart_panel_app;
 #[cfg(feature = "cloud")]
 mod messenger_bridge;
+#[cfg(feature = "cloud")]
+mod messenger_dialogs;
 mod checkout;
 #[cfg(feature = "cloud")]
 pub mod checkout_bridge;
@@ -229,6 +231,12 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // Chat-list name filter (messenger UI-2b) — same registration gap
     // `FORUM_SEARCH`/`DM_DRAFT`/`DM_PEER`'s own comment above documents.
     tf.register(text_input::DM_CHAT_FILTER, TextFieldConfig::text().with_max_len(64));
+    tf.register(text_input::DM_GROUP_TITLE, TextFieldConfig::text().with_max_len(80));
+    tf.register(text_input::DM_GROUP_MEMBER, TextFieldConfig::text().with_max_len(64));
+    tf.register(text_input::DM_CHANNEL_TITLE, TextFieldConfig::text().with_max_len(80));
+    tf.register(text_input::DM_CHANNEL_TOPIC, TextFieldConfig::text().with_max_len(200));
+    tf.register(text_input::DM_JOIN_QUERY, TextFieldConfig::text().with_max_len(64));
+    tf.register(text_input::DM_FOLDER_NAME, TextFieldConfig::text().with_max_len(80));
     // Share settings nick box. Same contract as `DM_PEER`: `register` is
     // what makes `update_field` / `focus` / `on_char` actually land. A
     // field that is only drawn and never registered cannot take a caret.
@@ -11876,6 +11884,56 @@ impl ChartApp {
                         &id,
                         (r.x, r.y, r.width, r.height),
                         ov.dm_chat_filter_char_positions.clone(),
+                    );
+                }
+                // Dialog fields. A closed dialog reports `None`; push a zero
+                // rect anyway so last frame's caret target does not linger.
+                {
+                    let r = ov.dm_group_title_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_GROUP_TITLE);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_group_title_chars.clone(),
+                    );
+                }
+                {
+                    let r = ov.dm_group_member_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_GROUP_MEMBER);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_group_member_chars.clone(),
+                    );
+                }
+                {
+                    let r = ov.dm_channel_title_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_CHANNEL_TITLE);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_channel_title_chars.clone(),
+                    );
+                }
+                {
+                    let r = ov.dm_channel_topic_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_CHANNEL_TOPIC);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_channel_topic_chars.clone(),
+                    );
+                }
+                {
+                    let r = ov.dm_join_query_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_JOIN_QUERY);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_join_query_chars.clone(),
+                    );
+                }
+                {
+                    let r = ov.dm_folder_name_rect;
+                    let (x, y, w, h) = r.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    let id = WidgetId::from(text_input::DM_FOLDER_NAME);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id, (x, y, w, h), ov.dm_folder_name_chars.clone(),
                     );
                 }
             }

@@ -149,6 +149,10 @@ pub struct SharedChartCard {
     /// the bubble's Forward action; `false` never redacts the card itself,
     /// only that one action.
     pub allow_forward: bool,
+    /// Share token the card's Open/Clone buttons open. `None` when the
+    /// sender attached a chart that has no link yet — the card still
+    /// draws, without those two buttons.
+    pub share_token: Option<String>,
 }
 
 /// Where one item sits in its own send lifecycle. `Sent` is a durable,

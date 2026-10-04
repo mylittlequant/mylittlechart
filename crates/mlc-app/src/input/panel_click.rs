@@ -4144,6 +4144,11 @@ impl ChartApp {
                         tf.begin_edit(&field_id);
                         tf.focus(crate::text_input::SHARE_OPEN_INPUT);
                     }
+                    #[cfg(feature = "cloud")]
+                    if item_id == "share_send_chat" {
+                        self.panel_app.toolbar_state.open_dropdown_id = None;
+                        self.messenger_begin_send_chart();
+                    }
                     return;
                 }
 
@@ -6607,6 +6612,15 @@ impl ChartApp {
                     // to it as a `SendText` intent (`messenger_bridge`); the
                     // legacy `"send"` arm below is the DM path.
                     if action == "send" && self.messenger_send_draft() {
+                        return;
+                    }
+                    // Pencil menu, create/join dialogs, folder editor,
+                    // paperclip, chart-card Open/Clone, failed-send retry.
+                    // Runs before `community_state` is borrowed below:
+                    // folder save reads capabilities, which cannot sit
+                    // inside that borrow. A click that is not one of those
+                    // widgets returns false and room navigation continues.
+                    if self.dm_dialogs_click(action) {
                         return;
                     }
                     // `dm` moved to `CommunityState` (community-modal arc

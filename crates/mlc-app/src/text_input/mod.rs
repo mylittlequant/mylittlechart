@@ -205,6 +205,25 @@ pub const DM_PEER: &str = "dm_peer";
 /// own Escape uses).
 pub const DM_CHAT_FILTER: &str = "dm_chat_filter";
 
+/// New-group dialog title. Enter does not submit; the Create button does.
+pub const DM_GROUP_TITLE: &str = "dm_group_title";
+
+/// New-group member search. Each change enqueues `SearchUsers` on the
+/// external provider. Enter does not submit.
+pub const DM_GROUP_MEMBER: &str = "dm_group_member";
+
+/// New-channel dialog title.
+pub const DM_CHANNEL_TITLE: &str = "dm_channel_title";
+
+/// New-channel topic. Empty stays `None` on create.
+pub const DM_CHANNEL_TOPIC: &str = "dm_channel_topic";
+
+/// Public-channel directory search. Each change enqueues `SearchPublicRooms`.
+pub const DM_JOIN_QUERY: &str = "dm_join_query";
+
+/// Folder editor name.
+pub const DM_FOLDER_NAME: &str = "dm_folder_name";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —
@@ -355,6 +374,12 @@ pub fn known_field_ids() -> &'static [&'static str] {
         DM_DRAFT,
         DM_PEER,
         DM_CHAT_FILTER,
+        DM_GROUP_TITLE,
+        DM_GROUP_MEMBER,
+        DM_CHANNEL_TITLE,
+        DM_CHANNEL_TOPIC,
+        DM_JOIN_QUERY,
+        DM_FOLDER_NAME,
         CRED_WEBHOOK_URL,
         CRED_ADD_EXCHANGE,
         CRED_ADD_LABEL,

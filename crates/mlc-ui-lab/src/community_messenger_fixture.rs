@@ -351,6 +351,7 @@ impl MessengerFixture {
                     venue: "BINANCE".to_string(),
                     note: "SMC scan · 2 order blocks · shared chart".to_string(),
                     allow_forward: true,
+                    share_token: None,
                 }),
                 mentions_me: false,
                 forwarded: None,

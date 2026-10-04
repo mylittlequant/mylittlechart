@@ -122,6 +122,21 @@ pub enum MessengerIntent {
     /// <pack>/<id>`) — the provider fills the event's `alt` from the pack's
     /// own table; the UI names the sticker by `(pack, id)` only.
     SendSticker { room: RoomId, pack: String, id: String },
+    /// Send the active chart as `m.room.message` / msgtype
+    /// `org.mylittlechart.chart`. Display fields are what the provider's
+    /// card mapper already reads. `share_token`, when present, is what the
+    /// card's Open/Clone buttons open. `allow_forward` is the sender's own
+    /// grant: false hides Forward and does not hide the card.
+    SendChartCard {
+        room: RoomId,
+        body: String,
+        symbol: String,
+        timeframe: String,
+        venue: String,
+        note: String,
+        allow_forward: bool,
+        share_token: Option<String>,
+    },
     MarkRead { room: RoomId, event_id: EventId },
     SetTyping { room: RoomId, typing: bool },
     SetMuted { room: RoomId, muted: bool },
