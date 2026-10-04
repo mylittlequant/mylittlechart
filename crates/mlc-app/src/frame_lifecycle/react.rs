@@ -2041,24 +2041,14 @@ mod live_seam_regression_tests {
 mod oi_funding_widen_tests {
     //! Arc D step 6 (`docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md`
     //! §3.3): `target_cids` in the `OiUpdatePassthrough`/
-    //! `FundingRatePassthrough` arms now ORs a real compute indicator's
-    //! `definition_streams` membership alongside the opaque overlay check.
+    //! `FundingRatePassthrough` arms ORs a compute indicator's
+    //! `definition_streams` membership with the opaque overlay check.
     //!
-    //! **The compute-indicator half is written and correct by construction
-    //! but not exercisable via a real catalog instance today**: a live
-    //! diagnostic (`mlc-backend-indicator-engine`'s
-    //! `liquidation_funding_open_interest_entries_are_unreachable_pending_
-    //! mli_get_all_fix` test) found ZERO `Funding`/`OpenInterest`-declaring
-    //! catalog entries reachable via `IndicatorManager::create_instance` —
-    //! the SAME pre-existing `mylittleindicators` `UnifiedIndicatorCatalog::
-    //! get_all()` category-enumeration gap `dom_books.rs`/`liq_pump.rs`
-    //! document for `OrderBook`/`Liquidation`. `FUNDING_MOMENTUM`/
-    //! `OI_CHANGE_RATE` (`FundingAdvanced`/`OpenInterest` categories) are
-    //! both affected. What IS tested here: the regression guard that the
-    //! widening did not break the EXISTING, working opaque-overlay path.
-    //! Once mli's gap closes, the compute half needs no further mlc-side
-    //! change — `definition_streams`/`instances_for_bubble` already work
-    //! for any instance that manages to exist.
+    //! `UnifiedIndicatorCatalog::get_all()` still omits the OpenInterest
+    //! category, so `IndicatorManager::create_instance("oi_change_rate")`
+    //! fails on a stock manager. `IndicatorBridge::get_definition` resolves
+    //! that id directly. The two-bubble test installs that definition and
+    //! then drives the real passthrough arm — it does not stub the feed.
 
     use super::*;
     use digdigdig3::core::types::{AccountType, ExchangeId};
@@ -2132,6 +2122,136 @@ mod oi_funding_widen_tests {
         assert!(
             app.core.bubbles().oi_delta(bid).unwrap_or(&[]).is_empty(),
             "neither gate is active — the bubble must not receive the point"
+        );
+    }
+
+    fn second_bubble_on_same_instrument(app: &mut ChartApp, home: mlc_core::ids::BubbleId) -> mlc_core::ids::BubbleId {
+        let leaves = app.panel_app.panel_grid.split_active(mlc_core::SplitKind::SplitRight);
+        assert_eq!(leaves.len(), 2, "split_active must open a second chart");
+        let cid = app
+            .panel_app
+            .panel_grid
+            .container_for_leaf(leaves[1])
+            .expect("sibling container")
+            .id;
+        let (symbol, exchange, account) = {
+            let bubbles = app.core.bubbles();
+            (
+                bubbles.symbol(home).expect("home symbol").to_string(),
+                bubbles.exchange(home).expect("home exchange").to_string(),
+                bubbles.account_type(home).expect("home account").to_string(),
+            )
+        };
+        let bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], symbol.clone(), Timeframe::m1());
+        app.attach_chart_to_tag(cid, bid);
+        if let Some(window) = app.panel_app.panel_grid.container_for_leaf_mut(leaves[1]) {
+            window.auto_tag_id = bid;
+            window.current_tag_id = bid;
+        }
+        assert!(
+            app.core.bubbles_mut().set_bid_instrument_full(bid, symbol, exchange, account, Timeframe::m1()),
+            "sibling instrument must stick"
+        );
+        bid
+    }
+
+    fn flat_bars(n: usize) -> Vec<mlc_core::Bar> {
+        (0..n)
+            .map(|i| mlc_core::Bar {
+                timestamp: i as i64,
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+                volume: 10.0,
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    /// Two bubbles, one instrument. One has only `overlay_oi_delta`. The
+    /// other has only `OiChangeRate` (installed from the id lookup, because
+    /// `get_all` omits that category). Both must take the same OI prints.
+    /// The second print is 200 OI over 2s, which `OiChangeRate` reports as
+    /// 100 per second — that is the `StreamEvent::OpenInterest` landing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oi_update_reaches_both_the_opaque_overlay_bubble_and_the_oi_change_rate_bubble() {
+        let (mut app, overlay_bid) = build_app_with_bubble().await;
+        let compute_bid = second_bubble_on_same_instrument(&mut app, overlay_bid);
+
+        app.core
+            .indicators_mut()
+            .add(Some(overlay_bid), ChartApp::OI_DELTA_TYPE_ID)
+            .expect("overlay_oi_delta catalog entry exists");
+
+        let def = mlc_backend_indicator_engine::IndicatorBridge::new()
+            .get_definition("OI_CHANGE_RATE")
+            .expect("OI_CHANGE_RATE resolves by id even though get_all omits its category");
+        let type_id = def.type_id.clone();
+        app.core.indicators_mut().register_definition(def);
+        let oi_id = app
+            .core
+            .indicators_mut()
+            .add(Some(compute_bid), &type_id)
+            .expect("oi_change_rate instance once its definition is installed");
+        app.core.indicators_mut().recalc_bubble(compute_bid, &flat_bars(5));
+
+        assert!(
+            app.overlay_instance_active(overlay_bid, ChartApp::OI_DELTA_TYPE_ID),
+            "overlay bubble must have only the opaque overlay as its OI gate"
+        );
+        assert!(
+            !app.overlay_instance_active(compute_bid, ChartApp::OI_DELTA_TYPE_ID),
+            "compute bubble must not have the opaque overlay"
+        );
+        assert!(
+            app.core.indicators().definition_streams(&type_id).contains(
+                &mlc_backend_indicator_engine::StreamKind::OpenInterest
+            ),
+            "installed OiChangeRate must declare OpenInterest"
+        );
+
+        let before = app
+            .core
+            .indicators()
+            .instances_for_bubble(compute_bid)
+            .into_iter()
+            .find(|inst| inst.id == oi_id)
+            .map(|inst| (*inst.values).clone())
+            .expect("oi instance");
+
+        for (ts_ms, oi) in [(1_000_i64, 500.0_f64), (3_000, 700.0)] {
+            let event = mlc_backend::BubbleEvent::OiUpdatePassthrough {
+                exchange_id: ExchangeId::Binance,
+                account_type: "S".to_string(),
+                symbol: "BTCUSDT".to_string(),
+                point: mlc_core::types::OiDeltaBar { ts_ms, oi, delta: oi - 500.0 },
+            };
+            app.react_to_bubble_event(&event, 0);
+        }
+
+        let overlay_series = app.core.bubbles().oi_delta(overlay_bid).unwrap_or(&[]).to_vec();
+        let compute_series = app.core.bubbles().oi_delta(compute_bid).unwrap_or(&[]).to_vec();
+        assert_eq!(overlay_series.len(), 2, "opaque overlay bubble must receive both OI prints");
+        assert_eq!(compute_series.len(), 2, "OiChangeRate bubble must receive both OI prints");
+        assert_eq!(overlay_series[0].oi, 500.0);
+        assert_eq!(overlay_series[1].oi, 700.0);
+        assert_eq!(compute_series[0].oi, 500.0);
+        assert_eq!(compute_series[1].ts_ms, 3_000);
+
+        let after = app
+            .core
+            .indicators()
+            .instances_for_bubble(compute_bid)
+            .into_iter()
+            .find(|inst| inst.id == oi_id)
+            .map(|inst| (*inst.values).clone())
+            .expect("oi instance");
+        assert_ne!(before, after, "feed_stream(OpenInterest) must move OiChangeRate off the bar-only baseline");
+        let saw_rate = after.values().any(|series| series.last().is_some_and(|v| (*v - 100.0).abs() < 1e-6));
+        assert!(
+            saw_rate,
+            "second print is +200 OI over 2s — OiChangeRate must report 100/s, got {after:?}"
         );
     }
 }

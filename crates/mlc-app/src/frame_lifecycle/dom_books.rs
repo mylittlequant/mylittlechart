@@ -416,4 +416,101 @@ mod feed_orderbook_indicators_tests {
 
         assert_eq!(before, after, "no tracker armed — the indicator must stay untouched, not panic or fabricate a value");
     }
+
+    /// Second chart on the same instrument as `home`, with its own bubble.
+    /// `feed_orderbook_indicators` scans containers, so the non-consumer
+    /// has to be a real chart, not an unbound bubble.
+    fn second_bubble_on_same_instrument(
+        app: &mut crate::ChartApp,
+        home: mlc_core::ids::BubbleId,
+    ) -> mlc_core::ids::BubbleId {
+        let leaves = app.panel_app.panel_grid.split_active(mlc_core::SplitKind::SplitRight);
+        assert_eq!(leaves.len(), 2, "split_active must open a second chart");
+        let cid = app
+            .panel_app
+            .panel_grid
+            .container_for_leaf(leaves[1])
+            .expect("sibling container")
+            .id;
+        let (symbol, exchange, account) = {
+            let bubbles = app.core.bubbles();
+            (
+                bubbles.symbol(home).expect("home symbol").to_string(),
+                bubbles.exchange(home).expect("home exchange").to_string(),
+                bubbles.account_type(home).expect("home account").to_string(),
+            )
+        };
+        let bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], symbol.clone(), Timeframe::m1());
+        app.attach_chart_to_tag(cid, bid);
+        if let Some(window) = app.panel_app.panel_grid.container_for_leaf_mut(leaves[1]) {
+            window.auto_tag_id = bid;
+            window.current_tag_id = bid;
+        }
+        assert!(
+            app.core.bubbles_mut().set_bid_instrument_full(bid, symbol, exchange, account, Timeframe::m1()),
+            "sibling instrument must stick"
+        );
+        bid
+    }
+
+    /// Arc D step 5: one fake tracker snapshot. The declaring bubble's
+    /// `book_imb` lands on the imbalance of THAT book (the only
+    /// `StreamEvent` this poll builds is `OrderBook`). The other bubble
+    /// has only `sma`, which declares no non-bar stream, and stays put.
+    #[test]
+    fn feed_orderbook_indicators_feeds_orderbook_to_the_declaring_bubble_only() {
+        let (mut app, _rt) = build_app();
+        app.seed_default_chart(ExchangeId::Binance, "BTCUSDT", Timeframe::m1(), AccountType::Spot, 5);
+        let cid = app.panel_app.panel_grid.active_container_id().expect("active container");
+        let declaring = app.bubble_for_chart(cid).expect("seeded bubble");
+        let idle = second_bubble_on_same_instrument(&mut app, declaring);
+
+        let book_imb_id = app
+            .core
+            .indicators_mut()
+            .add(Some(declaring), "book_imb")
+            .expect("book_imb catalog entry exists");
+        let sma_id = app
+            .core
+            .indicators_mut()
+            .add(Some(idle), "sma")
+            .expect("sma catalog entry exists");
+        app.core.indicators_mut().recalc_bubble(declaring, &flat_bars(5));
+        app.core.indicators_mut().recalc_bubble(idle, &flat_bars(5));
+
+        let book_imb_before = instance_values(&app, declaring, book_imb_id);
+        let sma_before = instance_values(&app, idle, sma_id);
+
+        app.core
+            .bridge_handle()
+            .subscribe_depth(ExchangeId::Binance, "BTCUSDT", AccountType::Spot);
+        let tracker = app
+            .core
+            .bridge_handle()
+            .ob_tracker_for(ExchangeId::Binance, "BTCUSDT", AccountType::Spot)
+            .expect("subscribe_depth creates the tracker entry synchronously");
+        {
+            let ob = digdigdig3::core::types::OrderBook {
+                bids: vec![digdigdig3::core::types::OrderBookLevel::new(100.0, 30.0)],
+                asks: vec![digdigdig3::core::types::OrderBookLevel::new(101.0, 10.0)],
+                timestamp: 1,
+                ..Default::default()
+            };
+            tracker.blocking_write().apply_snapshot(&ob).expect("apply_snapshot");
+        }
+
+        app.feed_orderbook_indicators();
+
+        let book_imb_after = instance_values(&app, declaring, book_imb_id);
+        let sma_after = instance_values(&app, idle, sma_id);
+        let book = book_imb_after.get("book").and_then(|v| v.last().copied());
+        assert!(
+            book.is_some_and(|v| (v - 0.5).abs() < 1e-9),
+            "StreamEvent::OrderBook of bid 30 / ask 10 must land as book_imb 0.5, got {book_imb_before:?} -> {book_imb_after:?}"
+        );
+        assert_eq!(
+            sma_before, sma_after,
+            "bubble with only sma declares no OrderBook stream — the poll must not feed it"
+        );
+    }
 }

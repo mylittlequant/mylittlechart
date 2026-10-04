@@ -433,6 +433,29 @@ mod feed_liquidation_indicators_tests {
         );
     }
 
+    /// The drain wraps this adapter in `StreamEvent::Liquidation` and
+    /// nothing else. A fake ring cannot be planted from this crate:
+    /// `Station::series_handles` is `pub(crate)` and is filled only by a
+    /// live `Station::subscribe`, and `liq_series_for_symbol` only returns
+    /// rings that subscribe already registered.
+    #[test]
+    fn liquidation_event_builds_the_liquidation_stream_variant() {
+        let liq = liquidation_event("BTCUSDT", 5_000, 100.0, 2.0, 1, 1.0);
+        let ev = mlc_backend_indicator_engine::StreamEvent::Liquidation(liq);
+        assert_eq!(ev.kind(), mlc_backend_indicator_engine::StreamKind::Liquidation);
+        match ev {
+            mlc_backend_indicator_engine::StreamEvent::Liquidation(got) => {
+                assert_eq!(got.symbol, "BTCUSDT");
+                assert_eq!(got.side, mlc_backend_indicator_engine::types::TradeSide::Sell);
+                assert_eq!(got.price, 100.0);
+                assert_eq!(got.quantity, 2.0);
+                assert_eq!(got.timestamp, 5_000);
+                assert_eq!(got.value, Some(200.0));
+            }
+            other => panic!("liquidation_event must build StreamEvent::Liquidation, got {other:?}"),
+        }
+    }
+
     #[test]
     fn liquidation_event_applies_contract_size_to_quantity_and_value() {
         let liq = liquidation_event("BTCUSDT", 1_000, 100.0, 2.0, 0, 10_000.0);
@@ -519,5 +542,60 @@ mod feed_liquidation_indicators_tests {
             before, after,
             "no Liquidation-declaring instance — book_imb must stay untouched, not panic"
         );
+    }
+
+    /// `seed_default_chart` installs the bar-only `volume` histogram. That
+    /// is not a Liquidation consumer. The cursor map is written only after
+    /// the drain has decided to feed a point, so it must stay empty.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn feed_liquidation_indicators_does_not_fire_for_a_bubble_with_no_stream_consumer() {
+        use digdigdig3::core::types::{AccountType, ExchangeId};
+        use mlc_backend_data_bridge::DataBridge;
+        use mlc_backend_indicator_engine::StreamKind;
+        use mlc_core::state::Timeframe;
+
+        let (bridge, _rx, _connector_ready_rx) = DataBridge::new().await;
+        let bridge = std::sync::Arc::new(bridge);
+        let core = mlc_backend::BackendCore::new(bridge, None);
+        let mut app = crate::ChartApp::new_empty(core);
+        app.seed_default_chart(ExchangeId::Binance, "BTCUSDT", Timeframe::m1(), AccountType::Spot, 5);
+        let cid = app.panel_app.panel_grid.active_container_id().expect("active container");
+        let bid = app.bubble_for_chart(cid).expect("seeded bubble");
+        let type_ids: Vec<String> = app
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .map(|inst| inst.type_id.clone())
+            .collect();
+        assert!(!type_ids.is_empty(), "seed installs the default volume histogram");
+        assert!(
+            type_ids.iter().all(|type_id| {
+                !app.core.indicators().definition_streams(type_id).contains(&StreamKind::Liquidation)
+            }),
+            "the seeded bubble must not already declare Liquidation"
+        );
+        let before: Vec<_> = app
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .map(|inst| (inst.id, (*inst.values).clone()))
+            .collect();
+
+        app.feed_liquidation_indicators();
+
+        assert!(
+            app.indicator_liq_cursors.is_empty(),
+            "no Liquidation consumer — the drain must not record a cursor"
+        );
+        let after: Vec<_> = app
+            .core
+            .indicators()
+            .instances_for_bubble(bid)
+            .into_iter()
+            .map(|inst| (inst.id, (*inst.values).clone()))
+            .collect();
+        assert_eq!(before, after, "the drain must not touch a bubble with no Liquidation consumer");
     }
 }

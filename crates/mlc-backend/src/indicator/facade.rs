@@ -619,6 +619,18 @@ impl<'a> IndicatorsMut<'a> {
         self.mgr.feed_stream_for_bubble(bid.0, ev);
     }
 
+    /// Install one definition for keyed instance creation.
+    ///
+    /// `create_instance` looks the row up by `type_id`. It does not consult
+    /// the filtered catalog listing, which is built only from
+    /// `IndicatorBridge::get_all`. A definition that `get_definition` resolves
+    /// by id but `get_all` never enumerates (the OpenInterest, Funding, and
+    /// Liquidations categories) can be installed here without appearing in
+    /// that listing.
+    pub fn register_definition(&mut self, definition: IndicatorDefinition) {
+        self.mgr.register_definition(definition);
+    }
+
     /// Build the real per-bar (buy_volume, sell_volume) delta series for
     /// `bid`, aligned by index to `bars`. Returns `None` when neither
     /// footprint bars nor a CVD line are available for this bubble (the
