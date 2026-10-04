@@ -229,9 +229,8 @@ const PINBAR_H: f64 = 40.0;
 const JUMP_D: f64 = 38.0;
 /// The composer's own attach/emoji icon buttons — concept `.ib{width:30px;
 /// height:30px}` either side of the draft field (`.cin`'s own clip/smile
-/// icons). Inert this pass (registered for hover only, same convention
-/// [`draw_header_icons`]'s own doc already uses) — attach/emoji pickers are
-/// their own slice (U3, sticker/emoji picker).
+/// icons). Attach stays inert. Emoji toggles the picker [`draw_chat_pane`]
+/// paints after the composer.
 const COMPOSER_ICON_D: f64 = 30.0;
 
 /// A `$SYMBOL` cashtag pill inline in message text (concept `.sym`) —
@@ -1617,16 +1616,35 @@ fn draw_chat_pane(
         draw_jump_to_latest(ctx, coord, layer_id, x, feed_y, w, feed_h, room.notification_count, tt);
     }
 
-    draw_composer(
+    let emoji_rect = draw_composer(
         ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, vault_state, provider_error.as_deref(), has_key,
         channel_gate, tt, ft, current_time_ms, result,
     );
 
     // The forward flow's own chat picker (concept: "bubble action → chat
     // picker → `MessengerIntent::Forward`") — floats above the whole pane,
-    // drawn LAST so it paints over the composer/feed underneath it.
+    // and its dimmer is a full-rect scrim. Drawn before the emoji popover
+    // so that scrim cannot cover it.
     if let Some(picker) = &state.forward_target_picker {
         draw_forward_picker(ctx, coord, layer_id, x, body_y, w, body_viewport_h, provider, &picker.from_room, tt);
+    }
+
+    if let Some(emoji_rect) = emoji_rect {
+        if let Some(tab) = state.messenger_picker {
+            use crate::ui::messenger_picker::{draw_picker, picker_layout, ComposerPickerTab, PickerView};
+            let has_stickers = state.messenger_stickers;
+            // A sticker tab left over from a provider that no longer sends
+            // stickers has no tab rect; show the emoji grid instead.
+            let tab = match tab {
+                ComposerPickerTab::Stickers if !has_stickers => ComposerPickerTab::Emoji,
+                other => other,
+            };
+            let layout = picker_layout(emoji_rect.x + emoji_rect.width, emoji_rect.y, x, has_stickers);
+            draw_picker(
+                ctx, coord, layer_id, &layout,
+                &PickerView { tab, has_stickers, elapsed_ms: current_time_ms }, tt,
+            );
+        }
     }
 }
 
@@ -2079,7 +2097,7 @@ fn draw_composer(
     ft: &FrameTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
-) {
+) -> Option<WidgetRect> {
     let locked = matches!(vault_state, VaultState::Locked);
     let elsewhere = matches!(vault_state, VaultState::ActiveElsewhere);
     let external = state.messenger_external;
@@ -2087,7 +2105,7 @@ fn draw_composer(
     if let Some(gate) = channel_gate {
         if !gate.can_post {
             draw_channel_cta(ctx, coord, layer_id, x, composer_y, w, gate.muted, tt);
-            return;
+            return None;
         }
     }
     if state.forum2.nick_required() {
@@ -2102,7 +2120,7 @@ fn draw_composer(
             WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP),
             UserSettingsKey::AccountChooseNickBtn.get(current_language()), tt,
         );
-        return;
+        return None;
     }
 
     let mut row_y = composer_y;
@@ -2150,7 +2168,7 @@ fn draw_composer(
         if show_unlock {
             draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault", btn_rect, label, tt);
         }
-        return;
+        return None;
     }
     // Peer has no messaging key published yet — a calm, no-button line
     // (owner spec): there is nothing to click here, only something to
@@ -2164,16 +2182,16 @@ fn draw_composer(
             ctx, "This person hasn't set up messaging yet.", w,
         );
         ctx.fill_text(&hint, x, row_cy);
-        return;
+        return None;
     }
     // Normal — one row: attach + a fully-rounded draft field + emoji + a
     // round accent send button (concept `.cin`: `.ib` + `.field` + `.ib` +
-    // `.send`, `gap:4px`). Attach/emoji are inert this pass — see
-    // [`COMPOSER_ICON_D`]'s own doc.
+    // `.send`, `gap:4px`). Attach stays inert. The emoji rect goes back to
+    // the caller, which paints the picker after any full-pane scrim.
     let draft_field_id: &str = match &state.dm.view {
         crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } => draft_field_id.as_str(),
         _ if external => DM_DRAFT_FIELD,
-        _ => return,
+        _ => return None,
     };
     let icon_y = row_y + (COMPOSER_FIELD_H - COMPOSER_ICON_D) / 2.0;
     let attach_rect = WidgetRect::new(x, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
@@ -2194,10 +2212,10 @@ fn draw_composer(
 
     let send_rect = WidgetRect::new(emoji_rect.x + COMPOSER_ICON_D + COMPOSER_GAP, row_y, COMPOSER_SEND_D, COMPOSER_SEND_D);
     draw_send_button(ctx, coord, layer_id, send_rect, tt);
+    Some(emoji_rect)
 }
 
-/// The composer's own attach/emoji icon (concept `.ib`) — inert (hover
-/// only), same convention [`draw_header_icons`]'s own doc uses.
+/// The composer's own attach/emoji icon (concept `.ib`).
 enum ComposerIcon {
     Attach,
     Emoji,

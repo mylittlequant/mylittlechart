@@ -7107,6 +7107,12 @@ pub struct CommunityState {
     /// The open room while [`Self::messenger_external`] is set — an opaque
     /// provider room id (a Matrix room id), not a DM conversation number.
     pub messenger_room: Option<mlc_messenger_model::RoomId>,
+    /// Composer emoji/sticker popover. `None` while closed.
+    pub messenger_picker: Option<crate::ui::messenger_picker::ComposerPickerTab>,
+    /// Provider reports `Capabilities::stickers`. The bridge refreshes this
+    /// every frame; the legacy DM path stays `false`, which hides the
+    /// stickers tab.
+    pub messenger_stickers: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -7131,6 +7137,8 @@ impl Default for CommunityState {
             messenger_folder: MessengerFolderSel::default(),
             messenger_external: false,
             messenger_room: None,
+            messenger_picker: None,
+            messenger_stickers: false,
         }
     }
 }
@@ -7178,6 +7186,7 @@ impl CommunityState {
             self.dm.reset_to_list();
             self.forward_target_picker = None;
             self.messenger_reply_preview = None;
+            self.messenger_picker = None;
         }
     }
 
@@ -7191,6 +7200,7 @@ impl CommunityState {
         self.dm.close_lookup_dropdown();
         self.forward_target_picker = None;
         self.messenger_reply_preview = None;
+        self.messenger_picker = None;
     }
 
     /// Back to the chat list (outside-provider mode).
@@ -7200,6 +7210,7 @@ impl CommunityState {
         self.dm.selection_drag_active = false;
         self.forward_target_picker = None;
         self.messenger_reply_preview = None;
+        self.messenger_picker = None;
     }
 
     pub fn close(&mut self) {

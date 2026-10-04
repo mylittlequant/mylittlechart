@@ -21,6 +21,7 @@ pub mod scroll_state;
 pub mod scroll_widget;
 pub mod selectable_text;
 pub mod modal_settings;
+pub mod messenger_picker;
 pub mod modal_state;
 pub mod context_menu;
 pub mod sync_color_grid;

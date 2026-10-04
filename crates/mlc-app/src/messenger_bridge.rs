@@ -61,7 +61,9 @@ impl ChartPanelApp {
     /// forward picker and any reply banner: ids of two backends never name
     /// the same room.
     pub fn set_messenger_provider(&mut self, provider: Option<Box<dyn MessengerProvider + Send>>) {
+        let stickers = provider.as_ref().is_some_and(|provider| provider.capabilities().stickers);
         self.community_state.set_messenger_external(provider.is_some());
+        self.community_state.messenger_stickers = stickers;
         self.messenger = MessengerBridge { provider, ..MessengerBridge::default() };
     }
 
@@ -205,14 +207,19 @@ impl ChartPanelApp {
         }))
     }
 
-    /// Per-frame upkeep while a provider is present (cheap: it looks at the
-    /// provider's snapshot only when its change counter moved):
+    /// Per-frame upkeep while a provider is present. `messenger_stickers` is
+    /// refreshed every frame (and cleared when there is no provider); rooms
+    /// and receipts are re-read only when the provider's change counter moved:
     ///
     /// - shows the user-directory hits in the recipient dropdown;
     /// - drops an open room the provider no longer holds (left, removed);
     /// - receipts the newest message of the room the user is looking at, once
     ///   per new message, so the unread badge clears.
     pub(crate) fn pump_messenger(&mut self) {
+        // Before the vault/counter early-returns below: the sticker tab is a
+        // per-frame capability read, including while the driver is not Ready.
+        let stickers = self.messenger.provider.as_deref().is_some_and(|provider| provider.capabilities().stickers);
+        self.community_state.messenger_stickers = stickers;
         let Some(provider) = self.messenger.provider.as_deref() else { return };
 
         if self.community_state.dm.lookup_query.is_some() {

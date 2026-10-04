@@ -6585,6 +6585,15 @@ impl ChartApp {
                         return;
                     }
                     let action = &rest["dm:".len()..];
+                    // Emoji / sticker popover. The four picker actions return.
+                    // Anything else closes it, except the widgets the picker
+                    // module names as its own (padding, draft field, …).
+                    if self.dm_picker_click(action) {
+                        return;
+                    }
+                    if !mlc_app_layout::ui::messenger_picker::keeps_picker_open(action) {
+                        self.panel_app.community_state.messenger_picker = None;
+                    }
                     // "Unlock your vault to read" (owner ruling 2026-09-10,
                     // item 3) — opens the small unlock overlay drawn on top
                     // of this modal, not the whole User Settings modal.
@@ -10154,6 +10163,85 @@ impl ChartApp {
         }
     }
 
+}
+
+#[cfg(feature = "cloud")]
+impl ChartApp {
+    /// Composer picker clicks (the `dm:` suffix). `true` when `action` is one
+    /// of the picker's own and the caller should return without the generic
+    /// dm match. The emoji button toggles: closed opens on the emoji grid,
+    /// open closes — a second click does not switch to stickers.
+    fn dm_picker_click(&mut self, action: &str) -> bool {
+        use mlc_app_layout::ui::messenger_picker::{emoji_at, ComposerPickerTab, STICKER_PACK};
+
+        if action == "emoji" {
+            let open = self.panel_app.community_state.messenger_picker.is_some();
+            self.panel_app.community_state.messenger_picker =
+                if open { None } else { Some(ComposerPickerTab::Emoji) };
+            return true;
+        }
+        if let Some(tab) = action.strip_prefix("picker_tab:") {
+            let st = &mut self.panel_app.community_state;
+            match tab {
+                "emoji" => st.messenger_picker = Some(ComposerPickerTab::Emoji),
+                "stickers" if st.messenger_stickers => {
+                    st.messenger_picker = Some(ComposerPickerTab::Stickers);
+                }
+                _ => {}
+            }
+            return true;
+        }
+        if let Some(raw) = action.strip_prefix("emoji_pick:") {
+            if let Ok(idx) = raw.parse::<usize>() {
+                if let Some(glyph) = emoji_at(idx) {
+                    self.append_dm_draft_glyph(glyph);
+                }
+            }
+            return true;
+        }
+        if let Some(rest) = action.strip_prefix("sticker_pick:") {
+            // `sticker_pick:{pack}:{id}` — only `mlc-hat`, and that id has
+            // no further colon, so the pack prefix is the whole split.
+            let sticker_id = rest
+                .strip_prefix(STICKER_PACK)
+                .and_then(|tail| tail.strip_prefix(':'))
+                .filter(|id| !id.is_empty() && !id.contains(':'));
+            let room = {
+                let st = &mut self.panel_app.community_state;
+                st.messenger_picker = None;
+                if st.messenger_external {
+                    st.messenger_open_room()
+                } else {
+                    None
+                }
+            };
+            if let (Some(room), Some(id)) = (room, sticker_id) {
+                self.panel_app.messenger_enqueue(mlc_messenger_model::MessengerIntent::SendSticker {
+                    room,
+                    pack: STICKER_PACK.to_string(),
+                    id: id.to_string(),
+                });
+            }
+            return true;
+        }
+        false
+    }
+
+    /// Append `glyph` to the shared DM draft. `set_text` does not enforce
+    /// the field's `max_len`, so a glyph that would pass it is dropped.
+    fn append_dm_draft_glyph(&mut self, glyph: &str) {
+        let wid = uzor::WidgetId::from(crate::text_input::DM_DRAFT);
+        let mut coord = self.input_coordinator.borrow_mut();
+        let fields = coord.text_fields_mut();
+        let current = fields.text(&wid).to_string();
+        let max = fields.field_state(&wid).and_then(|state| state.config.max_len);
+        if max.is_some_and(|max| current.chars().count().saturating_add(glyph.chars().count()) > max) {
+            return;
+        }
+        let mut next = current;
+        next.push_str(glyph);
+        fields.set_text(&wid, &next);
+    }
 }
 
 /// Parse a `"SYMBOL:exchange_id:account_type"` composite key (symbols may
