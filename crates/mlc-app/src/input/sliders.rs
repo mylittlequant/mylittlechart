@@ -47,8 +47,9 @@ impl ChartApp {
             return;
         }
 
-        // Candle style opacity sliders (`candle_opacity:{body,border,wick}`):
-        // one alpha for the row's up AND down colors, RGB untouched.
+        // Shared candle-row alpha (`candle_opacity:{body,border,wick}`). The
+        // body/border/wick sliders are gone; per-color opacity is the picker.
+        // This route still writes both sides (border checkbox included).
         if let Some(row) = field_id.strip_prefix("candle_opacity:") {
             self.apply_candle_opacity(row, value);
             self.autosave_snapshot();

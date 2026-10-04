@@ -122,6 +122,7 @@ impl ChartApp {
                 }
             }
             ColorPickerL1HitResult::PlusButton => {
+                // "+" only opens the mixer. Saving the color is L2's Add button.
                 let picker = match source {
                     "primitive" => Some(&mut self.panel_app.primitive_settings_state.color_picker),
                     "indicator" => Some(&mut self.panel_app.indicator_settings_state.color_picker),
@@ -130,13 +131,7 @@ impl ChartApp {
                     "panel"     => Some(&mut self.panel_app.panel_color_picker),
                     _           => None,
                 };
-                let mut appended = None;
                 if let Some(picker) = picker {
-                    // "+" saves the current swatch and still opens the mixer.
-                    let current = picker.current_color.clone();
-                    if picker.add_color_to_custom(&current) {
-                        appended = Some(picker.custom_colors.clone());
-                    }
                     picker.open_l2();
                     // Immediately activate hex editing so on_drag_start works
                     // without requiring an extra click to warm up geometry.
@@ -146,9 +141,6 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&hex_id, &hex);
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&hex_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::HEX_COLOR);
-                }
-                if let Some(colors) = appended {
-                    self.publish_custom_palette(colors);
                 }
             }
             ColorPickerL1HitResult::OpacitySlider(opacity) => {
@@ -354,6 +346,8 @@ impl ChartApp {
                 }
             }
             ColorPickerL2HitResult::AddButton => {
+                // Add saves the color and returns to L1. L1 stays open so the
+                // new swatch is visible in the fast row.
                 match source {
                     "primitive" => {
                         self.panel_app.primitive_settings_state.color_picker.add_to_custom();
@@ -361,7 +355,7 @@ impl ChartApp {
                         self.publish_custom_palette(colors);
                         let final_color = self.panel_app.primitive_settings_state.color_picker.get_final_color();
                         self.apply_primitive_color(&final_color);
-                        self.panel_app.primitive_settings_state.close_color_picker();
+                        self.panel_app.primitive_settings_state.color_picker.back_to_l1();
                     }
                     "indicator" => {
                         self.panel_app.indicator_settings_state.color_picker.add_to_custom();
@@ -370,7 +364,7 @@ impl ChartApp {
                         let final_color = self.panel_app.indicator_settings_state.color_picker.get_final_color();
                         let field = self.panel_app.indicator_settings_state.color_picker_field.clone();
                         if let Some(ref f) = field { self.apply_indicator_color(f, &final_color); }
-                        self.panel_app.indicator_settings_state.close_color_picker();
+                        self.panel_app.indicator_settings_state.color_picker.back_to_l1();
                     }
                     "chart" => {
                         self.panel_app.chart_settings_state.color_picker.add_to_custom();
@@ -379,7 +373,7 @@ impl ChartApp {
                         let final_color = self.panel_app.chart_settings_state.color_picker.get_final_color();
                         let field = self.panel_app.chart_settings_state.color_picker_field.clone();
                         if let Some(ref f) = field { self.apply_chart_settings_color(f, &final_color); }
-                        self.panel_app.chart_settings_state.close_color_picker();
+                        self.panel_app.chart_settings_state.color_picker.back_to_l1();
                     }
                     "compare" => {
                         self.panel_app.compare_settings_state.color_picker.add_to_custom();
@@ -387,7 +381,7 @@ impl ChartApp {
                         self.publish_custom_palette(colors);
                         let final_color = self.panel_app.compare_settings_state.color_picker.get_final_color();
                         self.apply_compare_color(&final_color);
-                        self.panel_app.compare_settings_state.close_color_picker();
+                        self.panel_app.compare_settings_state.color_picker.back_to_l1();
                     }
                     "panel" => {
                         self.panel_app.panel_color_picker.add_to_custom();
@@ -395,21 +389,15 @@ impl ChartApp {
                         self.publish_custom_palette(colors);
                         let final_color = self.panel_app.panel_color_picker.get_final_color();
                         if self.panel_app.sync_color_grid.adding_custom_color {
-                            // Adding custom color to grid — push the color and reopen grid.
                             let rgba = super::hex_str_to_rgba(&final_color);
                             self.panel_app.sync_color_grid.custom_colors.push(rgba);
                             self.panel_app.sync_color_grid.adding_custom_color = false;
-                            // Grid is still open — just close the color picker.
-                            self.panel_app.close_panel_color_tag_picker();
-                        } else {
-                            // Normal flow — assign color to leaf.
-                            if let Some(leaf_id) = self.panel_app.panel_color_picker_leaf {
-                                let rgba = super::hex_str_to_rgba(&final_color);
-                                self.panel_app.leaf_color_tags.insert(leaf_id, rgba);
-                                self.sidebar_data_dirty = true;
-                            }
-                            self.panel_app.close_panel_color_tag_picker();
+                        } else if let Some(leaf_id) = self.panel_app.panel_color_picker_leaf {
+                            let rgba = super::hex_str_to_rgba(&final_color);
+                            self.panel_app.leaf_color_tags.insert(leaf_id, rgba);
+                            self.sidebar_data_dirty = true;
                         }
+                        self.panel_app.panel_color_picker.back_to_l1();
                     }
                     _ => {}
                 }
@@ -974,6 +962,187 @@ impl ChartApp {
         self.edit_compare_style(idx, |ov| ov.set_series_color_by_index(idx, color));
         log::debug!("[ChartApp] cmp_settings color applied: idx={} color={}", idx, color);
         self.snapshot_compare_settings_to_user_manager();
+    }
+
+    /// If `(x, y)` is inside an open color-picker popup, start the SV / hue /
+    /// opacity drag, or swallow the gesture so a slider under the popup does
+    /// not start. A point outside the popup returns false and the modal
+    /// slider path still runs.
+    pub(super) fn claim_color_picker_popup_drag(&mut self, x: f64, y: f64) -> bool {
+        enum DragSource {
+            Apply(&'static str),
+            Swallow,
+        }
+        let source = if self.panel_app.primitive_settings_state.is_color_picker_open() {
+            DragSource::Apply("primitive")
+        } else if self.panel_app.indicator_settings_state.is_color_picker_open() {
+            DragSource::Apply("indicator")
+        } else if self.panel_app.chart_settings_state.is_color_picker_open() {
+            DragSource::Apply("chart")
+        } else if self.panel_app.compare_settings_state.is_color_picker_open()
+            || self.panel_app.panel_color_picker.is_open()
+        {
+            DragSource::Swallow
+        } else {
+            return false;
+        };
+
+        enum Hit {
+            Sv((f64, f64, f64, f64), (f64, f64, f64, f64), (f64, f64, f64, f64)),
+            Hue((f64, f64, f64, f64), (f64, f64, f64, f64), (f64, f64, f64, f64)),
+            L2Opacity((f64, f64, f64, f64), (f64, f64, f64, f64), (f64, f64, f64, f64)),
+            L1Opacity((f64, f64, f64, f64)),
+            Inside,
+        }
+
+        let hit = {
+            let Some(cp) = self.frame_result.as_ref().and_then(|fr| fr.color_picker.as_ref()) else {
+                return false;
+            };
+            let pack = |r: uzor::types::Rect| (r.x, r.y, r.width, r.height);
+            if let Some(l2) = cp.l2_result.as_ref() {
+                if !l2.popup_rect.contains(x, y) {
+                    return false;
+                }
+                let sv = pack(l2.sv_square_rect);
+                let hue = pack(l2.hue_bar_rect);
+                let opacity = pack(l2.opacity_slider_rect);
+                if l2.sv_square_rect.contains(x, y) {
+                    Hit::Sv(sv, hue, opacity)
+                } else if l2.hue_bar_rect.contains(x, y) {
+                    Hit::Hue(sv, hue, opacity)
+                } else if l2.opacity_slider_rect.contains(x, y) {
+                    Hit::L2Opacity(sv, hue, opacity)
+                } else {
+                    Hit::Inside
+                }
+            } else if let Some(l1) = cp.l1_result.as_ref() {
+                if !l1.popup_rect.contains(x, y) {
+                    return false;
+                }
+                if let Some(opacity) = l1.opacity_slider_rect {
+                    if opacity.contains(x, y) {
+                        Hit::L1Opacity(pack(opacity))
+                    } else {
+                        Hit::Inside
+                    }
+                } else {
+                    Hit::Inside
+                }
+            } else {
+                return false;
+            }
+        };
+
+        self.ui_drag_active = true;
+        let DragSource::Apply(src) = source else {
+            return true;
+        };
+        match hit {
+            Hit::Sv(sv_rect, hue_rect, opacity_rect) => {
+                self.color_picker_drag = Some(crate::ColorPickerDragState {
+                    area: crate::ColorPickerDragArea::SVSquare,
+                    source: src.to_string(),
+                    sv_rect,
+                    hue_rect,
+                    opacity_rect,
+                });
+                self.apply_color_picker_drag(x, y);
+                log::debug!("[ChartApp] color_picker SV drag started ({})", src);
+            }
+            Hit::Hue(sv_rect, hue_rect, opacity_rect) => {
+                self.color_picker_drag = Some(crate::ColorPickerDragState {
+                    area: crate::ColorPickerDragArea::HueBar,
+                    source: src.to_string(),
+                    sv_rect,
+                    hue_rect,
+                    opacity_rect,
+                });
+                self.apply_color_picker_drag(x, y);
+                log::debug!("[ChartApp] color_picker hue drag started ({})", src);
+            }
+            Hit::L2Opacity(sv_rect, hue_rect, opacity_rect) => {
+                self.color_picker_drag = Some(crate::ColorPickerDragState {
+                    area: crate::ColorPickerDragArea::OpacitySlider,
+                    source: src.to_string(),
+                    sv_rect,
+                    hue_rect,
+                    opacity_rect,
+                });
+                self.apply_color_picker_drag(x, y);
+                log::debug!("[ChartApp] color_picker L2 opacity drag started ({})", src);
+            }
+            Hit::L1Opacity(opacity_rect) => {
+                self.color_picker_drag = Some(crate::ColorPickerDragState {
+                    area: crate::ColorPickerDragArea::OpacitySlider,
+                    source: src.to_string(),
+                    sv_rect: (0.0, 0.0, 0.0, 0.0),
+                    hue_rect: (0.0, 0.0, 0.0, 0.0),
+                    opacity_rect,
+                });
+                self.apply_color_picker_drag(x, y);
+                log::debug!("[ChartApp] color_picker L1 opacity drag started ({})", src);
+            }
+            Hit::Inside => {}
+        }
+        true
+    }
+
+    /// True when `(x, y)` is on a chart, indicator, primitive, or compare
+    /// slider track. Same hit as those sliders' drag-start (content rect,
+    /// ±2px on x). Used so a drag outside the color picker still reaches the
+    /// slider instead of being dropped with the popup.
+    pub(super) fn modal_slider_under_pointer(&self, x: f64, y: f64) -> bool {
+        let hit = |rect: uzor::types::Rect| {
+            x >= rect.x - 2.0
+                && x <= rect.x + rect.width + 2.0
+                && y >= rect.y
+                && y <= rect.y + rect.height
+        };
+        let on_tracks = |tracks: &[mlc_app_layout::layout::render_frame::SliderTrackInfo],
+                         items: &[(String, uzor::types::Rect)]| {
+            tracks.iter().any(|track| {
+                items.iter().any(|(id, rect)| id == &track.field_id && hit(*rect))
+            })
+        };
+        let Some(frame) = self.frame_result.as_ref() else { return false };
+        if self.panel_app.chart_settings_state.is_open {
+            if let Some(cs) = frame.chart_settings.as_ref() {
+                if on_tracks(&cs.slider_tracks, &cs.content_items) {
+                    return true;
+                }
+            }
+        }
+        if self.panel_app.indicator_settings_state.is_open() {
+            if let Some(is) = frame.indicator_settings.as_ref() {
+                if on_tracks(&is.slider_tracks, &is.content_items) {
+                    return true;
+                }
+            }
+        }
+        if self.panel_app.primitive_settings_state.is_open() {
+            if let Some(ps) = frame.primitive_settings.as_ref() {
+                if on_tracks(&ps.slider_tracks, &ps.content_items) {
+                    return true;
+                }
+            }
+        }
+        if self.panel_app.compare_settings_state.is_open() {
+            if let Some(cs) = frame.compare_settings.as_ref() {
+                if let Some(track) = cs.line_width_slider.as_ref() {
+                    let rect = uzor::types::Rect::new(track.track_x, track.track_y, track.track_width, track.track_height);
+                    if hit(rect) {
+                        return true;
+                    }
+                }
+                if cs.tf_slider_tracks.iter().any(|track| {
+                    cs.tf_content_items.iter().any(|(id, rect)| id == &track.field_id && hit(*rect))
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Apply the current mouse position to the active color picker L2 drag.

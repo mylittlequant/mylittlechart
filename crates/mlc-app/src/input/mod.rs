@@ -1949,10 +1949,18 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 dismissed = true;
             }
-            if dismissed {
+            if dismissed && !self.modal_slider_under_pointer(x, y) {
+                // Outside the popup, and not on a modal slider: drop the press.
+                // A slider that sits outside the popup still starts below.
                 self.drag_dismissed_popup = true;
                 return true;
             }
+        }
+
+        // Inside the popup this gesture is the picker's, so a slider under it
+        // does not start. Outside, modal sliders still run.
+        if self.claim_color_picker_popup_drag(x, y) {
+            return false;
         }
 
         // Check if drag starts on the sidebar separator — if so, begin sidebar resize.
@@ -2773,9 +2781,9 @@ impl ChartApp {
             }
 
             // Primitive settings sliders — routed via prim_settings:item:{field_id} DRAG registration.
+            // A drag inside the color picker popup already returned above.
             if id.starts_with("prim_settings:item:")
                 && self.panel_app.primitive_settings_state.is_open()
-                && !self.panel_app.primitive_settings_state.is_color_picker_open()
             {
                 let field_id = id["prim_settings:item:".len()..].to_string();
                 let track_data = self.frame_result.as_ref()
@@ -3504,10 +3512,9 @@ impl ChartApp {
                     }
                 }
             }
-            // Indicator settings scrollbar / slider drag start (skip when color picker is open above)
-            if self.panel_app.indicator_settings_state.is_open()
-                && !self.panel_app.indicator_settings_state.is_color_picker_open()
-            {
+            // Indicator settings scrollbar / slider drag start.
+            // A drag inside the color picker popup already returned above.
+            if self.panel_app.indicator_settings_state.is_open() {
                 if let Some(ref is) = result.indicator_settings {
                     // Track click — click on empty scrollbar track to jump position
                     // Handle drag via InputCoordinator (ind_settings:scrollbar_handle).
@@ -3594,78 +3601,6 @@ impl ChartApp {
                                 }
                                 return false;
                             }
-                        }
-                    }
-                }
-            }
-            // Color picker drag start (SV square, hue bar, or opacity slider)
-            if let Some(ref cp) = result.color_picker {
-                let source = if self.panel_app.primitive_settings_state.is_color_picker_open() {
-                    Some("primitive")
-                } else if self.panel_app.indicator_settings_state.is_color_picker_open() {
-                    Some("indicator")
-                } else if self.panel_app.chart_settings_state.is_color_picker_open() {
-                    Some("chart")
-                } else {
-                    None
-                };
-
-                if let (Some(src), Some(ref l2)) = (source, &cp.l2_result) {
-                    let sv = &l2.sv_square_rect;
-                    let hue = &l2.hue_bar_rect;
-                    let opacity = &l2.opacity_slider_rect;
-                    if sv.contains(x, y) {
-                        self.color_picker_drag = Some(crate::ColorPickerDragState {
-                            area: crate::ColorPickerDragArea::SVSquare,
-                            source: src.to_string(),
-                            sv_rect: (sv.x, sv.y, sv.width, sv.height),
-                            hue_rect: (hue.x, hue.y, hue.width, hue.height),
-                            opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
-                        });
-                        self.apply_color_picker_drag(x, y);
-                        log::debug!("[ChartApp] color_picker SV drag started ({})", src);
-                        return false;
-                    }
-                    if hue.contains(x, y) {
-                        self.color_picker_drag = Some(crate::ColorPickerDragState {
-                            area: crate::ColorPickerDragArea::HueBar,
-                            source: src.to_string(),
-                            sv_rect: (sv.x, sv.y, sv.width, sv.height),
-                            hue_rect: (hue.x, hue.y, hue.width, hue.height),
-                            opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
-                        });
-                        self.apply_color_picker_drag(x, y);
-                        log::debug!("[ChartApp] color_picker hue drag started ({})", src);
-                        return false;
-                    }
-                    if opacity.contains(x, y) {
-                        self.color_picker_drag = Some(crate::ColorPickerDragState {
-                            area: crate::ColorPickerDragArea::OpacitySlider,
-                            source: src.to_string(),
-                            sv_rect: (sv.x, sv.y, sv.width, sv.height),
-                            hue_rect: (hue.x, hue.y, hue.width, hue.height),
-                            opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
-                        });
-                        self.apply_color_picker_drag(x, y);
-                        log::debug!("[ChartApp] color_picker L2 opacity drag started ({})", src);
-                        return false;
-                    }
-                }
-
-                if let (Some(src), Some(ref l1)) = (source, &cp.l1_result) {
-                    if let Some(ref opacity) = l1.opacity_slider_rect {
-                        if opacity.contains(x, y) {
-                            // For L1 opacity slider drag we use dummy sv/hue rects
-                            self.color_picker_drag = Some(crate::ColorPickerDragState {
-                                area: crate::ColorPickerDragArea::OpacitySlider,
-                                source: src.to_string(),
-                                sv_rect: (0.0, 0.0, 0.0, 0.0),
-                                hue_rect: (0.0, 0.0, 0.0, 0.0),
-                                opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
-                            });
-                            self.apply_color_picker_drag(x, y);
-                            log::debug!("[ChartApp] color_picker L1 opacity drag started ({})", src);
-                            return false;
                         }
                     }
                 }

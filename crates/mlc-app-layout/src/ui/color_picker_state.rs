@@ -214,26 +214,24 @@ impl Default for ColorPickerL1Config {
 }
 
 impl ColorPickerL1Config {
-    /// Calculate popup size
+    /// Calculate popup size.
+    ///
+    /// Under the 10×10 palette there is always exactly one fast row (saved
+    /// colors and "+", the same cell size as the palette) and then the opacity
+    /// row. The fast row does not grow when colors are saved.
     pub fn calculate_size(&self) -> (f64, f64) {
         let padding = 8.0;
         let rows = 10; // Standard palette rows
-        let custom_row_height = self.swatch_size + self.gap + 8.0; // Custom colors + "+" button
         let opacity_row_height = 24.0; // Toggle button height (no extra padding needed)
 
         let width = padding * 2.0 + self.columns as f64 * (self.swatch_size + self.gap) - self.gap;
-        let saved_colors_height = if self.custom_colors.is_empty() {
-            0.0
-        } else {
-            let cols = self.columns.max(1);
-            let saved_rows = (self.custom_colors.len() + cols - 1) / cols;
-            saved_rows as f64 * (self.swatch_size + self.gap) + 4.0
-        };
+        // Draw places the fast row at `10 * stride + 8`, which is `gap + 8`
+        // below the palette's last swatch, then `12` before the opacity row.
+        let palette_h = rows as f64 * (self.swatch_size + self.gap) - self.gap;
         let height = padding * 2.0
-            + rows as f64 * (self.swatch_size + self.gap) - self.gap  // Palette
-            + 8.0 + custom_row_height  // Current swatch + "+"
-            + saved_colors_height
-            + 12.0 + opacity_row_height; // Opacity section (12.0 = gap before opacity row)
+            + palette_h
+            + self.gap + 8.0 + self.swatch_size
+            + 12.0 + opacity_row_height;
 
         (width, height)
     }
@@ -780,10 +778,9 @@ impl ColorPickerState {
         window_h: f64,
         color: Option<&str>,
     ) {
-        // Size includes the saved custom row, or the popup clips it.
-        let mut config = ColorPickerL1Config::default();
-        config.custom_colors = self.custom_colors.clone();
-        let (popup_w, popup_h) = config.calculate_size();
+        // The fast row is always one row, empty or full, so the size does not
+        // depend on how many colors are saved.
+        let (popup_w, popup_h) = ColorPickerL1Config::default().calculate_size();
         let margin = 4.0;
 
         let (x, y) = Self::calculate_smart_origin(
@@ -866,12 +863,12 @@ mod opacity_tests {
     #[test]
     fn l1_size_grows_by_one_row_when_ten_custom_colors_are_saved() {
         let empty = ColorPickerL1Config::default().calculate_size();
+        let mut one = ColorPickerL1Config::default();
+        one.custom_colors.push("#112233".to_string());
         let mut full = ColorPickerL1Config::default();
         full.custom_colors = (0..MAX_CUSTOM_COLORS).map(|i| format!("#{:06x}", i)).collect();
-        let grown = full.calculate_size();
-        assert_eq!(grown.0, empty.0);
-        let row = full.swatch_size + full.gap + 4.0;
-        assert!((grown.1 - empty.1 - row).abs() < 0.01, "one wrapped row: {} vs {}", grown.1, empty.1);
+        assert_eq!(one.calculate_size(), empty, "the fast row is one row tall even when empty, because + is there");
+        assert_eq!(full.calculate_size(), empty, "ten saved colors stay on that same row; the row does not grow");
     }
 
     #[test]

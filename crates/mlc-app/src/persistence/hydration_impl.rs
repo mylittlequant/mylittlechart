@@ -285,7 +285,8 @@ impl ChartApp {
                                     // Restore bar_spacing (user's zoom level). chart_width is NOT restored  -
                                     // it comes from layout on the first frame; view_start is NOT restored  -
                                     // snap-to-end always positions to the latest bar. Price-scale display
-                                    // config only (mode, base_price, width, user_precision) is restored;
+                                    // config only (mode, base_price, width, user_precision) is restored.
+                                    // A missing precision is Auto. A value the user set is kept.
                                     // price_min/price_max are NOT restored - calc_auto_scale recomputes
                                     // them from bars after the cold snap.
                                     window.restore_persisted_display(&snap.price_scale);

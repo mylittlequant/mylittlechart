@@ -695,112 +695,6 @@ pub const INPUT_SPEED_MIN: f64 = 0.25;
 pub const INPUT_SPEED_MAX: f64 = 3.0;
 
 // =============================================================================
-// Candle opacity sliders
-// =============================================================================
-
-/// Widget id (content item, slider field and `apply_slider_value` route) of the
-/// candle opacity slider for `row` (`body`, `border` or `wick`).
-pub fn candle_opacity_field_id(row: &str) -> String {
-    format!("candle_opacity:{row}")
-}
-
-/// Where the opacity slider of a swatch row sits: `(track_x, track_width)` to
-/// the right of the swatches, or `None` when the row is too narrow to fit a
-/// usable track plus its percentage.
-fn candle_opacity_track(start_x: f64, right_x: f64) -> Option<(f64, f64)> {
-    const MIN_TRACK: f64 = 48.0;
-    const MAX_TRACK: f64 = 110.0;
-    const LABEL_W: f64 = 38.0;
-    let track_w = (right_x - start_x - LABEL_W - 8.0).min(MAX_TRACK);
-    (track_w >= MIN_TRACK).then_some((start_x, track_w))
-}
-
-/// Geometry and source color of one swatch row's opacity slider.
-#[derive(Clone, Copy)]
-struct CandleOpacityRow<'a> {
-    /// Left edge of the track (just right of the swatches).
-    start_x: f64,
-    /// Right edge the slider may use.
-    right_x: f64,
-    row_y: f64,
-    row_height: f64,
-    /// `body`, `border` or `wick`.
-    name: &'a str,
-    /// The row's up color: its alpha is the value the slider shows.
-    up_color: &'a str,
-}
-
-/// One opacity slider next to a row's swatches. It sets the alpha of BOTH the
-/// up and the down color of the row and never touches their RGB; the value it
-/// shows is the up color's alpha (or the live drag value).
-fn draw_candle_opacity_slider(
-    ctx: &mut dyn RenderContext,
-    row: &CandleOpacityRow<'_>,
-    theme: &ToolbarTheme,
-    chart_settings_state: &ChartSettingsState,
-    result: &mut ChartSettingsModalResult,
-) {
-    let CandleOpacityRow { start_x, right_x, row_y, row_height, name, up_color } = *row;
-    let Some((track_x, track_w)) = candle_opacity_track(start_x, right_x) else { return };
-    let field_id = candle_opacity_field_id(name);
-    let value = chart_settings_state
-        .slider_drag
-        .as_ref()
-        .filter(|d| d.field_id == field_id)
-        .and_then(|d| d.floating_value)
-        .unwrap_or_else(|| mlc_core::color_alpha(up_color))
-        .clamp(0.0, 1.0);
-    let cy = row_y + row_height / 2.0;
-    let track_h = 4.0;
-    ctx.set_fill_color(&theme.separator);
-    ctx.fill_rounded_rect(track_x, cy - track_h / 2.0, track_w, track_h, track_h / 2.0);
-    ctx.set_fill_color(&theme.accent);
-    ctx.fill_rounded_rect(track_x, cy - track_h / 2.0, track_w * value, track_h, track_h / 2.0);
-    let handle_r = 6.0;
-    ctx.set_fill_color(&theme.accent);
-    ctx.begin_path();
-    ctx.arc(track_x + track_w * value, cy, handle_r, 0.0, std::f64::consts::TAU);
-    ctx.fill();
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&theme.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&format!("{}%", (value * 100.0).round() as i32), track_x + track_w + 10.0, cy);
-    ctx.set_font("12px sans-serif");
-
-    let hit = WidgetRect::new(track_x, row_y, track_w, row_height);
-    result.content_items.push((field_id.clone(), hit));
-    result.slider_tracks.push(SliderTrackInfo {
-        field_id,
-        track_x,
-        track_width: track_w,
-        min_val: 0.0,
-        max_val: 1.0,
-    });
-}
-
-#[cfg(test)]
-mod candle_opacity_slider_tests {
-    use super::*;
-
-    #[test]
-    fn the_track_sits_right_of_the_swatches_and_disappears_in_a_too_narrow_row() {
-        let (x, w) = candle_opacity_track(200.0, 600.0).expect("wide row fits a track");
-        assert_eq!(x, 200.0);
-        assert_eq!(w, 110.0, "capped");
-        let (_, w) = candle_opacity_track(200.0, 300.0).expect("narrow row shrinks it");
-        assert!((48.0..110.0).contains(&w));
-        assert!(candle_opacity_track(200.0, 260.0).is_none());
-    }
-
-    #[test]
-    fn the_slider_field_ids_are_per_row() {
-        assert_eq!(candle_opacity_field_id("body"), "candle_opacity:body");
-        assert_eq!(candle_opacity_field_id("wick"), "candle_opacity:wick");
-    }
-}
-
-// =============================================================================
 // Instrument tab
 // =============================================================================
 
@@ -920,20 +814,6 @@ fn render_instrument_settings(
         let body_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.body_down_color, theme);
         result.content_items.push(("instrument:body_up_color".to_string(), body_up_rect));
         result.content_items.push(("instrument:body_down_color".to_string(), body_down_rect));
-        draw_candle_opacity_slider(
-            ctx,
-            &CandleOpacityRow {
-                start_x: swatches_x + 2.0 * (swatch_size + swatch_gap) + 4.0,
-                right_x: x + width,
-                row_y,
-                row_height,
-                name: "body",
-                up_color: &settings.body_up_color,
-            },
-            theme,
-            chart_settings_state,
-            result,
-        );
         row_y += row_height;
 
         // Row: border
@@ -949,20 +829,6 @@ fn render_instrument_settings(
         let border_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.border_down_color, theme);
         result.content_items.push(("instrument:border_up_color".to_string(), border_up_rect));
         result.content_items.push(("instrument:border_down_color".to_string(), border_down_rect));
-        draw_candle_opacity_slider(
-            ctx,
-            &CandleOpacityRow {
-                start_x: swatches_x + 2.0 * (swatch_size + swatch_gap) + 4.0,
-                right_x: x + width,
-                row_y,
-                row_height,
-                name: "border",
-                up_color: &settings.border_up_color,
-            },
-            theme,
-            chart_settings_state,
-            result,
-        );
         row_y += row_height;
 
         // Row: wick
@@ -978,20 +844,6 @@ fn render_instrument_settings(
         let wick_down_rect = draw_swatch(ctx, swatches_x + swatch_size + swatch_gap, swatch_y, &settings.wick_down_color, theme);
         result.content_items.push(("instrument:wick_up_color".to_string(), wick_up_rect));
         result.content_items.push(("instrument:wick_down_color".to_string(), wick_down_rect));
-        draw_candle_opacity_slider(
-            ctx,
-            &CandleOpacityRow {
-                start_x: swatches_x + 2.0 * (swatch_size + swatch_gap) + 4.0,
-                right_x: x + width,
-                row_y,
-                row_height,
-                name: "wick",
-                up_color: &settings.wick_up_color,
-            },
-            theme,
-            chart_settings_state,
-            result,
-        );
         row_y += row_height;
 
         // Row: candle draw-form (skin texture layer) — canonical split

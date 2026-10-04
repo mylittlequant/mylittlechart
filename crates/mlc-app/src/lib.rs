@@ -6529,11 +6529,67 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     // prepare_frame lives in frame_lifecycle/prepare.rs
+    /// Stamp each window's label precision from the catalogue tick.
+    ///
+    /// A missing bubble or tick clears the previous instrument precision so
+    /// a symbol change cannot keep the last instrument's decimals. Manual
+    /// `user_precision` is left alone and still wins at format time.
+    fn refresh_instrument_price_precision(&mut self) {
+        // Ids first: a live `containers_mut` borrow must not overlap the
+        // bubble or catalogue lock guards on `self.core`. Exchange and
+        // symbol are copied out so the bubble guard drops before the
+        // catalogue lookup.
+        let tagged: Vec<(mlc_core::ChartId, mlc_core::BubbleId)> = self
+            .panel_app
+            .panel_grid
+            .containers()
+            .iter()
+            .map(|(id, window)| (*id, window.current_tag_id))
+            .collect();
+
+        let pairs: Vec<(mlc_core::ChartId, Option<(String, String)>)> = {
+            let bubbles = self.core.bubbles();
+            tagged
+                .into_iter()
+                .map(|(id, bid)| {
+                    let pair = match (bubbles.exchange(bid), bubbles.symbol(bid)) {
+                        (Some(exchange), Some(symbol)) => {
+                            Some((exchange.to_string(), symbol.to_string()))
+                        }
+                        _ => None,
+                    };
+                    (id, pair)
+                })
+                .collect()
+        };
+
+        let ticks: Vec<(mlc_core::ChartId, Option<f64>)> = {
+            let catalogue = self.core.exchange_symbols();
+            pairs
+                .into_iter()
+                .map(|(id, pair)| {
+                    let tick = pair.as_ref().and_then(|(exchange, symbol)| {
+                        catalogue.tick_size_for(exchange, symbol)
+                    });
+                    (id, tick)
+                })
+                .collect()
+        };
+
+        let containers = self.panel_app.panel_grid.containers_mut();
+        for (id, tick) in ticks {
+            if let Some(window) = containers.get_mut(&id) {
+                window.apply_instrument_tick(tick);
+            }
+        }
+    }
+
     /// Convenience wrapper: calls `prepare_frame`, `render_to_scene`, then
     /// `apply_render_output` in sequence.
     ///
     /// Existing call sites can continue using this method unchanged.
     pub fn render(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) {
+        self.refresh_instrument_price_precision();
         self.prepare_frame(self.width as f64, self.height as f64);
         // User-text label registry: one frame's rects, rebuilt by the
         // primitive passes below (cleared here, never per window, so

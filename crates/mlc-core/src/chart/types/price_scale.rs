@@ -206,6 +206,28 @@ pub fn format_price(price: f64, step: f64) -> String {
     format_price_with_precision(price, step, None)
 }
 
+/// Decimal places implied by a positive finite instrument tick.
+///
+/// Formats to 12 fractional digits and trims trailing zeros. An empty
+/// fraction (`1.0`, `10.0`) is 0 places. Non-finite or non-positive ticks
+/// are `None` — the caller keeps the step-size fallback.
+pub fn decimals_from_tick(tick: f64) -> Option<usize> {
+    if !tick.is_finite() || tick <= 0.0 {
+        return None;
+    }
+    let rendered = format!("{:.12}", tick);
+    let fraction = match rendered.split_once('.') {
+        Some((_, fraction)) => fraction,
+        None => "",
+    };
+    let trimmed = fraction.trim_end_matches('0');
+    if trimmed.is_empty() {
+        Some(0)
+    } else {
+        Some(trimmed.len().min(12))
+    }
+}
+
 // =============================================================================
 // Price Scale
 // =============================================================================
@@ -225,8 +247,14 @@ pub struct PriceScale {
     pub mode: PriceScaleMode,
     /// Base price for percent mode (usually first visible bar's close)
     pub base_price: f64,
-    /// User-configured precision override (None = automatic from step size)
+    /// User-configured precision override.
+    /// `None` = not pinned this session (instrument tick, else step size).
     pub user_precision: Option<usize>,
+    /// Decimal count from the active instrument tick. `None` when the
+    /// catalogue has no positive finite tick. A `Some` [`Self::user_precision`]
+    /// wins over this. Not persisted — recomputed from the catalogue.
+    #[serde(default)]
+    pub instrument_precision: Option<usize>,
 }
 
 impl Default for PriceScale {
@@ -239,6 +267,7 @@ impl Default for PriceScale {
             mode: PriceScaleMode::Normal,
             base_price: 100.0,
             user_precision: None,
+            instrument_precision: None,
         }
     }
 }
@@ -275,10 +304,17 @@ impl PriceScale {
         PRICE_SCALE_WIDTH
     }
 
-    /// Format a price using the current step and user precision override
+    /// Label precision: manual override, else instrument tick, else step size.
+    fn label_precision(&self, step: f64) -> usize {
+        self.user_precision
+            .or(self.instrument_precision)
+            .unwrap_or_else(|| price_precision(step))
+    }
+
+    /// Format a price using the current step and the resolved label precision.
     pub fn format_price(&self, price: f64, chart_height: f64) -> String {
         let step = self.calc_step(chart_height);
-        format_price_with_precision(price, step, self.user_precision)
+        format_price_with_precision(price, step, Some(self.label_precision(step)))
     }
 
     /// Calculate dynamic font size based on label length
@@ -292,18 +328,19 @@ impl PriceScale {
         let first = (self.price_min / step).ceil() * step;
         let num_ticks = ((self.price_max - first) / step).ceil() as i32 + 1;
         let mut max_len = 0;
+        let precision = Some(self.label_precision(step));
 
         for i in 0..num_ticks {
             let price = first + (i as f64) * step;
             if price >= self.price_max {
                 break;
             }
-            let label = format_price_with_precision(price, step, self.user_precision);
+            let label = format_price_with_precision(price, step, precision);
             max_len = max_len.max(label.len());
         }
 
         // Also check the max price label
-        let max_label = format_price_with_precision(self.price_max, step, self.user_precision);
+        let max_label = format_price_with_precision(self.price_max, step, precision);
         max_len = max_len.max(max_label.len());
 
         // Dynamic font size: fewer chars = bigger font, more chars = smaller font
@@ -667,6 +704,34 @@ mod tests {
         assert_eq!(format_price(123.456, 1.0), "123.46");
         assert_eq!(format_price(123.456, 0.1), "123.46");
         assert_eq!(format_price(123.456, 0.01), "123.46");
+    }
+
+    #[test]
+    fn decimals_from_tick_counts_fraction_digits() {
+        assert_eq!(decimals_from_tick(0.1), Some(1));
+        assert_eq!(decimals_from_tick(0.01), Some(2));
+        assert_eq!(decimals_from_tick(0.25), Some(2));
+        assert_eq!(decimals_from_tick(0.5), Some(1));
+        assert_eq!(decimals_from_tick(0.0001), Some(4));
+        assert_eq!(decimals_from_tick(0.00000001), Some(8));
+        assert_eq!(decimals_from_tick(1.0), Some(0));
+        assert_eq!(decimals_from_tick(10.0), Some(0));
+        assert_eq!(decimals_from_tick(0.0), None);
+        assert_eq!(decimals_from_tick(-0.01), None);
+        assert_eq!(decimals_from_tick(f64::NAN), None);
+        assert_eq!(decimals_from_tick(f64::INFINITY), None);
+        assert_eq!(decimals_from_tick(f64::NEG_INFINITY), None);
+    }
+
+    #[test]
+    fn instrument_precision_formats_four_decimals_unless_user_overrides() {
+        let mut scale = PriceScale::new(0.0, 100.0);
+        scale.instrument_precision = Some(4);
+        scale.user_precision = None;
+        assert_eq!(scale.format_price(123.4, 300.0), "123.4000");
+
+        scale.user_precision = Some(0);
+        assert_eq!(scale.format_price(123.4, 300.0), "123");
     }
 
     #[test]

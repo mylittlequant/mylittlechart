@@ -128,67 +128,42 @@ pub fn draw_color_picker_l1(
 
     y += 10.0 * (config.swatch_size + config.gap) + 8.0;
 
-    // Saved custom colors, above the current swatch and "+".
-    if !config.custom_colors.is_empty() {
-        let cols = config.columns.max(1);
-        for (idx, color) in config.custom_colors.iter().enumerate() {
-            let row = idx / cols;
-            let col = idx % cols;
-            let x = content.x + col as f64 * (config.swatch_size + config.gap);
-            let swatch_y = y + row as f64 * (config.swatch_size + config.gap);
-            let swatch_rect = WidgetRect::new(x, swatch_y, config.swatch_size, config.swatch_size);
+    // One row of `columns` cells, same pitch as the palette. Saved colors
+    // fill from the left. The next empty cell is "+". At `columns` saved
+    // colors there is no "+". Other empty cells are an outline only.
+    let cols = config.columns.max(1);
+    let shown = config.custom_colors.len().min(cols);
+    for col in 0..cols {
+        let x = content.x + col as f64 * (config.swatch_size + config.gap);
+        let cell = WidgetRect::new(x, y, config.swatch_size, config.swatch_size);
+        if col < shown {
+            let color = &config.custom_colors[col];
             let is_hovered = hovered_swatch == Some(color.as_str());
             let is_selected = config.current_color.as_deref() == Some(color.as_str());
             ctx.set_fill_color(color);
-            ctx.fill_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, config.swatch_radius);
+            ctx.fill_rounded_rect(cell.x, cell.y, cell.width, cell.height, config.swatch_radius);
             if is_selected || is_hovered {
                 ctx.set_stroke_color("#ffffff");
                 ctx.set_stroke_width(if is_selected { 2.0 } else { 1.0 });
-                ctx.stroke_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.width, swatch_rect.height, config.swatch_radius);
+                ctx.stroke_rounded_rect(cell.x, cell.y, cell.width, cell.height, config.swatch_radius);
             }
-            result.swatch_rects.push((color.clone(), swatch_rect));
+            result.swatch_rects.push((color.clone(), cell));
+        } else {
+            ctx.set_stroke_color(&theme.border);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(cell.x, cell.y, cell.width, cell.height, config.swatch_radius);
+            if col == shown {
+                ctx.set_font("14px sans-serif");
+                ctx.set_fill_color("#d1d4dc");
+                ctx.set_text_align(TextAlign::Center);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text("+", cell.center_x(), cell.center_y());
+                result.plus_button_rect = Some(cell);
+            }
         }
-        let saved_rows = (config.custom_colors.len() + cols - 1) / cols;
-        y += saved_rows as f64 * (config.swatch_size + config.gap) + 4.0;
     }
 
-    // Current color swatch (larger)
-    let current_swatch_size = config.swatch_size + 4.0;
-    if let Some(ref current) = config.current_color {
-        ctx.set_fill_color(current);
-        ctx.fill_rounded_rect(content.x, y, current_swatch_size, current_swatch_size, config.swatch_radius);
-        ctx.set_stroke_color("#787b86");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(content.x, y, current_swatch_size, current_swatch_size, config.swatch_radius);
-    } else {
-        // Empty swatch placeholder
-        ctx.set_fill_color("#2a2e39");
-        ctx.fill_rounded_rect(content.x, y, current_swatch_size, current_swatch_size, config.swatch_radius);
-        ctx.set_stroke_color("#787b86");
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(content.x, y, current_swatch_size, current_swatch_size, config.swatch_radius);
-    }
-
-    // Plus button (opens L2)
-    let plus_x = content.x + current_swatch_size + 8.0;
-    let plus_rect = WidgetRect::new(plus_x, y, current_swatch_size, current_swatch_size);
-
-    ctx.set_fill_color("#2a2e39");
-    ctx.fill_rounded_rect(plus_rect.x, plus_rect.y, plus_rect.width, plus_rect.height, config.swatch_radius);
-    ctx.set_stroke_color("#787b86");
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(plus_rect.x, plus_rect.y, plus_rect.width, plus_rect.height, config.swatch_radius);
-
-    // Draw "+"
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color("#d1d4dc");
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("+", plus_rect.center_x(), plus_rect.center_y());
-
-    result.plus_button_rect = Some(plus_rect);
-
-    y += current_swatch_size + 12.0;
+    y += config.swatch_size + 12.0;
 
     // Draw opacity section
     // Toggle button (eye icon) - BELOW "Opacity" label, larger size

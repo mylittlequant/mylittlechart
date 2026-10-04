@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use mlc_core::ids::{BubbleId, ChartId, ChartPanelId, generate_chart_id, generate_chart_panel_id};
 use mlc_core::{Bar, Viewport, PriceScale, TimeScale};
-use mlc_core::chart::types::price_scale::ScaleMode;
+use mlc_core::chart::types::price_scale::{decimals_from_tick, ScaleMode};
 use mlc_core::state::Timeframe;
 use mlc_core::{Crosshair, KineticState, DragMode};
 use mlc_core::{Legend, Watermark, PriceLine};
@@ -2159,6 +2159,14 @@ impl ChartContainer {
         self.price_scale.user_precision = precision;
     }
 
+    /// Set label decimals from the catalogue tick. `None` (no bubble, or the
+    /// catalogue has no positive finite tick — including a symbol change
+    /// before the new tick is known) clears a previously applied instrument
+    /// precision. Does not touch `user_precision`.
+    pub fn apply_instrument_tick(&mut self, tick: Option<f64>) {
+        self.price_scale.instrument_precision = tick.and_then(decimals_from_tick);
+    }
+
     /// Toggle the price-scale display mode (Normal / Percent / Logarithmic
     /// — the corner "Mode" button), independent of the A/M/F scale_mode.
     pub fn toggle_price_scale_mode(&mut self) {
@@ -2455,9 +2463,10 @@ impl ChartContainer {
         self.price_scale.mode = price_persist.mode;
         self.price_scale.base_price = price_persist.base_price;
         self.price_scale.width = price_persist.width;
+        // A new profile stores None (Auto: instrument tick, else step).
+        // A 0–8 value the user picked is restored and kept. The settings
+        // label reads `scale_settings`; the formatter reads `price_scale`.
         self.price_scale.user_precision = price_persist.user_precision;
-        // The settings label reads `scale_settings`; the formatter reads
-        // `price_scale`. Keep them the same value after a reload.
         self.scale_settings.user_precision = price_persist.user_precision;
     }
 
@@ -2881,6 +2890,42 @@ mod viewport_snap_tests {
         let mut c = container_with(0.0, 8.0, 0);
         c.ensure_min_bar_spacing(120.0);
         assert_eq!(c.viewport.bar_spacing, 120.0);
+    }
+}
+
+#[cfg(test)]
+mod saved_price_precision_tests {
+    use super::*;
+    use mlc_core::preset::snapshots::PriceScalePersist;
+
+    #[test]
+    fn new_profile_is_auto_and_a_saved_choice_is_restored() {
+        let fresh = ChartContainer::new("BTCUSDT", Timeframe::m1());
+        assert_eq!(fresh.price_scale().user_precision, None, "a new profile opens on Auto");
+        assert_eq!(fresh.scale_settings.user_precision, None);
+
+        let mut c = ChartContainer::new("BTCUSDT", Timeframe::m1());
+        let persist = PriceScalePersist {
+            user_precision: Some(4),
+            ..Default::default()
+        };
+        c.restore_persisted_display(&persist);
+        assert_eq!(c.price_scale().user_precision, Some(4));
+        assert_eq!(c.scale_settings.user_precision, Some(4));
+
+        c.restore_persisted_display(&PriceScalePersist::default());
+        assert_eq!(c.price_scale().user_precision, None);
+        assert_eq!(c.scale_settings.user_precision, None);
+
+        c.apply_instrument_tick(Some(0.001));
+        assert_eq!(c.price_scale().instrument_precision, Some(3));
+        assert_eq!(c.price_scale().user_precision, None);
+
+        c.apply_instrument_tick(None);
+        assert_eq!(c.price_scale().instrument_precision, None);
+
+        c.set_price_precision(Some(0));
+        assert_eq!(c.price_scale().user_precision, Some(0));
     }
 }
 
