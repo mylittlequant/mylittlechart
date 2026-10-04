@@ -228,6 +228,24 @@ pub fn decimals_from_tick(tick: f64) -> Option<usize> {
     }
 }
 
+/// Drop the zeros that fixed-precision formatting pads onto a fraction.
+///
+/// `86800.0` → `86800`, `6.500` → `6.5`. The integer part is left as printed.
+/// A label with no decimal point is returned unchanged.
+fn trim_padded_fraction(label: &str) -> String {
+    match label.split_once('.') {
+        Some((whole, frac)) => {
+            let trimmed = frac.trim_end_matches('0');
+            if trimmed.is_empty() {
+                whole.to_string()
+            } else {
+                format!("{whole}.{trimmed}")
+            }
+        }
+        None => label.to_string(),
+    }
+}
+
 // =============================================================================
 // Price Scale
 // =============================================================================
@@ -248,7 +266,8 @@ pub struct PriceScale {
     /// Base price for percent mode (usually first visible bar's close)
     pub base_price: f64,
     /// User-configured precision override.
-    /// `None` = not pinned this session (instrument tick, else step size).
+    /// `None` = Auto: the fewer of the instrument tick and the visible step,
+    /// with padded fractional zeros removed. `Some` is the pinned 0–8 value.
     pub user_precision: Option<usize>,
     /// Decimal count from the active instrument tick. `None` when the
     /// catalogue has no positive finite tick. A `Some` [`Self::user_precision`]
@@ -304,17 +323,41 @@ impl PriceScale {
         PRICE_SCALE_WIDTH
     }
 
-    /// Label precision: manual override, else instrument tick, else step size.
+    /// Digits shown on a label.
+    ///
+    /// A pinned `user_precision` (the 0–8 menu) is exact. Auto takes the
+    /// fewer of the instrument tick and the visible grid step, so zooming
+    /// out drops digits the grid no longer resolves. The tick is a ceiling:
+    /// zooming in does not invent digits past the instrument.
     fn label_precision(&self, step: f64) -> usize {
-        self.user_precision
-            .or(self.instrument_precision)
-            .unwrap_or_else(|| price_precision(step))
+        let from_step = price_precision(step);
+        match self.user_precision {
+            Some(pinned) => pinned,
+            None => self
+                .instrument_precision
+                .map(|tick| tick.min(from_step))
+                .unwrap_or(from_step),
+        }
+    }
+
+    /// Format one price the way the scale paints it.
+    ///
+    /// Manual precision keeps the padded width. Auto drops the trailing
+    /// zeros that fixed-precision formatting adds.
+    fn format_tick_label(&self, price: f64, step: f64) -> String {
+        let formatted =
+            format_price_with_precision(price, step, Some(self.label_precision(step)));
+        if self.user_precision.is_some() {
+            formatted
+        } else {
+            trim_padded_fraction(&formatted)
+        }
     }
 
     /// Format a price using the current step and the resolved label precision.
     pub fn format_price(&self, price: f64, chart_height: f64) -> String {
         let step = self.calc_step(chart_height);
-        format_price_with_precision(price, step, Some(self.label_precision(step)))
+        self.format_tick_label(price, step)
     }
 
     /// Calculate dynamic font size based on label length
@@ -328,19 +371,18 @@ impl PriceScale {
         let first = (self.price_min / step).ceil() * step;
         let num_ticks = ((self.price_max - first) / step).ceil() as i32 + 1;
         let mut max_len = 0;
-        let precision = Some(self.label_precision(step));
 
         for i in 0..num_ticks {
             let price = first + (i as f64) * step;
             if price >= self.price_max {
                 break;
             }
-            let label = format_price_with_precision(price, step, precision);
+            let label = self.format_tick_label(price, step);
             max_len = max_len.max(label.len());
         }
 
         // Also check the max price label
-        let max_label = format_price_with_precision(self.price_max, step, precision);
+        let max_label = self.format_tick_label(self.price_max, step);
         max_len = max_len.max(max_label.len());
 
         // Dynamic font size: fewer chars = bigger font, more chars = smaller font
@@ -728,10 +770,54 @@ mod tests {
         let mut scale = PriceScale::new(0.0, 100.0);
         scale.instrument_precision = Some(4);
         scale.user_precision = None;
-        assert_eq!(scale.format_price(123.4, 300.0), "123.4000");
+        // Range 100 at 300px → step 10, step precision 2.
+        // Auto takes min(4, 2) and strips the pad: 123.40 → 123.4.
+        assert_eq!(scale.format_price(123.4, 300.0), "123.4");
 
         scale.user_precision = Some(0);
         assert_eq!(scale.format_price(123.4, 300.0), "123");
+
+        scale.user_precision = Some(4);
+        assert_eq!(scale.format_price(123.4, 300.0), "123.4000");
+    }
+
+    #[test]
+    fn auto_drops_padded_zeros_and_follows_the_coarser_of_tick_and_step() {
+        // Bitcoin-like. Tick 0.1 is one decimal. Range 1000 at 300px → step 100,
+        // which wants two decimals. Auto keeps the tick (fewer) and strips the zero.
+        let mut btc = PriceScale::new(86_000.0, 87_000.0);
+        btc.instrument_precision = Some(1);
+        btc.user_precision = None;
+        assert_eq!(btc.calc_step(300.0), 100.0);
+        assert_eq!(btc.format_price(86_800.0, 300.0), "86800");
+        assert_eq!(btc.format_price(86_800.5, 300.0), "86800.5");
+
+        // A pinned width still pads. The user asked for that digit.
+        btc.user_precision = Some(1);
+        assert_eq!(btc.format_price(86_800.0, 300.0), "86800.0");
+
+        // NEAR-like zoom-out. Tick 0.001 is three decimals. Range 4 at 300px →
+        // step 0.5, which wants two. Integer labels lose the padded zeros;
+        // a real half stays.
+        let mut near = PriceScale::new(4.0, 8.0);
+        near.instrument_precision = Some(3);
+        near.user_precision = None;
+        assert_eq!(near.calc_step(300.0), 0.5);
+        assert_eq!(near.format_price(6.0, 300.0), "6");
+        assert_eq!(near.format_price(7.0, 300.0), "7");
+        assert_eq!(near.format_price(6.5, 300.0), "6.5");
+
+        near.user_precision = Some(3);
+        assert_eq!(near.format_price(6.0, 300.0), "6.000");
+
+        // Zoomed inside the tick. Step 0.0005 wants four digits; the tick
+        // ceiling holds at three, then trailing zeros still drop.
+        let mut near_in = PriceScale::new(6.0, 6.005);
+        near_in.instrument_precision = Some(3);
+        near_in.user_precision = None;
+        assert!(near_in.calc_step(300.0) < 0.001);
+        assert_eq!(near_in.format_price(6.123, 300.0), "6.123");
+        assert_eq!(near_in.format_price(6.1, 300.0), "6.1");
     }
 
     #[test]
