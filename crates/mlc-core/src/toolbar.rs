@@ -652,8 +652,6 @@ pub fn agents_header_toolbar(is_pty: bool, backend_label: &str) -> PanelToolbarD
             ToolbarItemDef::dropdown("agent_backend", vec![
                 DropdownItemDef::action("spawn:claude", "CLAUDE"),
                 DropdownItemDef::action("spawn:codex", "CODEX"),
-                DropdownItemDef::action("spawn:gemini", "GEMINI"),
-                DropdownItemDef::action("spawn:opencode", "OPENCODE"),
             ]).with_text(backend_label),
             ToolbarItemDef::icon_button("sec_gear", ToolbarIconId::new("Settings"))
                 .with_tooltip(t_toolbar(TK::Settings)),

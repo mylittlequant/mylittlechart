@@ -7928,8 +7928,6 @@ impl ChartApp {
                                         let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
                                             Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
                                             Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
-                                            Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
-                                            Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
                                             None => gate4agent::CliTool::ClaudeCode.capabilities(),
                                         };
                                         let item_h = 24.0;
@@ -7952,8 +7950,6 @@ impl ChartApp {
                                         let caps2 = match self.sidebar_state.agent_leaves.get(&lid).map(|d| d.cli) {
                                             Some(gate4agent::AgentCli::Claude) => gate4agent::CliTool::ClaudeCode.capabilities(),
                                             Some(gate4agent::AgentCli::Codex) => gate4agent::CliTool::Codex.capabilities(),
-                                            Some(gate4agent::AgentCli::Gemini) => gate4agent::CliTool::Gemini.capabilities(),
-                                            Some(gate4agent::AgentCli::OpenCode) => gate4agent::CliTool::OpenCode.capabilities(),
                                             None => gate4agent::CliTool::ClaudeCode.capabilities(),
                                         };
                                         let item_h = 24.0;

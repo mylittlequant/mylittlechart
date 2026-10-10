@@ -297,8 +297,6 @@ impl ChartApp {
                 cli: match desc.cli {
                     gate4agent::AgentCli::Claude => mlc_core::PersistedAgentCli::Claude,
                     gate4agent::AgentCli::Codex => mlc_core::PersistedAgentCli::Codex,
-                    gate4agent::AgentCli::Gemini => mlc_core::PersistedAgentCli::Gemini,
-                    gate4agent::AgentCli::OpenCode => mlc_core::PersistedAgentCli::OpenCode,
                 },
                 mode: match desc.mode {
                     gate4agent::InstanceMode::Pty => mlc_core::PersistedInstanceMode::Pty,

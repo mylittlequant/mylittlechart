@@ -188,8 +188,9 @@ pub struct PersistedSharedTab {
 pub enum PersistedAgentCli {
     Claude,
     Codex,
+    /// Stored only. gate4agent 0.4.8 has no Gemini pane; restore opens Claude.
     Gemini,
-    /// OpenCode / sst-opencode (PIPE transport).
+    /// Stored only. gate4agent 0.4.8 has no OpenCode pane; restore opens Claude.
     OpenCode,
 }
 

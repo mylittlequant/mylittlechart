@@ -38,10 +38,10 @@ serde_json = "1.0"
 log = "0.4"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-# Native-only: in-app agent terminal (PTY + chat) — gate4agent hard-deps
-# portable-pty / vt100 / vte / rusqlite, none of which compile to wasm32.
-# On wasm we substitute a no-op stub via cfg-split in src/agent/mod.rs.
-gate4agent = "=0.2.37"
+# Native-only: in-app agent terminal (PTY + chat). gate4agent 0.4.8 does
+# not compile to wasm32 (tokio process, vt100) and does not link sqlite.
+# On wasm the stub in src/agent/mod.rs replaces it.
+gate4agent = "=0.4.8"
 vt100 = "0.15"
 
 # ── full bridge→bubble smoke test (DUAL-TARGET) ──────────────────────────────

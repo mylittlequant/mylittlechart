@@ -112,14 +112,6 @@ impl uzor::panels::DockPanel for AgentPaneLeaf {
                 InstanceMode::Pty  => "Codex PTY",
                 InstanceMode::Chat => "Codex Chat",
             },
-            AgentCli::Gemini => match self.mode {
-                InstanceMode::Pty  => "Gemini PTY",
-                InstanceMode::Chat => "Gemini Chat",
-            },
-            AgentCli::OpenCode => match self.mode {
-                InstanceMode::Pty  => "OpenCode PTY",
-                InstanceMode::Chat => "OpenCode Chat",
-            },
         }
     }
 

@@ -4,9 +4,8 @@
 //! existing callers in `mlc-app` continue to compile without changes.
 //!
 //! On wasm32: re-exports an equivalent no-op stub module (`wasm_stub`).
-//! gate4agent has hard non-wasm deps (portable-pty, vt100, vte, rusqlite)
-//! that do not compile to wasm32; the stub provides an identical surface
-//! that always returns errors / empty values.
+//! gate4agent 0.4.8 does not compile to wasm32; the stub provides an
+//! identical surface that always returns errors / empty values.
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use gate4agent::{MultiCliManager, ManagerConfig, InstanceId, InstanceMode};

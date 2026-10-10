@@ -1018,7 +1018,7 @@ impl ChartApp {
             return;
         }
 
-        // --- Backend spawn: agent:spawn:{claude|codex|gemini|opencode} ---
+        // --- Backend spawn: agent:spawn:{claude|codex} ---
         // (Stage B: rows of the header backend dropdown + agents modal.)
         if let Some(cli_str) = widget_id.strip_prefix("agent:spawn:") {
             // Remember the pick for the dropdown button label.
@@ -1028,8 +1028,6 @@ impl ChartApp {
             let cli = match cli_str {
                 "claude"   => AgentCli::Claude,
                 "codex"    => AgentCli::Codex,
-                "gemini"   => AgentCli::Gemini,
-                "opencode" => AgentCli::OpenCode,
                 _ => return,
             };
             let mode = self.sidebar_state.agent_spawn_mode;
@@ -1559,8 +1557,6 @@ impl ChartApp {
                                 let tool = match desc.cli {
                                     gate4agent::AgentCli::Claude   => CliTool::ClaudeCode,
                                     gate4agent::AgentCli::Codex    => CliTool::Codex,
-                                    gate4agent::AgentCli::Gemini   => CliTool::Gemini,
-                                    gate4agent::AgentCli::OpenCode => CliTool::OpenCode,
                                 };
                                 // Only read on native — no PTY runtime to spawn on wasm.
                                 let _config = SessionConfig {

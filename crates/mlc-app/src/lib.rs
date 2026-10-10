@@ -5594,8 +5594,9 @@ impl ChartApp {
                                 let cli = match persisted.cli {
                                     mlc_core::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
                                     mlc_core::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
-                                    mlc_core::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
-                                    mlc_core::PersistedAgentCli::OpenCode => gate4agent::AgentCli::OpenCode,
+                                    // gate4agent 0.4.8 AgentCli is Claude | Codex.
+                                    mlc_core::PersistedAgentCli::Gemini
+                                    | mlc_core::PersistedAgentCli::OpenCode => gate4agent::AgentCli::Claude,
                                 };
                                 let mode = match persisted.mode {
                                     mlc_core::PersistedInstanceMode::Pty => gate4agent::InstanceMode::Pty,
@@ -5626,8 +5627,8 @@ impl ChartApp {
                                     let cli = match persisted.cli {
                                         mlc_core::PersistedAgentCli::Claude => gate4agent::AgentCli::Claude,
                                         mlc_core::PersistedAgentCli::Codex => gate4agent::AgentCli::Codex,
-                                        mlc_core::PersistedAgentCli::Gemini => gate4agent::AgentCli::Gemini,
-                                        mlc_core::PersistedAgentCli::OpenCode => gate4agent::AgentCli::OpenCode,
+                                        mlc_core::PersistedAgentCli::Gemini
+                                        | mlc_core::PersistedAgentCli::OpenCode => gate4agent::AgentCli::Claude,
                                     };
                                     let mode = match persisted.mode {
                                         mlc_core::PersistedInstanceMode::Pty => gate4agent::InstanceMode::Pty,

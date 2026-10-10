@@ -580,9 +580,9 @@ mod tests {
 
     #[test]
     fn a_connection_without_a_key_still_reads_plaintext() {
-        // gate4agent opens other processes' sqlite files and never sets a
-        // key. This binary links one SQLCipher build for both. A keyless
-        // connection has to keep reading a plaintext file.
+        // SQLCipher with no key still opens a plaintext file. The messenger
+        // file always sets a key; this checks the library did not make
+        // every connection encrypted.
         let dir = test_dir("plain");
         let path = dir.join("plain.sqlite");
         let conn = rusqlite::Connection::open(&path).unwrap();

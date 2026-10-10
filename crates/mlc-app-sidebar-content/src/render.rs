@@ -5780,7 +5780,7 @@ fn render_performance_panel(
 /// BEFORE `scrollable.begin(ctx)` so the controls draw in the unclipped header
 /// zone.  The toolbar contains:
 ///   - `[PTY][Chat]` mode segment
-///   - `[Claude][Codex][Gemini][OpenCode]` CLI spawn buttons
+///   - `[Claude][Codex]` CLI spawn buttons
 ///   - `[H][V][R]` split-direction toggles
 ///   - `[⊞][↺]` expand/reset controls
 ///
@@ -5793,8 +5793,6 @@ fn render_performance_panel(
 pub const AGENT_BACKENDS: &[(&str, &str, &str)] = &[
     ("claude",   "CLAUDE",   "CL"),
     ("codex",    "CODEX",    "CX"),
-    ("gemini",   "GEMINI",   "GM"),
-    ("opencode", "OPENCODE", "OC"),
 ];
 
 /// (full, short) labels for a backend wire id.
@@ -5857,7 +5855,7 @@ fn render_agents_desktop_notice(
 /// Layout:
 /// ```text
 /// ┌─────────────────────────────────────────────────────────────────┐
-/// │ [PTY][Chat]  [Claude] [Codex] [Gemini] [OpenCode]  ← row 1 (28px)
+/// │ [PTY][Chat]  [Claude] [Codex]                     ← row 1 (28px)
 /// ├─────────────────────────────────────────────────────────────────┤
 /// │ [Layout ▾]  [×]                                    ← row 2 (28px)
 /// ├─────────────────────────────────────────────────────────────────┤
@@ -6781,8 +6779,6 @@ fn render_agents_chat_leaf(
     let cli_tool = match desc.cli {
         gate4agent::AgentCli::Claude   => gate4agent::CliTool::ClaudeCode,
         gate4agent::AgentCli::Codex    => gate4agent::CliTool::Codex,
-        gate4agent::AgentCli::Gemini   => gate4agent::CliTool::Gemini,
-        gate4agent::AgentCli::OpenCode => gate4agent::CliTool::OpenCode,
     };
     let caps = cli_tool.capabilities();
 

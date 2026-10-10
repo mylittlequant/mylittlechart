@@ -1,7 +1,7 @@
 //! No-op stub for gate4agent types on wasm32.
 //!
-//! gate4agent has hard non-wasm deps (portable-pty, vt100, vte, rusqlite,
-//! tokio rt-multi-thread). On wasm32 the real crate is absent; this module
+//! gate4agent 0.4.8 does not compile to wasm32 (tokio process, vt100).
+//! On wasm32 the real crate is absent; this module
 //! provides the surface that mlc-app-sidebar-content actually uses so all call
 //! sites compile without change.
 
@@ -44,8 +44,6 @@ pub enum InstanceMode {
 pub enum AgentCli {
     Claude,
     Codex,
-    Gemini,
-    OpenCode,
 }
 
 impl AgentCli {
@@ -53,8 +51,6 @@ impl AgentCli {
         match self {
             AgentCli::Claude    => "claude",
             AgentCli::Codex     => "codex",
-            AgentCli::Gemini    => "gemini",
-            AgentCli::OpenCode  => "opencode",
         }
     }
 
@@ -62,8 +58,6 @@ impl AgentCli {
         match self {
             AgentCli::Claude    => "Claude",
             AgentCli::Codex     => "Codex",
-            AgentCli::Gemini    => "Gemini",
-            AgentCli::OpenCode  => "OpenCode",
         }
     }
 }
@@ -138,8 +132,8 @@ pub enum CliTool {
     #[default]
     ClaudeCode,
     Codex,
-    Gemini,
-    OpenCode,
+    KimiCode,
+    Grok,
 }
 
 impl CliTool {
@@ -147,8 +141,8 @@ impl CliTool {
         let (tool_id, display_name, binary) = match self {
             CliTool::ClaudeCode => ("claude_code", "Claude Code", "claude"),
             CliTool::Codex      => ("codex",       "Codex",       "codex"),
-            CliTool::Gemini     => ("gemini",      "Gemini",      "gemini"),
-            CliTool::OpenCode   => ("opencode",    "OpenCode",    "opencode"),
+            CliTool::KimiCode   => ("kimi",        "Kimi Code",   "kimi"),
+            CliTool::Grok       => ("grok",        "Grok",        "grok"),
         };
         CliCapabilities {
             tool_id:          tool_id.to_string(),
