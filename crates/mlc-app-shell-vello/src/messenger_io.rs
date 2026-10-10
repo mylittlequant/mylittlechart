@@ -16,12 +16,14 @@
 //! driver's own boot sequence (`whoami` -> load records -> running, see
 //! `mlc_messenger::driver`'s own module doc). Once `whoami` resolves a
 //! device id, this module spawns its one dedicated writer thread, which
-//! itself loads `snapshot.bin` + `records.log` from
-//! `<store>/messenger/<device_id>/`, replays them
-//! ([`mlc_messenger::driver::persist_log::replay`]), truncates a torn tail,
-//! compacts if the log has grown past 8 MiB, and hands the resulting
-//! records back through the same completion channel every HTTP response
-//! also uses.
+//! itself opens `records.db` (SQLCipher) at
+//! `<store>/messenger/<device_id>/`. The file key is the vault key, raw,
+//! `PRAGMA key = "x'<64 hex>'"`. Rows are the engine's sealed records.
+//! This module never decrypts them. A directory that still has
+//! `snapshot.bin` / `records.log` and an empty database is imported once
+//! from [`mlc_messenger::driver::persist_log::replay`], then those files
+//! are removed. The loaded records go back through the same completion
+//! channel every HTTP response also uses.
 //!
 //! # Threading
 //!
@@ -30,15 +32,12 @@
 //!   lands in an `std::sync::mpsc` channel, and `wake()` is called so the
 //!   shell knows to call [`MessengerIo::tick`] again soon.
 //! - Persistence: one dedicated OS thread receives `FlushBatch`es in the
-//!   order they were produced, appends each as one
-//!   [`mlc_messenger::driver::persist_log::encode_batch`] frame to
-//!   `records.log`, `sync_data`s, and reports back
-//!   (`flush_done`) through the same completion channel. A failed write cuts
-//!   the torn frame and retries once ([`persist_log::append_frame`]); a
-//!   second failure puts the writer in a failed state (nothing more acked or
-//!   written, `Completion::StorageFailed` -> `MessengerDriver::
-//!   storage_failed`), so the messenger stalls instead of writing frames
-//!   behind a torn one.
+//!   order they were produced and applies each as one SQLCipher
+//!   transaction (upserts and deletes together). Commit is the durability
+//!   barrier. A failed transaction is rolled back and the writer stops
+//!   (`Completion::StorageFailed` -> `MessengerDriver::storage_failed`):
+//!   nothing later is acked or written, so the messenger stalls instead of
+//!   continuing past a batch that did not reach disk.
 //!
 //! # Wiring
 //!
@@ -46,9 +45,7 @@
 //! that, choosing where a `MessengerIo` lives in `App`/`PerWindowState` and
 //! how its `provider()` reaches the UI.
 
-use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
-use std::io::{Seek, SeekFrom, Write};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -56,7 +53,7 @@ use std::thread::JoinHandle;
 
 use zeroize::Zeroizing;
 
-use mlc_messenger::driver::persist_log::{self, LogSink};
+use mlc_messenger::driver::persist_log;
 use mlc_messenger::driver::{DriverRequest, DriverRequestId, MessengerDriver};
 use mlc_messenger::persist::{FlushBatch, RecordKey, SealedRecord};
 use mlc_messenger::provider::SnapshotProvider;
@@ -68,9 +65,8 @@ const SYNC_PATH: &str = "/_matrix/client/v3/sync";
 const SYNC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Compact `records.log` into a fresh `snapshot.bin` once it grows past
-/// this size, at boot (module doc).
-const COMPACTION_THRESHOLD_BYTES: u64 = 8 * 1024 * 1024;
+/// One SQLCipher file per device. The vault key is the file key.
+const STORE_FILE: &str = "records.db";
 
 /// How `MessengerIo`'s HTTP calls authenticate to the homeserver.
 pub enum MessengerAuth {
@@ -117,165 +113,193 @@ enum Completion {
     StorageFailed(String),
 }
 
-/// `records.log` opened for `persist_log::append_frame`. Deliberately NOT
-/// `OpenOptions::append`: on Windows an append-only handle lacks the write
-/// access `set_len` needs to cut a torn frame, so the file is opened for
-/// plain write and every append seeks to the end first.
-struct LogFile(File);
-
-impl LogSink for LogFile {
-    fn byte_len(&mut self) -> std::io::Result<u64> {
-        self.0.metadata().map(|metadata| metadata.len())
-    }
-
-    fn append_synced(&mut self, bytes: &[u8]) -> std::io::Result<()> {
-        self.0.seek(SeekFrom::End(0))?;
-        self.0.write_all(bytes)?;
-        self.0.sync_data()
-    }
-
-    fn truncate(&mut self, len: u64) -> std::io::Result<()> {
-        self.0.set_len(len)?;
-        self.0.seek(SeekFrom::End(0)).map(|_| ())
-    }
-}
-
-fn open_log(path: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create(true).write(true).truncate(false).open(path)
-}
-
 /// One job the writer thread executes, in the order it receives them.
 enum WriterJob {
     Flush(FlushBatch),
 }
 
-/// Reads `snapshot.bin` + `records.log` (either or both may not exist yet),
-/// replays them as one combined byte stream, truncates `records.log` to
-/// drop a torn tail left by an earlier crash, compacts into a fresh
-/// `snapshot.bin` if the log has grown past
-/// [`COMPACTION_THRESHOLD_BYTES`], and returns the resulting records plus
-/// an open, append-mode handle to `records.log` for the writer thread to
-/// keep using.
-fn boot_load(device_dir: &Path) -> (Vec<SealedRecord>, Option<File>) {
-    let _ = fs::create_dir_all(device_dir);
+/// `PRAGMA key` text for the raw 32-byte vault key. SQLCipher reads this
+/// before any other statement. The string is zeroized on drop. It is not
+/// logged.
+fn key_pragma(key: &[u8; 32]) -> Zeroizing<String> {
+    let hex_key = Zeroizing::new(hex::encode(key));
+    Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", hex_key.as_str()))
+}
+
+fn open_store(path: &Path, key: &[u8; 32]) -> Result<rusqlite::Connection, String> {
+    let conn = rusqlite::Connection::open(path).map_err(|error| error.to_string())?;
+    // The key statement has to be first. A wrong key fails on the next
+    // read, not on this statement. Do not include the pragma text in the
+    // error: it contains the key.
+    conn.execute_batch(key_pragma(key).as_str()).map_err(|_| "sqlcipher key statement failed".to_string())?;
+    conn.execute_batch("PRAGMA journal_mode=WAL;").map_err(|_| "sqlcipher file did not open with this key".to_string())?;
+    conn.execute_batch("PRAGMA busy_timeout=5000;").map_err(|error| error.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS sealed (\
+            key TEXT PRIMARY KEY NOT NULL,\
+            bytes BLOB NOT NULL\
+         );",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(conn)
+}
+
+fn load_records(conn: &rusqlite::Connection) -> Result<Vec<SealedRecord>, String> {
+    let mut stmt = conn.prepare("SELECT key, bytes FROM sealed").map_err(|error| error.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(SealedRecord { key: RecordKey::new(row.get::<_, String>(0)?), bytes: row.get::<_, Vec<u8>>(1)? })
+        })
+        .map_err(|error| error.to_string())?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|error| error.to_string())?);
+    }
+    Ok(out)
+}
+
+/// One transaction. Upserts and deletes from the same batch commit
+/// together or not at all. The blob is the sealed record, untouched.
+fn apply_batch(conn: &mut rusqlite::Connection, batch: &FlushBatch) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
+    {
+        let mut upsert = tx
+            .prepare(
+                "INSERT INTO sealed(key, bytes) VALUES (?1, ?2) \
+                 ON CONFLICT(key) DO UPDATE SET bytes = excluded.bytes",
+            )
+            .map_err(|error| error.to_string())?;
+        for record in &batch.records {
+            upsert
+                .execute(rusqlite::params![record.key.as_str(), record.bytes.as_slice()])
+                .map_err(|error| error.to_string())?;
+        }
+        drop(upsert);
+        let mut delete = tx.prepare("DELETE FROM sealed WHERE key = ?1").map_err(|error| error.to_string())?;
+        for key in &batch.deletes {
+            delete.execute(rusqlite::params![key.as_str()]).map_err(|error| error.to_string())?;
+        }
+    }
+    tx.commit().map_err(|error| error.to_string())
+}
+
+fn sealed_count(conn: &rusqlite::Connection) -> Result<i64, String> {
+    conn.query_row("SELECT COUNT(*) FROM sealed", [], |row| row.get(0)).map_err(|error| error.to_string())
+}
+
+/// Reads a pre-SQLCipher `snapshot.bin` + `records.log` into an empty
+/// database, then removes those files. A torn log with no valid record is
+/// left in place. A database that already has rows is left alone.
+fn import_legacy(conn: &mut rusqlite::Connection, device_dir: &Path) -> Result<(), String> {
     let snapshot_path = device_dir.join("snapshot.bin");
     let log_path = device_dir.join("records.log");
-
-    let snapshot_bytes = fs::read(&snapshot_path).unwrap_or_default();
-    let log_bytes = fs::read(&log_path).unwrap_or_default();
-
+    let snapshot_exists = snapshot_path.is_file();
+    let log_exists = log_path.is_file();
+    if !snapshot_exists && !log_exists {
+        return Ok(());
+    }
+    if sealed_count(conn)? > 0 {
+        return Ok(());
+    }
+    let snapshot_bytes = if snapshot_exists { fs::read(&snapshot_path).map_err(|error| error.to_string())? } else { Vec::new() };
+    let log_bytes = if log_exists { fs::read(&log_path).map_err(|error| error.to_string())? } else { Vec::new() };
     let mut combined = Vec::with_capacity(snapshot_bytes.len() + log_bytes.len());
     combined.extend_from_slice(&snapshot_bytes);
     combined.extend_from_slice(&log_bytes);
     let (map, valid_len) = persist_log::replay(&combined);
-
-    // A crash mid-write/mid-sync can only ever leave a torn tail inside
-    // `records.log` itself -- `snapshot.bin` is only ever produced by an
-    // atomic rename (`compact`, below), so it is either fully valid or
-    // fully absent.
-    let valid_log_len = valid_len.saturating_sub(snapshot_bytes.len());
-    if valid_log_len < log_bytes.len() {
-        if let Ok(file) = OpenOptions::new().write(true).open(&log_path) {
-            let _ = file.set_len(valid_log_len as u64);
+    if map.is_empty() && valid_len < combined.len() {
+        return Ok(());
+    }
+    let tx = conn.transaction().map_err(|error| error.to_string())?;
+    {
+        let mut upsert = tx.prepare("INSERT INTO sealed(key, bytes) VALUES (?1, ?2)").map_err(|error| error.to_string())?;
+        for (key, bytes) in &map {
+            upsert.execute(rusqlite::params![key.as_str(), bytes.as_slice()]).map_err(|error| error.to_string())?;
         }
     }
-
-    if log_bytes.len() as u64 > COMPACTION_THRESHOLD_BYTES {
-        // Folds every currently-live record into a fresh `snapshot.bin` and
-        // empties `records.log` -- `map` itself (which records are live)
-        // is unaffected, only where they live on disk.
-        compact(device_dir, &map);
+    tx.commit().map_err(|error| error.to_string())?;
+    if snapshot_exists {
+        let _ = fs::remove_file(&snapshot_path);
     }
-
-    let records: Vec<SealedRecord> = map.into_iter().map(|(key, bytes)| SealedRecord { key, bytes }).collect();
-    let log_file = open_log(&log_path).ok();
-    (records, log_file)
+    if log_exists {
+        let _ = fs::remove_file(&log_path);
+    }
+    let _ = fs::remove_file(device_dir.join("snapshot.bin.tmp"));
+    Ok(())
 }
 
-/// Writes `map` as a fresh `snapshot.bin` (via a `.tmp` file + `fsync` +
-/// atomic rename, so a crash mid-compaction never leaves a half-written
-/// `snapshot.bin` in place) and, only once that succeeds, truncates
-/// `records.log` to empty — the compaction [`boot_load`] triggers past
-/// [`COMPACTION_THRESHOLD_BYTES`].
-fn compact(device_dir: &Path, map: &BTreeMap<RecordKey, Vec<u8>>) {
-    let snapshot_path = device_dir.join("snapshot.bin");
-    let tmp_path = device_dir.join("snapshot.bin.tmp");
-    let log_path = device_dir.join("records.log");
-
-    let bytes = persist_log::encode_snapshot(map);
-    let Ok(mut tmp) = File::create(&tmp_path) else { return };
-    if tmp.write_all(&bytes).is_err() || tmp.sync_all().is_err() {
-        return;
-    }
-    drop(tmp);
-    if fs::rename(&tmp_path, &snapshot_path).is_err() {
-        return;
-    }
-    if let Ok(log_file) = OpenOptions::new().write(true).open(&log_path) {
-        let _ = log_file.set_len(0);
-    }
+fn boot_store(device_dir: &Path, key: &[u8; 32]) -> Result<(Vec<SealedRecord>, rusqlite::Connection), String> {
+    fs::create_dir_all(device_dir).map_err(|error| error.to_string())?;
+    let mut conn = open_store(&device_dir.join(STORE_FILE), key)?;
+    import_legacy(&mut conn, device_dir)?;
+    let records = load_records(&conn)?;
+    Ok((records, conn))
 }
 
 /// The writer thread's own body: loads records once at start, reports them
 /// back, then services [`WriterJob`]s until its channel closes.
-fn writer_thread_main(device_dir: PathBuf, jobs_rx: mpsc::Receiver<WriterJob>, completions_tx: mpsc::Sender<Completion>, wake: Arc<dyn Fn() + Send + Sync>) {
-    let (records, log_file) = boot_load(&device_dir);
+fn writer_thread_main(
+    device_dir: PathBuf,
+    key: Zeroizing<[u8; 32]>,
+    jobs_rx: mpsc::Receiver<WriterJob>,
+    completions_tx: mpsc::Sender<Completion>,
+    wake: Arc<dyn Fn() + Send + Sync>,
+) {
+    let opened = boot_store(&device_dir, &key);
+    let (records, mut conn) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            // No `RecordsLoaded`: an empty load would open the core on a
+            // blank history while the file sits unread.
+            let _ = completions_tx.send(Completion::StorageFailed(error));
+            wake();
+            while jobs_rx.recv().is_ok() {}
+            return;
+        }
+    };
     let _ = completions_tx.send(Completion::RecordsLoaded(records));
     wake();
 
-    let mut log = log_file.map(LogFile);
     // Once storage has failed this thread acks nothing more and drops every
-    // later job unwritten: a frame written behind a possibly-torn one would
-    // be lost on the next boot (`persist_log::append_frame`'s own doc), and
-    // its ratchet state is what already-sent ciphertext depends on. The
-    // unacked batches keep the core from releasing any request that
-    // depends on them, so the messenger stalls instead of diverging.
+    // later job unwritten. The unacked batches keep the core from releasing
+    // any request that depends on them, so the messenger stalls instead of
+    // diverging.
     let mut failed = false;
-    let fail = |reason: String| {
-        let _ = completions_tx.send(Completion::StorageFailed(reason));
-        wake();
-    };
-    if log.is_none() {
-        failed = true;
-        fail("cannot open records.log for writing".to_string());
-    }
-
     while let Ok(WriterJob::Flush(batch)) = jobs_rx.recv() {
         if failed {
             continue;
         }
-        let Some(sink) = log.as_mut() else { continue };
-        match persist_log::append_frame(sink, &persist_log::encode_batch(&batch)) {
+        match apply_batch(&mut conn, &batch) {
             Ok(()) => {
                 let _ = completions_tx.send(Completion::FlushDone(batch.id));
                 wake();
             }
             Err(error) => {
                 failed = true;
-                fail(error.to_string());
+                let _ = completions_tx.send(Completion::StorageFailed(error));
+                wake();
             }
         }
     }
 }
 
-/// Writes `batches` to `<device_dir>/records.log` synchronously, on
-/// whichever thread calls this — [`MessengerIo::stop`]'s own final flush,
-/// after the writer thread has already been drained and joined (so this is
-/// never racing that thread for the same file).
-fn write_batches_sync(device_dir: &Path, batches: &[FlushBatch]) {
+/// Writes `batches` to `records.db` synchronously, on whichever thread
+/// calls this — [`MessengerIo::stop`]'s own final flush, after the writer
+/// thread has already been drained and joined (so this is never racing
+/// that thread for the same file).
+fn write_batches_sync(device_dir: &Path, key: &[u8; 32], batches: &[FlushBatch]) {
     if batches.is_empty() {
         return;
     }
-    let log_path = device_dir.join("records.log");
-    let Ok(file) = open_log(&log_path) else {
-        tracing::warn!("messenger stop: cannot open records.log; {} final batch(es) not written", batches.len());
-        return;
+    let mut conn = match boot_store(device_dir, key) {
+        Ok((_, conn)) => conn,
+        Err(error) => {
+            tracing::warn!("messenger stop: cannot open records.db; {} final batch(es) not written: {error}", batches.len());
+            return;
+        }
     };
-    let mut log = LogFile(file);
-    // Same rule as the writer thread: cut and retry once, and on the first
-    // failure stop -- never write a later batch behind a failed one.
     for batch in batches {
-        if let Err(error) = persist_log::append_frame(&mut log, &persist_log::encode_batch(batch)) {
+        if let Err(error) = apply_batch(&mut conn, batch) {
             tracing::warn!("messenger stop: final write failed at batch {}: {error}", batch.id);
             return;
         }
@@ -285,6 +309,9 @@ fn write_batches_sync(device_dir: &Path, batches: &[FlushBatch]) {
 /// See the module doc.
 pub struct MessengerIo {
     driver: MessengerDriver,
+    /// Copy for the writer thread and for [`MessengerIo::stop`]'s final
+    /// flush. The driver holds its own and zeroizes it on shutdown.
+    vault_key: Zeroizing<[u8; 32]>,
     auth: MessengerAuth,
     base_url: String,
     store: PathBuf,
@@ -314,6 +341,7 @@ impl MessengerIo {
         let (completions_tx, completions_rx) = mpsc::channel();
         Self {
             driver,
+            vault_key: Zeroizing::new(*vault_key),
             auth,
             base_url: config.base_url,
             store: config.store,
@@ -340,6 +368,7 @@ impl MessengerIo {
         let device_dir = self.store.join("messenger").join(device_id);
         let completions_tx = self.completions_tx.clone();
         let wake = Arc::clone(&self.wake);
+        let key = self.vault_key.clone();
         let (jobs_tx, jobs_rx) = mpsc::channel::<WriterJob>();
         let thread_device_dir = device_dir.clone();
         // A spawn failure (OS resource exhaustion) degrades to "no
@@ -348,7 +377,7 @@ impl MessengerIo {
         // was dropped with the never-started closure) instead of a crash.
         self.writer_join = std::thread::Builder::new()
             .name("mlc-messenger-writer".to_string())
-            .spawn(move || writer_thread_main(thread_device_dir, jobs_rx, completions_tx, wake))
+            .spawn(move || writer_thread_main(thread_device_dir, key, jobs_rx, completions_tx, wake))
             .ok();
         self.writer = Some(jobs_tx);
         self.device_dir = Some(device_dir);
@@ -463,7 +492,7 @@ impl MessengerIo {
         }
 
         if let Some(device_dir) = device_dir {
-            write_batches_sync(&device_dir, &batches);
+            write_batches_sync(&device_dir, &self.vault_key, &batches);
         }
     }
 
@@ -475,5 +504,111 @@ impl MessengerIo {
         if let Some(device_dir) = device_dir {
             let _ = fs::remove_dir_all(&device_dir);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn test_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mlc-messenger-store-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn key_byte(byte: u8) -> [u8; 32] {
+        [byte; 32]
+    }
+
+    fn batch(id: u64, records: Vec<(&str, &[u8])>, deletes: &[&str]) -> FlushBatch {
+        FlushBatch {
+            id,
+            records: records
+                .into_iter()
+                .map(|(key, bytes)| SealedRecord { key: RecordKey::new(key), bytes: bytes.to_vec() })
+                .collect(),
+            deletes: deletes.iter().copied().map(RecordKey::new).collect(),
+        }
+    }
+
+    #[test]
+    fn sealed_bytes_roundtrip_and_stay_off_the_raw_pages() {
+        let dir = test_dir("round");
+        let key = key_byte(0x11);
+        let payload = b"sealed-not-plaintext";
+        let mut conn = open_store(&dir.join(STORE_FILE), &key).unwrap();
+        apply_batch(&mut conn, &batch(1, vec![("room/1", payload)], &[])).unwrap();
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        drop(conn);
+        let raw = fs::read(dir.join(STORE_FILE)).unwrap();
+        assert!(!raw.windows(payload.len()).any(|window| window == payload));
+        let conn = open_store(&dir.join(STORE_FILE), &key).unwrap();
+        let loaded = load_records(&conn).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].key.as_str(), "room/1");
+        assert_eq!(loaded[0].bytes, payload);
+        drop(conn);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wrong_key_does_not_open_the_file() {
+        let dir = test_dir("wrong");
+        let path = dir.join(STORE_FILE);
+        let mut conn = open_store(&path, &key_byte(1)).unwrap();
+        apply_batch(&mut conn, &batch(1, vec![("k", b"abc")], &[])).unwrap();
+        drop(conn);
+        assert!(open_store(&path, &key_byte(2)).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_later_delete_removes_the_sealed_row() {
+        let dir = test_dir("delete");
+        let key = key_byte(4);
+        let mut conn = open_store(&dir.join(STORE_FILE), &key).unwrap();
+        apply_batch(&mut conn, &batch(1, vec![("keep", b"aaa"), ("drop", b"bbb")], &[])).unwrap();
+        apply_batch(&mut conn, &batch(2, vec![], &["drop"])).unwrap();
+        let loaded = load_records(&conn).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].key.as_str(), "keep");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_connection_without_a_key_still_reads_plaintext() {
+        // gate4agent opens other processes' sqlite files and never sets a
+        // key. This binary links one SQLCipher build for both. A keyless
+        // connection has to keep reading a plaintext file.
+        let dir = test_dir("plain");
+        let path = dir.join("plain.sqlite");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE t(v TEXT); INSERT INTO t(v) VALUES ('visible');").unwrap();
+        drop(conn);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let value: String = conn.query_row("SELECT v FROM t", [], |row| row.get(0)).unwrap();
+        assert_eq!(value, "visible");
+        drop(conn);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_log_imports_once_and_is_removed() {
+        let dir = test_dir("legacy");
+        let mut map = BTreeMap::new();
+        map.insert(RecordKey::new("k"), b"sealed-legacy".to_vec());
+        fs::write(dir.join("snapshot.bin"), persist_log::encode_snapshot(&map)).unwrap();
+        let (records, conn) = boot_store(&dir, &key_byte(3)).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].bytes, b"sealed-legacy");
+        assert!(!dir.join("snapshot.bin").exists());
+        drop(conn);
+        let (records, conn) = boot_store(&dir, &key_byte(3)).unwrap();
+        drop(conn);
+        assert_eq!(records[0].bytes, b"sealed-legacy");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

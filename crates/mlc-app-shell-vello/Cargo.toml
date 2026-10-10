@@ -30,6 +30,18 @@ mlc-messenger = { path = "../mlc-messenger", package = "mylittlechart-messenger"
 # of `mlc-vault`/`mlc-messenger` themselves, so this adds no new
 # supply-chain surface.
 zeroize = "1"
+# Native messenger file. This shell is not the wasm target. The file holds
+# the engine's sealed records; the engine stays sans-I/O.
+#
+# 0.31, not 0.32: gate4agent 0.2.37 already links rusqlite 0.31
+# (`bundled` -> libsqlite3-sys 0.28). A second libsqlite3-sys cannot be
+# linked into this binary. `bundled-sqlcipher` on this same major builds
+# the SQLCipher amalgamation (it implies `bundled`) and links the system
+# OpenSSL from `nemo/.cargo/config.toml`. Vendored OpenSSL stays off:
+# Git's perl on this machine cannot build it. gate4agent never sets a
+# key, so its plaintext reads stay plaintext.
+rusqlite = { version = "0.31", features = ["bundled-sqlcipher"] }
+hex.workspace = true
 uzor = "=1.5.3"
 vello = "0.9"
 winit = "0.30"
