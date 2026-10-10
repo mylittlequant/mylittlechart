@@ -1,7 +1,7 @@
 //! Indicator bridge.
 //!
 //! Compute rows come from `ContractFactory` plus `Render::rendering`.
-//! The seven host layers come from `HostOverlayId`. There is no signature table.
+//! Host layers come from `HostOverlayId`. There is no signature table.
 
 use mli::contract::{
     Family, HistogramStyle as RenderHistogram, HostOverlayId, OutputType as RenderOutputType,

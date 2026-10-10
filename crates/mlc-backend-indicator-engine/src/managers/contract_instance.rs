@@ -121,13 +121,20 @@ impl ContractInstance {
         );
     }
 
-    /// Bar plus an aggregated buy/sell delta. Only CVD consumes the delta.
-    /// Every other id is fed the bar.
+    /// Bar plus an aggregated buy/sell delta. CVD and Vdelta consume the
+    /// delta. Every other id is fed the bar.
     pub fn feed_bar_with_delta(&mut self, bar: &Bar, delta: Option<(f64, f64)>) {
         if let Some((buy, sell)) = delta {
-            if let ContractFactory::Cvd(core, _) = self.factory.as_mut() {
-                core.update_with_delta(buy, sell);
-                return;
+            match self.factory.as_mut() {
+                ContractFactory::Cvd(core, _) => {
+                    core.update_with_delta(buy, sell);
+                    return;
+                }
+                ContractFactory::Vdelta(core, _) => {
+                    core.update_with_delta(buy, sell);
+                    return;
+                }
+                _ => {}
             }
         }
         self.feed_bar(bar);
