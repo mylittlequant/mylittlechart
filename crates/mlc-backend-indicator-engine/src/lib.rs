@@ -47,12 +47,11 @@
 // (chart-app, panels, sidebar-content, signals/, managers/) keep working
 // with their existing `crate::bar_indicators::...` / `crate::catalog::...`
 // / `crate::types::...` imports.
-pub use mli::bar_indicators;
-pub use mli::catalog;
 pub use mli::core::types;
-/// The stream vocabulary indicators declare their data needs in — a bubble
-/// reads it to know which live feeds to keep alive for its indicators.
-pub use mli::data_loader::stream_kind::StreamKind;
+/// The stream vocabulary indicators declare their data needs in.
+pub use mli::engine::stream_kind::StreamKind;
+pub use mli::engine::indicator_id::IndicatorId;
+pub use IndicatorId as BarIndicatorId;
 
 // Signal system — UI-side feature, NOT in mli. Lives in mlc permanently.
 pub mod signals;
@@ -60,19 +59,12 @@ pub mod signals;
 // Re-exports for convenience (same surface as before; types now resolve
 // to mli's definitions through the module-level pub-uses above).
 pub use mli::{
-    BarIndicatorId,
-    IndicatorValue,
-    IndicatorConfig,
-    IndicatorInstance,
-    MasterIndicatorCatalog,
-    IndicatorSignature,
-    ParamConstraint,
-    ParamValue,
     Bar,
     Tick,
     CalendarService,
     TimeService,
 };
+pub use managers::contract_instance::{ContractInstance as IndicatorInstance, OutputSample};
 
 // Signal system re-exports
 pub use signals::{

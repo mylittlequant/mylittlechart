@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{current_language, ConceptKey};
-use mli::ewa::harmonic::{self, HarmonicLeg};
-use mli::ewa::types::EwaPatternKind;
+use mli::harmonic::{self, HarmonicLeg};
+use mli::harmonic::HarmonicKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -42,9 +42,9 @@ const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
 /// through.
 const PIVOT_NAMES: [&str; 5] = ["X", "A", "B", "C", "D"];
 
-/// Cypher's own identity is fixed — `EwaPatternKind::Cypher` — this
+/// Cypher's own identity is fixed — `HarmonicKind::Cypher` — this
 /// primitive type never needs a field the way `XabcdPattern` does.
-const PATTERN_KIND: EwaPatternKind = EwaPatternKind::Cypher;
+const PATTERN_KIND: HarmonicKind = HarmonicKind::Cypher;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CypherPattern {
@@ -58,7 +58,7 @@ pub struct CypherPattern {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
-    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// Widening delta (`mli::harmonic::widen_band`) applied to every
     /// target leg's own band before matching — defaults to the
     /// vocabulary's own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a
     /// second tolerance constant of this crate's own.
@@ -120,7 +120,7 @@ fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
 
 /// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
 /// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
-/// `mli::ewa::harmonic::targets_for(PATTERN_KIND)`: the leg, its
+/// `mli::harmonic::targets_for(PATTERN_KIND)`: the leg, its
 /// (tolerance-widened) target band, and the measured ratio
 /// ([`measured_ratio`] — the SAME function `render()` uses for its own
 /// on-chart labels), toned by [`harmonic::ratio_matches`] (never a local
@@ -290,7 +290,7 @@ impl Primitive for CypherPattern {
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
             // One label per target leg (AB/XA, AC/XA, CD/XC — Cypher's own
-            // table, `mli::ewa::harmonic::targets_for`), using the SAME
+            // table, `mli::harmonic::targets_for`), using the SAME
             // `measured_ratio` the target-ratio table reads, marked with
             // `guard::VIOLATION_COLOR` when out of band.
             for entry in target_table {
@@ -437,7 +437,7 @@ mod harmonic_tests {
     /// A Cypher-shaped drawing, by construction: AB/XA = 0.5 (in
     /// [0.382, 0.618]), AC/XA = 1.34 (in [1.272, 1.414]), CD/XC = 0.786
     /// (exact) — every leg lands inside its own Cypher target band
-    /// (`mli::ewa::harmonic::CYPHER`, read via `targets_for`, never
+    /// (`mli::harmonic::CYPHER`, read via `targets_for`, never
     /// re-typed here).
     fn cypher_points() -> [(i64, f64); 5] {
         [(0, 0.0), (1_000, 100.0), (2_000, 50.0), (3_000, 234.0), (4_000, 50.076)]

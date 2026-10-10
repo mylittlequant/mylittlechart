@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{current_language, ConceptKey};
-use mli::ewa::harmonic::{self, HarmonicLeg};
-use mli::ewa::types::EwaPatternKind;
+use mli::harmonic::{self, HarmonicLeg};
+use mli::harmonic::HarmonicKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -36,16 +36,16 @@ const MIN_HARMONIC_TOLERANCE: f64 = 0.0;
 const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
 
 /// This primitive's own pivot names, for the six points a Three Drives
-/// target leg can ever name (`mli::ewa::harmonic::THREE_DRIVES`'s own doc:
+/// target leg can ever name (`mli::harmonic::THREE_DRIVES`'s own doc:
 /// "pivots X, 1, A, 2, B, 3") — index-aligned with `points[0..=5]`.
 /// `points[6]` (the pattern's own trailing "end" point) is never a leg
 /// endpoint or reference, matching this primitive's own pre-existing ratio
 /// computation, which never read it either.
 const PIVOT_NAMES: [&str; 6] = ["X", "1", "A", "2", "B", "3"];
 
-/// Three Drives' own identity is fixed — `EwaPatternKind::ThreeDrives` —
+/// Three Drives' own identity is fixed — `HarmonicKind::ThreeDrives` —
 /// this primitive type never needs a field the way `XabcdPattern` does.
-const PATTERN_KIND: EwaPatternKind = EwaPatternKind::ThreeDrives;
+const PATTERN_KIND: HarmonicKind = HarmonicKind::ThreeDrives;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThreeDrives {
@@ -59,7 +59,7 @@ pub struct ThreeDrives {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
-    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// Widening delta (`mli::harmonic::widen_band`) applied to every
     /// target leg's own band before matching — defaults to the
     /// vocabulary's own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a
     /// second tolerance constant of this crate's own.
@@ -117,7 +117,7 @@ fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
 
 /// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
 /// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
-/// `mli::ewa::harmonic::targets_for(PATTERN_KIND)`: the leg, its
+/// `mli::harmonic::targets_for(PATTERN_KIND)`: the leg, its
 /// (tolerance-widened) target band, and the measured ratio
 /// ([`measured_ratio`] — the SAME function `render()` uses for its own
 /// on-chart labels), toned by [`harmonic::ratio_matches`] (never a local
@@ -286,7 +286,7 @@ impl Primitive for ThreeDrives {
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
             // One label per target leg (1A/X1, A2/1A, 2B/A2, B3/2B — Three
-            // Drives' own table, `mli::ewa::harmonic::targets_for`), using
+            // Drives' own table, `mli::harmonic::targets_for`), using
             // the SAME `measured_ratio` the target-ratio table reads,
             // marked with `guard::VIOLATION_COLOR` when out of band.
             for entry in target_table {
@@ -432,7 +432,7 @@ mod harmonic_tests {
 
     /// A Three-Drives-shaped drawing, by construction: 1A/X1 = 0.7,
     /// A2/1A = 1.4, 2B/A2 = 0.7, B3/2B = 1.4 — every leg lands inside its
-    /// own band (`mli::ewa::harmonic::THREE_DRIVES`, read via
+    /// own band (`mli::harmonic::THREE_DRIVES`, read via
     /// `targets_for`, never re-typed here). `points[6]` (the "end" point)
     /// is never read by any leg, matching this primitive's own
     /// pre-existing ratio computation.

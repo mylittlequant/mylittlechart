@@ -1,8 +1,8 @@
 //! `HarmonicScanKind` — the 11 harmonic shapes
-//! `mli::ewa::scan::scan_waves_with_harmonic_tolerance` can find, the SAME
+//! `mli::harmonic::chart_scan::scan_waves_with_harmonic_tolerance` can find, the SAME
 //! shape `elliott::scan_kind::EwaScanKind` already establishes for the
 //! Elliott survey's own kinds table: one place a stable snake_case WIRE id,
-//! a display label, and the `mli::ewa::types::EwaPatternKind` this scanner
+//! a display label, and the `mli::ewa::types::HarmonicKind` this scanner
 //! asks for map to each other.
 //!
 //! The 11 ids match `patterns::xabcd_pattern::XabcdHarmonicKind::as_str`'s
@@ -22,7 +22,7 @@
 //! `HarmonicScan` exists at all.
 
 use crate::i18n::{ConceptKey, Language, PrimitiveNameKey};
-use mli::ewa::types::EwaPatternKind;
+use mli::harmonic::HarmonicKind;
 
 /// One of the 11 harmonic shapes `HarmonicScan` can survey for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,36 +80,36 @@ impl HarmonicScanKind {
         Self::ALL.into_iter().find(|k| k.id() == id)
     }
 
-    /// The `mli::ewa::types::EwaPatternKind` this scan kind asks
+    /// The `mli::ewa::types::HarmonicKind` this scan kind asks
     /// `scan_waves_with_harmonic_tolerance` for. Every variant name here
-    /// matches its `EwaPatternKind` counterpart exactly — a plain rename,
+    /// matches its `HarmonicKind` counterpart exactly — a plain rename,
     /// never a lossy mapping.
-    pub fn as_ewa_kind(self) -> EwaPatternKind {
+    pub fn as_harmonic_kind(self) -> HarmonicKind {
         match self {
-            Self::Gartley => EwaPatternKind::Gartley,
-            Self::Bat => EwaPatternKind::Bat,
-            Self::AltBat => EwaPatternKind::AltBat,
-            Self::Butterfly => EwaPatternKind::Butterfly,
-            Self::Crab => EwaPatternKind::Crab,
-            Self::DeepCrab => EwaPatternKind::DeepCrab,
-            Self::Shark => EwaPatternKind::Shark,
-            Self::Cypher => EwaPatternKind::Cypher,
-            Self::Abcd => EwaPatternKind::Abcd,
-            Self::ThreeDrives => EwaPatternKind::ThreeDrives,
-            Self::FiveZero => EwaPatternKind::FiveZero,
+            Self::Gartley => HarmonicKind::Gartley,
+            Self::Bat => HarmonicKind::Bat,
+            Self::AltBat => HarmonicKind::AltBat,
+            Self::Butterfly => HarmonicKind::Butterfly,
+            Self::Crab => HarmonicKind::Crab,
+            Self::DeepCrab => HarmonicKind::DeepCrab,
+            Self::Shark => HarmonicKind::Shark,
+            Self::Cypher => HarmonicKind::Cypher,
+            Self::Abcd => HarmonicKind::Abcd,
+            Self::ThreeDrives => HarmonicKind::ThreeDrives,
+            Self::FiveZero => HarmonicKind::FiveZero,
         }
     }
 
-    /// The reverse of [`Self::as_ewa_kind`] — used to label a resolved hit's
-    /// own `EwaPatternKind` back on the Hits table's "Kind" column. `None`
-    /// for any `EwaPatternKind` outside the 11 this scan enumerates (never
+    /// The reverse of [`Self::as_harmonic_kind`] — used to label a resolved hit's
+    /// own `HarmonicKind` back on the Hits table's "Kind" column. `None`
+    /// for any `HarmonicKind` outside the 11 this scan enumerates (never
     /// reachable for a hit `HarmonicScan::resolved_scan` actually produced,
     /// since it only ever asks `scan_waves_with_harmonic_tolerance` for
     /// kinds drawn from [`Self::ALL`] — an `Option` return rather than a
     /// panic all the same, per this crate's own "never panic on an
     /// unexpected id" rule).
-    pub fn from_ewa_kind(kind: EwaPatternKind) -> Option<Self> {
-        Self::ALL.into_iter().find(|k| k.as_ewa_kind() == kind)
+    pub fn from_harmonic_kind(kind: HarmonicKind) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_harmonic_kind() == kind)
     }
 
     /// Display label. The 7 Carney-named kinds reuse `ConceptKey::
@@ -164,12 +164,11 @@ mod tests {
     }
 
     #[test]
-    fn as_ewa_kind_and_from_ewa_kind_are_inverse() {
+    fn as_harmonic_kind_and_from_harmonic_kind_are_inverse() {
         for kind in HarmonicScanKind::ALL {
-            assert_eq!(HarmonicScanKind::from_ewa_kind(kind.as_ewa_kind()), Some(kind));
+            assert_eq!(HarmonicScanKind::from_harmonic_kind(kind.as_harmonic_kind()), Some(kind));
         }
-        assert_eq!(HarmonicScanKind::from_ewa_kind(EwaPatternKind::Xabcd), None);
-        assert_eq!(HarmonicScanKind::from_ewa_kind(EwaPatternKind::Impulse), None);
+        assert_eq!(HarmonicScanKind::from_harmonic_kind(HarmonicKind::Xabcd), None);
     }
 
     #[test]

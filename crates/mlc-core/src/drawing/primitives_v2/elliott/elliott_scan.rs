@@ -30,7 +30,7 @@ use super::super::{
     RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, Tone, WaveDegree, parse_table_cell_id},
 };
-use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_hit, ResolvedWaveHit};
+use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_hit, ResolvedWaveHit, ScannedKind};
 use super::super::scan_shape::{ScanShape, render_scan_bracket};
 use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 use super::scan_kind::{EwaScanKind, default_all_kind_ids};
@@ -71,7 +71,7 @@ pub struct ElliottScan {
     pub p2: f64,
     #[serde(default = "default_coverage")]
     pub coverage: String,
-    /// Per-drawing pivot sensitivity fed to `mli::ewa::swing::extract_pivots`
+    /// Per-drawing pivot sensitivity fed to `mli::ewa::chart_swing::extract_pivots`
     /// — arc §2's own explicit ruling: NOT `EwaEngineConfig` (that struct
     /// only seeds this field's STARTING value, at construction, and is
     /// never read again).
@@ -166,8 +166,8 @@ impl ElliottScan {
         let Some((start, end)) = self.resolved_window(bars) else { return Vec::new() };
         let (window_bars, local_range) = ewa_scan_window(bars, start, end);
         let ohlc: Vec<(f64, f64, f64, f64)> = window_bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, self.swing_n.max(1));
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, self.swing_n.max(1));
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
         let kinds: Vec<mli::ewa::types::EwaPatternKind> =
             self.enabled_kinds.iter().filter_map(|id| EwaScanKind::from_id(id)).map(|k| k.as_ewa_kind()).collect();
         mli::ewa::scan::scan_waves(&pivots, &segments, &kinds, local_range)
@@ -187,7 +187,7 @@ impl ElliottScan {
         EwaScanKind::ALL
             .iter()
             .map(|&kind| {
-                let hits = self.cached_hits.iter().filter(|h| h.kind == kind.as_ewa_kind()).count();
+                let hits = self.cached_hits.iter().filter(|h| h.kind == ScannedKind::Elliott(kind.as_ewa_kind())).count();
                 vec![
                     TableCell::EditableCheck(self.enabled(kind)),
                     TableCell::Text(kind.label(lang).to_string()),
@@ -210,7 +210,7 @@ impl ElliottScan {
         self.cached_hits
             .iter()
             .map(|hit| {
-                let kind_label = EwaScanKind::from_ewa_kind(hit.kind).map(|k| k.label(lang).to_string()).unwrap_or_default();
+                let kind_label = hit.kind.elliott().and_then(EwaScanKind::from_ewa_kind).map(|k| k.label(lang).to_string()).unwrap_or_default();
                 let tone = if hit.score >= 0.7 { Tone::Good } else { Tone::Neutral };
                 vec![
                     TableCell::Text(kind_label),
@@ -744,14 +744,14 @@ mod tests {
         let hits = scan.resolved_scan(&bars);
 
         let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, 2);
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, 2);
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
         let direct =
             mli::ewa::scan::scan_waves(&pivots, &segments, &[mli::ewa::types::EwaPatternKind::Impulse], 0..bars.len());
 
         assert!(!direct.is_empty(), "fixture must actually contain a textbook impulse");
         assert_eq!(hits.len(), direct.len());
-        assert_eq!(hits[0].kind, mli::ewa::types::EwaPatternKind::Impulse);
+        assert_eq!(hits[0].kind, super::ScannedKind::Elliott(mli::ewa::types::EwaPatternKind::Impulse));
         assert_eq!(hits[0].points.len(), direct[0].pivots.len());
     }
 

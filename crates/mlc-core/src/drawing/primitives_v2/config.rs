@@ -1706,8 +1706,8 @@ pub enum PropertyGroup {
     /// (`ConceptKey::TargetRatiosGroupTitle`) — the harmonic guard's own
     /// `PropertyType::Table` (`mylittlechart-core`'s
     /// `drawing::primitives_v2::patterns` harmonic wiring, wired against
-    /// `mli::ewa::harmonic::targets_for`): per leg, its target band and
-    /// its measured ratio, toned by `mli::ewa::harmonic::ratio_matches`.
+    /// `mli::harmonic::targets_for`): per leg, its target band and
+    /// its measured ratio, toned by `mli::harmonic::ratio_matches`.
     /// USED to be in [`Self`]'s own "deliberately not here" list (see this
     /// enum's own doc) — `PropertyType::Table` giving it a real shape is
     /// exactly the precedent [`Self::CustomWaveLabels`] already set.

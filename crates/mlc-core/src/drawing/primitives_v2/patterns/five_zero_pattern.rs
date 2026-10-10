@@ -14,8 +14,8 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{current_language, ConceptKey};
-use mli::ewa::harmonic::{self, HarmonicLeg};
-use mli::ewa::types::EwaPatternKind;
+use mli::harmonic::{self, HarmonicLeg};
+use mli::harmonic::HarmonicKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -49,12 +49,12 @@ const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
 /// This primitive's own pivot names, in point-index order — Duddella's own
 /// 6-point notation (`mli::ewa::harmonic`'s own doc: "6 points `0-X-A-B-C-D`").
 /// `points[0]` (the leading `"0"`) anchors the window but carries no ratio
-/// constraint of its own in `mli::ewa::harmonic::targets_for`'s table.
+/// constraint of its own in `mli::harmonic::targets_for`'s table.
 const PIVOT_NAMES: [&str; 6] = ["0", "X", "A", "B", "C", "D"];
 
-/// 5-0's own identity is fixed — `EwaPatternKind::FiveZero` — this primitive
+/// 5-0's own identity is fixed — `HarmonicKind::FiveZero` — this primitive
 /// type never needs a field the way `XabcdPattern` does.
-const PATTERN_KIND: EwaPatternKind = EwaPatternKind::FiveZero;
+const PATTERN_KIND: HarmonicKind = HarmonicKind::FiveZero;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FiveZeroPattern {
@@ -70,7 +70,7 @@ pub struct FiveZeroPattern {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
-    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// Widening delta (`mli::harmonic::widen_band`) applied to every
     /// target leg's own band before matching — defaults to the vocabulary's
     /// own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a second
     /// tolerance constant of this crate's own.
@@ -128,7 +128,7 @@ fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
 
 /// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
 /// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
-/// `mli::ewa::harmonic::targets_for(PATTERN_KIND)`: the leg, its
+/// `mli::harmonic::targets_for(PATTERN_KIND)`: the leg, its
 /// (tolerance-widened) target band, and the measured ratio
 /// ([`measured_ratio`] — the SAME function `render()` uses for its own
 /// on-chart labels), toned by [`harmonic::ratio_matches`] (never a local
@@ -285,7 +285,7 @@ impl Primitive for FiveZeroPattern {
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
             // One label per target leg (AB/XA, BC/AB, CD/BC — 5-0's own
-            // table, `mli::ewa::harmonic::targets_for`), using the SAME
+            // table, `mli::harmonic::targets_for`), using the SAME
             // `measured_ratio` the target-ratio table reads, marked with
             // `guard::VIOLATION_COLOR` when out of band.
             for entry in target_table {

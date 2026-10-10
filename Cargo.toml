@@ -91,8 +91,6 @@ digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
 digdigdig3-station = { path = "../digdigdig3/crates/digdigdig3-station" }
 digdigdig3-core = { path = "../digdigdig3/crates/dig3-core" }
 # Local mli (mylittleindicators) path build — same policy as uzor/dig3.
-# Pin in mlc-backend-indicator-engine/Cargo.toml stays at the published
-# 0.1.8; the patch resolves it to the working tree so in-flight catalog
-# changes (e.g. the overlay_* opaque overlay ids) are picked up without a
-# publish round-trip. Keep the pin == published mli version on every bump.
-mylittleindicators = { path = "../mylittleindicators" }
+# The mli-contract branch is a virtual workspace; the package is crates/mli.
+# Host pins are 0.2.0. mlc-promo's published =0.1.8 pin is not in this workspace.
+mylittleindicators = { path = "../mylittleindicators/crates/mli" }

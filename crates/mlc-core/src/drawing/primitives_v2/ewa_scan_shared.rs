@@ -22,7 +22,7 @@ use super::Primitive;
 /// newer one is silently dropped before `scan_waves`/
 /// `scan_waves_with_harmonic_tolerance` ever apply their own
 /// `completion_range` filter). [`ElliottScan`]/[`HarmonicScan`] used to feed
-/// `mli::ewa::swing::extract_pivots` the WHOLE loaded bar series on every
+/// `mli::ewa::chart_swing::extract_pivots` the WHOLE loaded bar series on every
 /// call (mirroring `CandlePatternScan`'s own "whole series" shape, which is
 /// safe for that scan only because its own `mli::events::candle_pattern`
 /// detector carries no such cap) — on any real multi-month/year chart that
@@ -82,9 +82,33 @@ pub fn ewa_scan_window(bars: &[Bar], start: usize, end: usize) -> (&[Bar], Range
 /// Shared by BOTH `ElliottScan` and `HarmonicScan`'s own `cached_hits` — the
 /// SAME "no parallel vocabularies" reasoning this module's own doc gives for
 /// [`build_wave_primitive`] itself.
+/// Elliott and harmonic scans share one hit record. The kind stays the
+/// enum that scan actually returned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScannedKind {
+    Elliott(mli::ewa::types::EwaPatternKind),
+    Harmonic(mli::harmonic::HarmonicKind),
+}
+
+impl ScannedKind {
+    pub fn elliott(self) -> Option<mli::ewa::types::EwaPatternKind> {
+        match self {
+            Self::Elliott(kind) => Some(kind),
+            Self::Harmonic(_) => None,
+        }
+    }
+
+    pub fn harmonic(self) -> Option<mli::harmonic::HarmonicKind> {
+        match self {
+            Self::Harmonic(kind) => Some(kind),
+            Self::Elliott(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedWaveHit {
-    pub kind: mli::ewa::types::EwaPatternKind,
+    pub kind: ScannedKind,
     pub points: Vec<(i64, f64)>,
     pub score: f64,
 }
@@ -104,14 +128,57 @@ pub struct ResolvedWaveHit {
 /// place a raw `EwaWaveHit` becomes a [`ResolvedWaveHit`], never forked.
 pub fn resolve_hit(
     hit: mli::ewa::scan::EwaWaveHit,
-    pivots: &[mli::ewa::swing::EwaSwingPivot],
+    pivots: &[mli::ewa::chart_swing::EwaSwingPivot],
     bars: &[Bar],
     shape: ScanShape,
     p1: f64,
     p2: f64,
 ) -> Option<ResolvedWaveHit> {
-    let mut points = Vec::with_capacity(hit.pivots.len());
-    for &idx in &hit.pivots {
+    resolve_points(
+        &hit.pivots,
+        hit.score,
+        ScannedKind::Elliott(hit.kind),
+        pivots,
+        bars,
+        shape,
+        p1,
+        p2,
+    )
+}
+
+/// Same pivot mapping as [`resolve_hit`], for a harmonic chart-scan hit.
+pub fn resolve_harmonic_hit(
+    hit: mli::harmonic::chart_scan::HarmonicWaveHit,
+    pivots: &[mli::ewa::chart_swing::EwaSwingPivot],
+    bars: &[Bar],
+    shape: ScanShape,
+    p1: f64,
+    p2: f64,
+) -> Option<ResolvedWaveHit> {
+    resolve_points(
+        &hit.pivots,
+        hit.score,
+        ScannedKind::Harmonic(hit.kind),
+        pivots,
+        bars,
+        shape,
+        p1,
+        p2,
+    )
+}
+
+fn resolve_points(
+    pivot_idxs: &[usize],
+    score: f64,
+    kind: ScannedKind,
+    pivots: &[mli::ewa::chart_swing::EwaSwingPivot],
+    bars: &[Bar],
+    shape: ScanShape,
+    p1: f64,
+    p2: f64,
+) -> Option<ResolvedWaveHit> {
+    let mut points = Vec::with_capacity(pivot_idxs.len());
+    for &idx in pivot_idxs {
         let pivot = pivots.iter().find(|p| p.index == idx)?;
         let bar = bars.get(idx)?;
         points.push((bar.timestamp * 1000, pivot.price));
@@ -120,7 +187,7 @@ pub fn resolve_hit(
     if !price_band_filter(shape, p1, p2, representative_price) {
         return None;
     }
-    Some(ResolvedWaveHit { kind: hit.kind, points, score: hit.score })
+    Some(ResolvedWaveHit { kind, points, score })
 }
 
 fn arr6(p: &[(i64, f64)]) -> [(i64, f64); 6] {
@@ -154,8 +221,8 @@ fn arr4(p: &[(i64, f64)]) -> [(i64, f64); 4] {
 /// own match arm has already narrowed `kind` to — the trailing
 /// `Unclassified` fallback is unreachable from that call site, never
 /// panics on one anyway.
-fn xabcd_kind_of(kind: mli::ewa::types::EwaPatternKind) -> XabcdHarmonicKind {
-    use mli::ewa::types::EwaPatternKind as K;
+fn xabcd_kind_of(kind: mli::harmonic::HarmonicKind) -> XabcdHarmonicKind {
+    use mli::harmonic::HarmonicKind as K;
     match kind {
         K::Gartley => XabcdHarmonicKind::Gartley,
         K::Bat => XabcdHarmonicKind::Bat,
@@ -206,6 +273,18 @@ fn three_drives_from_pivots(points: &[(i64, f64)], color: &str) -> Option<Box<dy
 /// future kind addition fails loudly here instead of silently rendering
 /// nothing).
 pub fn build_wave_primitive(
+    kind: ScannedKind,
+    points: &[(i64, f64)],
+    color: &str,
+    degree: WaveDegree,
+) -> Option<Box<dyn Primitive>> {
+    match kind {
+        ScannedKind::Elliott(kind) => build_elliott_primitive(kind, points, color, degree),
+        ScannedKind::Harmonic(kind) => build_harmonic_primitive(kind, points, color),
+    }
+}
+
+fn build_elliott_primitive(
     kind: mli::ewa::types::EwaPatternKind,
     points: &[(i64, f64)],
     color: &str,
@@ -265,6 +344,17 @@ pub fn build_wave_primitive(
             p.degree = degree;
             Some(Box::new(p))
         }
+        _ => None,
+    }
+}
+
+fn build_harmonic_primitive(
+    kind: mli::harmonic::HarmonicKind,
+    points: &[(i64, f64)],
+    color: &str,
+) -> Option<Box<dyn Primitive>> {
+    use mli::harmonic::HarmonicKind as K;
+    match kind {
         K::Gartley | K::Bat | K::AltBat | K::Butterfly | K::Crab | K::DeepCrab | K::Shark => {
             let mut p = XabcdPattern::new(arr5(points), color);
             p.pattern_kind = xabcd_kind_of(kind);
@@ -280,7 +370,7 @@ pub fn build_wave_primitive(
             }
             Some(Box::new(FiveZeroPattern::new(a, color)))
         }
-        _ => None,
+        K::Xabcd => None,
     }
 }
 
@@ -339,61 +429,62 @@ mod tests {
         (0..6).map(|i| (i as i64 * 1_000, 100.0 + i as f64 * 10.0)).collect()
     }
 
-    /// The 19 kinds this arc actually scans (8 Elliott + 11 harmonic — see
-    /// this brief's own "Grounding correction"), each paired with the
-    /// `type_id()` its own match arm must produce.
-    const SCANNED_KINDS: &[(mli::ewa::types::EwaPatternKind, &str)] = {
-        use mli::ewa::types::EwaPatternKind as K;
-        &[
-            (K::Impulse, "elliott_impulse"),
-            (K::LeadingDiagonalContracting, "elliott_impulse"),
-            (K::LeadingDiagonalExpanding, "elliott_impulse"),
-            (K::EndingDiagonalContracting, "elliott_impulse"),
-            (K::EndingDiagonalExpanding, "elliott_impulse"),
-            (K::Zigzag, "elliott_correction"),
-            (K::Flat, "elliott_correction"),
-            (K::Triangle, "elliott_triangle"),
-            (K::Gartley, "xabcd_pattern"),
-            (K::Bat, "xabcd_pattern"),
-            (K::AltBat, "xabcd_pattern"),
-            (K::Butterfly, "xabcd_pattern"),
-            (K::Crab, "xabcd_pattern"),
-            (K::DeepCrab, "xabcd_pattern"),
-            (K::Shark, "xabcd_pattern"),
-            (K::Cypher, "cypher_pattern"),
-            (K::Abcd, "abcd_pattern"),
-            (K::ThreeDrives, "three_drives"),
-            (K::FiveZero, "five_zero_pattern"),
-        ]
-    };
+    fn assert_built(kind: ScannedKind, expected_type_id: &str, points: &[(i64, f64)]) {
+        let built = build_wave_primitive(kind, points, "#2196F3", WaveDegree::Intermediate)
+            .unwrap_or_else(|| panic!("{kind:?} must build a primitive"));
+        assert_eq!(
+            built.type_id(),
+            expected_type_id,
+            "{kind:?} should build a {expected_type_id}, got {}",
+            built.type_id()
+        );
+        let built_points = built.points();
+        if matches!(kind, ScannedKind::Harmonic(mli::harmonic::HarmonicKind::ThreeDrives)) {
+            assert_eq!(&built_points[..6], &points[..6], "{kind:?}'s first six points must match the pivots given");
+            assert_eq!(built_points[6], points[5], "{kind:?}'s 7th point must repeat the 6th");
+        } else {
+            let expected_len = built_points.len();
+            assert_eq!(
+                built_points,
+                points[..expected_len],
+                "{kind:?}'s own points must match the pivots it was given"
+            );
+        }
+    }
 
     #[test]
     fn every_scanned_kind_builds_the_expected_concrete_type_with_matching_points() {
+        use mli::ewa::types::EwaPatternKind as E;
+        use mli::harmonic::HarmonicKind as H;
         let points = synthetic_points();
-        for &(kind, expected_type_id) in SCANNED_KINDS {
-            let built = build_wave_primitive(kind, &points, "#2196F3", WaveDegree::Intermediate)
-                .unwrap_or_else(|| panic!("{kind:?} must build a primitive"));
-            assert_eq!(
-                built.type_id(),
-                expected_type_id,
-                "{kind:?} should build a {expected_type_id}, got {}",
-                built.type_id()
-            );
-            let built_points = built.points();
-            if kind == mli::ewa::types::EwaPatternKind::ThreeDrives {
-                // mlc's own 7th point is a repeat of the 6th pivot, never a
-                // 7th pivot mli has — see `three_drives_from_pivots`'s own
-                // doc for why.
-                assert_eq!(&built_points[..6], &points[..6], "{kind:?}'s first six points must match the pivots given");
-                assert_eq!(built_points[6], points[5], "{kind:?}'s 7th point must repeat the 6th");
-            } else {
-                let expected_len = built_points.len();
-                assert_eq!(
-                    built_points,
-                    points[..expected_len],
-                    "{kind:?}'s own points must match the pivots it was given"
-                );
-            }
+        let elliott = [
+            (E::Impulse, "elliott_impulse"),
+            (E::LeadingDiagonalContracting, "elliott_impulse"),
+            (E::LeadingDiagonalExpanding, "elliott_impulse"),
+            (E::EndingDiagonalContracting, "elliott_impulse"),
+            (E::EndingDiagonalExpanding, "elliott_impulse"),
+            (E::Zigzag, "elliott_correction"),
+            (E::Flat, "elliott_correction"),
+            (E::Triangle, "elliott_triangle"),
+        ];
+        for (kind, type_id) in elliott {
+            assert_built(ScannedKind::Elliott(kind), type_id, &points);
+        }
+        let harmonic = [
+            (H::Gartley, "xabcd_pattern"),
+            (H::Bat, "xabcd_pattern"),
+            (H::AltBat, "xabcd_pattern"),
+            (H::Butterfly, "xabcd_pattern"),
+            (H::Crab, "xabcd_pattern"),
+            (H::DeepCrab, "xabcd_pattern"),
+            (H::Shark, "xabcd_pattern"),
+            (H::Cypher, "cypher_pattern"),
+            (H::Abcd, "abcd_pattern"),
+            (H::ThreeDrives, "three_drives"),
+            (H::FiveZero, "five_zero_pattern"),
+        ];
+        for (kind, type_id) in harmonic {
+            assert_built(ScannedKind::Harmonic(kind), type_id, &points);
         }
     }
 
@@ -421,12 +512,11 @@ mod tests {
             K::DoubleThree,
             K::TripleCombo,
             K::TripleThree,
-            K::Xabcd,
             K::Correction,
         ];
         for kind in excluded {
             assert!(
-                build_wave_primitive(kind, &points, "#2196F3", WaveDegree::Intermediate).is_none(),
+                build_wave_primitive(ScannedKind::Elliott(kind), &points, "#2196F3", WaveDegree::Intermediate).is_none(),
                 "{kind:?} must build nothing — scan_waves never produces it"
             );
         }

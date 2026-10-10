@@ -27,7 +27,7 @@ use std::sync::{OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
-use mli::ewa::harmonic::DEFAULT_HARMONIC_TOLERANCE;
+use mli::harmonic::DEFAULT_HARMONIC_TOLERANCE;
 
 use crate::drawing::primitives_v2::patterns::default_all_harmonic_kind_ids;
 
@@ -35,7 +35,7 @@ use crate::drawing::primitives_v2::patterns::default_all_harmonic_kind_ids;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HarmonicEngineConfig {
     /// A freshly placed `HarmonicScan`'s own starting `tolerance` (widening
-    /// delta applied to every target leg's own band, `mli::ewa::harmonic::
+    /// delta applied to every target leg's own band, `mli::harmonic::
     /// widen_band`). Default [`DEFAULT_HARMONIC_TOLERANCE`] — the SAME
     /// vocabulary-own default `XabcdPattern::harmonic_tolerance`/
     /// `FiveZeroPattern::harmonic_tolerance` already seed at construction,

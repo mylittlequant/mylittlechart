@@ -3,14 +3,16 @@
 //! A SignalProfile defines which signals an indicator can generate
 //! and how they should be detected.
 
-use crate::bar_indicators::bar_indicator_id::BarIndicatorId;
+use mli::engine::contract_engine::{output_ids_of, IndicatorOutputId};
+
+use crate::IndicatorId;
 use super::config::{DetectorConfig, DetectorParams, ValueSource};
 
 /// A signal profile defines the signal generation rules for an indicator type
 #[derive(Debug, Clone)]
 pub struct SignalProfile {
-    /// Indicator ID this profile is for
-    pub indicator_id: BarIndicatorId,
+    /// Primary output this profile watches.
+    pub indicator_id: IndicatorOutputId,
 
     /// Display name for this profile
     pub name: String,
@@ -24,7 +26,11 @@ pub struct SignalProfile {
 
 impl SignalProfile {
     /// Create a new empty signal profile
-    pub fn new(indicator_id: BarIndicatorId, name: impl Into<String>) -> Self {
+    pub fn new(indicator_id: IndicatorId, name: impl Into<String>) -> Self {
+        let indicator_id = output_ids_of(indicator_id)
+            .first()
+            .copied()
+            .unwrap_or_else(|| panic!("signal profile requires a contract output for {indicator_id:?}"));
         Self {
             indicator_id,
             name: name.into(),
@@ -166,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_profile_creation() {
-        let profile = SignalProfile::new(BarIndicatorId::Rsi, "RSI Default Profile")
+        let profile = SignalProfile::new(IndicatorId::Rsi, "RSI Default Profile")
             .with_description("Standard RSI signals with 70/30 thresholds")
             .with_detector(DetectorConfig::threshold(
                 "ob_os",
@@ -176,14 +182,14 @@ mod tests {
                 30.0,
             ));
 
-        assert_eq!(profile.indicator_id, BarIndicatorId::Rsi);
+        assert_eq!(profile.indicator_id.indicator(), IndicatorId::Rsi);
         assert_eq!(profile.name, "RSI Default Profile");
         assert_eq!(profile.detectors.len(), 1);
     }
 
     #[test]
     fn test_profile_detector_management() {
-        let mut profile = SignalProfile::new(BarIndicatorId::Rsi, "RSI Profile")
+        let mut profile = SignalProfile::new(IndicatorId::Rsi, "RSI Profile")
             .with_detector(DetectorConfig::threshold(
                 "ob_os",
                 "Overbought/Oversold",
@@ -220,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_profile_with_only() {
-        let profile = SignalProfile::new(BarIndicatorId::Macd, "MACD Profile")
+        let profile = SignalProfile::new(IndicatorId::Macd, "MACD Profile")
             .with_detector(DetectorConfig::crossover(
                 "signal_cross",
                 "Signal Line Cross",

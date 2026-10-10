@@ -1,446 +1,186 @@
 //! Indicator Calculator
 //!
-//! Bridges indicator instances with the computational engine.
-//! Uses BarIndicatorId directly for fast access (no string parsing!).
-//!
-//! `build_compute_instance` / `feed_bar` / `extract_single_outputs` /
-//! `params_fingerprint` are `pub` (not `pub(crate)`) because their sole
-//! caller, `IndicatorManager`, moved out to `mlc-backend` in the 3.7a
-//! manager lift — this crate now exposes them as its incremental-recalc
-//! compute primitives.
+//! Builds a boxed [`ContractFactory`](mli::engine::contract_engine::ContractFactory)
+//! and reads [`Render`](mli::contract::Render) output names. The chart stores
+//! the box. The factory itself stays box-free.
 
 use std::collections::HashMap;
-use crate::{
-    BarIndicatorId, IndicatorConfig, IndicatorInstance as ComputeInstance,
-    IndicatorValue as ComputeValue,
-};
-use crate::bar_indicators::ohlcv_field::OhlcvField;
-use crate::catalog::{ValueAdapter, get_rendering};
-use crate::signals::{rules::{SignalEngine, default_profile}, signal::Signal};
 
-use crate::Bar;
+use super::contract_instance::{ContractInstance, OutputSample};
 use super::indicator_manager::IndicatorValue;
 use super::stream_event::StreamEvent;
+use crate::signals::rules::{default_profile, SignalEngine};
+use crate::signals::signal::Signal;
+use crate::Bar;
+use crate::IndicatorId;
 
-/// Result of indicator calculation including values and signals
+/// Result of indicator calculation including values and signals.
 pub struct CalculationResult {
-    /// Output values by name
     pub values: HashMap<String, Vec<f64>>,
-    /// Generated signals
     pub signals: Vec<Signal>,
 }
 
-/// Calculator that computes indicator values using zengeld-chart-indicators
+/// Calculator that drives the contract factory.
 pub struct IndicatorCalculator;
 
 impl IndicatorCalculator {
-    /// Calculate indicator values using BarIndicatorId directly (no string parsing!)
+    /// Calculate one indicator over `bars`.
     ///
-    /// This is the correct approach - uses typed enum for fast factory access.
-    /// Returns a HashMap of output_name -> Vec<f64> for rendering.
-    ///
-    /// `deltas`, when present, must be the same length/order as `bars` —
-    /// `(buy_volume, sell_volume)` per bar. Real-delta-aware variants (CVD,
-    /// VolumeDelta) consume it via `update_bar_with_delta`; every other
-    /// variant falls through to the plain `update_bar` path regardless.
+    /// `deltas`, when present, must match `bars`. CVD consumes
+    /// `(buy_volume, sell_volume)`. Every other id is fed the bar.
     pub fn calculate_with_id(
-        indicator_id: BarIndicatorId,
+        indicator_id: IndicatorId,
         params: &HashMap<String, IndicatorValue>,
         bars: &[Bar],
         deltas: Option<&[(f64, f64)]>,
     ) -> Option<HashMap<String, Vec<f64>>> {
-        // Extract periods from params
-        let periods = Self::extract_periods(params);
-
-        // Create config using BarIndicatorId directly
-        let mut config = IndicatorConfig::new(
-            indicator_id,
-            format!("{:?}", indicator_id), // name for debugging
-            periods,
-        );
-
-        // Add additional params (multipliers, etc.)
-        Self::add_additional_params(&mut config, params);
-
-        // Create compute instance (NO Box::new - Factory already boxes large variants!)
-        let mut instance = ComputeInstance::create(&config).ok()?;
-
-        // Get rendering metadata to know output names
-        // Now uses BarIndicatorId directly - no string conversion needed!
-        let rendering = get_rendering(indicator_id);
-
-        // Calculate values for each bar
-        let mut all_values: Vec<ComputeValue> = Vec::with_capacity(bars.len());
-
+        let mut instance = Self::build_compute_instance(indicator_id, params)?;
+        let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
         for (i, bar) in bars.iter().enumerate() {
-            let value = match deltas.and_then(|d| d.get(i)) {
-                Some(&(buy, sell)) => instance.update_bar_with_delta(
-                    bar.open,
-                    bar.high,
-                    bar.low,
-                    bar.close,
-                    bar.volume,
-                    buy,
-                    sell,
-                    Some(bar.time),
-                ),
-                None => instance.update_bar(
-                    bar.open,
-                    bar.high,
-                    bar.low,
-                    bar.close,
-                    bar.volume,
-                    Some(bar.time),
-                ),
-            };
-            all_values.push(value);
-        }
-
-        // Convert to output format
-        let mut result: HashMap<String, Vec<f64>> = HashMap::new();
-
-        if let Some(render_meta) = rendering {
-            // Use rendering metadata to extract named outputs
-            for output_spec in &render_meta.outputs {
-                let values: Vec<f64> = all_values
-                    .iter()
-                    .map(|v| ValueAdapter::extract(v, &output_spec.value_extractor).unwrap_or(f64::NAN))
-                    .collect();
-                result.insert(output_spec.name.clone(), values);
+            let delta = deltas.and_then(|d| d.get(i)).copied();
+            let sample = Self::feed_bar_with_delta(&mut instance, bar, delta);
+            for (name, value) in sample.by_name {
+                columns.entry(name).or_default().push(value);
             }
-        } else {
-            // Fallback: just use main value
-            let values: Vec<f64> = all_values.iter().map(|v| v.main()).collect();
-            result.insert("value".to_string(), values);
         }
-
-        Some(result)
+        Some(columns)
     }
 
-    /// Calculate indicator values AND detect signals
-    ///
-    /// This is the enhanced version that also generates signals using SignalEngine.
-    /// Returns CalculationResult with both values and signals.
-    ///
-    /// `deltas` follows the same contract as [`Self::calculate_with_id`].
+    /// Calculate values and run the default signal profile.
     pub fn calculate_with_signals(
-        indicator_id: BarIndicatorId,
+        indicator_id: IndicatorId,
         params: &HashMap<String, IndicatorValue>,
         bars: &[Bar],
         deltas: Option<&[(f64, f64)]>,
     ) -> Option<CalculationResult> {
-        // Extract periods from params
-        let periods = Self::extract_periods(params);
-
-        // Create config using BarIndicatorId directly
-        let mut config = IndicatorConfig::new(
-            indicator_id,
-            format!("{:?}", indicator_id),
-            periods,
-        );
-
-        // Add additional params
-        Self::add_additional_params(&mut config, params);
-
-        // Create compute instance
-        let mut instance = ComputeInstance::create(&config).ok()?;
-
-        // Get rendering metadata
-        let rendering = get_rendering(indicator_id);
-
-        // Try to get default signal profile for this indicator
-        let signal_profile = default_profile(indicator_id);
-        let mut signal_engine = signal_profile.as_ref().map(|p| {
-            SignalEngine::from_profile(p)
-        });
-
-        let indicator_name = format!("{:?}", indicator_id);
+        let mut instance = Self::build_compute_instance(indicator_id, params)?;
+        let mut signal_engine = default_profile(indicator_id).map(|p| SignalEngine::from_profile(&p));
+        let indicator_name = indicator_id.label();
+        let mut columns: HashMap<String, Vec<f64>> = HashMap::new();
+        let mut signals = Vec::new();
         let bar_count = bars.len();
-
-        // Calculate values for each bar and collect signals
-        let mut all_values: Vec<ComputeValue> = Vec::with_capacity(bar_count);
-        let mut all_signals: Vec<Signal> = Vec::new();
-
-        for (bar_idx, bar) in bars.iter().enumerate() {
-            let value = match deltas.and_then(|d| d.get(bar_idx)) {
-                Some(&(buy, sell)) => instance.update_bar_with_delta(
+        for (i, bar) in bars.iter().enumerate() {
+            let delta = deltas.and_then(|d| d.get(i)).copied();
+            let sample = Self::feed_bar_with_delta(&mut instance, bar, delta);
+            if let Some(engine) = signal_engine.as_mut() {
+                signals.extend(engine.process(
+                    &sample,
                     bar.open,
                     bar.high,
                     bar.low,
                     bar.close,
                     bar.volume,
-                    buy,
-                    sell,
-                    Some(bar.time),
-                ),
-                None => instance.update_bar(
-                    bar.open,
-                    bar.high,
-                    bar.low,
-                    bar.close,
-                    bar.volume,
-                    Some(bar.time),
-                ),
-            };
-
-            // Generate signals if engine exists
-            if let Some(ref mut engine) = signal_engine {
-                let is_last_bar = bar_idx + 1 == bar_count;
-                let signals = engine.process(&value, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.time, &indicator_name, is_last_bar);
-                all_signals.extend(signals);
+                    bar.time,
+                    &indicator_name,
+                    i + 1 == bar_count,
+                ));
             }
-
-            all_values.push(value);
-        }
-
-        // Convert to output format
-        let mut result: HashMap<String, Vec<f64>> = HashMap::new();
-
-        if let Some(render_meta) = rendering {
-            for output_spec in &render_meta.outputs {
-                let values: Vec<f64> = all_values
-                    .iter()
-                    .map(|v| ValueAdapter::extract(v, &output_spec.value_extractor).unwrap_or(f64::NAN))
-                    .collect();
-                result.insert(output_spec.name.clone(), values);
+            for (name, value) in sample.by_name {
+                columns.entry(name).or_default().push(value);
             }
-        } else {
-            let values: Vec<f64> = all_values.iter().map(|v| v.main()).collect();
-            result.insert("value".to_string(), values);
         }
-
         Some(CalculationResult {
-            values: result,
-            signals: all_signals,
+            values: columns,
+            signals,
         })
     }
 
-    /// Extract period parameters from indicator params
-    ///
-    /// Looks for ALL integer parameters and uses them as periods.
-    /// Common period names are prioritized, but any integer param is included.
-    fn extract_periods(params: &HashMap<String, IndicatorValue>) -> Vec<usize> {
+    /// Integer params the settings modal stored, priority names first.
+    /// Empty input yields `[14]`, matching the historical helper.
+    pub fn extract_periods(params: &HashMap<String, IndicatorValue>) -> Vec<usize> {
         let mut periods = Vec::new();
-
-        // Priority order for period names (these are checked first)
-        let priority_names = ["period", "length", "n", "window", "periods", "fast", "slow", "signal", "k", "d", "smooth"];
-
-        // First, add params by priority order
+        let priority_names = [
+            "period", "length", "n", "window", "periods", "fast", "slow", "signal", "k", "d",
+            "smooth",
+        ];
         for name in priority_names {
-            if let Some(value) = params.get(name) {
-                if let Some(v) = value.as_int() {
-                    periods.push(v.max(1) as usize);
-                }
+            if let Some(value) = params.get(name).and_then(|v| v.as_int()) {
+                periods.push(value.max(1) as usize);
             }
         }
-
-        // Then add any other integer params not already added (case-insensitive check)
         for (name, value) in params {
             let name_lower = name.to_lowercase();
-            // Skip if already added via priority names
             if priority_names.iter().any(|p| *p == name_lower) {
                 continue;
             }
-            // Add any other integer value
-            if let Some(v) = value.as_int() {
-                periods.push(v.max(1) as usize);
+            if let Some(value) = value.as_int() {
+                periods.push(value.max(1) as usize);
             }
         }
-
-        // Default period if none found
         if periods.is_empty() {
             periods.push(14);
         }
-
         periods
     }
 
-    /// Add additional (non-period) parameters to config
-    ///
-    /// Adds ALL float parameters to additional_params, bool params to flags,
-    /// and handles string parameters (especially 'source' for OHLCV field selection).
-    /// Also handles component-level parameters like fast_ma_type, slow_source, etc.
-    fn add_additional_params(
-        config: &mut IndicatorConfig,
-        params: &HashMap<String, IndicatorValue>,
-    ) {
-        for (name, value) in params {
-            // Add float parameters
-            if let Some(v) = value.as_float() {
-                config.additional_params.insert(name.clone(), v);
-            }
-            // Add bool flags
-            if let Some(v) = value.as_bool() {
-                config.flags.insert(name.clone(), v);
-            }
-            // Handle string parameters
-            if let Some(v) = value.as_string() {
-                // Check for MA type parameters (e.g., fast_ma_type, slow_ma_type, signal_ma_type)
-                if name.ends_with("_ma_type") || name == "ma_type" {
-                    if let Some(ma_type) = Self::parse_ma_type_string(v) {
-                        config.ma_types.insert(name.clone(), ma_type);
-                    }
-                }
-                // Check for component-level source parameters (e.g., fast_source, slow_source)
-                else if name.ends_with("_source") && name != "source" {
-                    if let Some(field) = OhlcvField::from_str(v) {
-                        // Extract component name (e.g., "fast" from "fast_source")
-                        let component_name = name.strip_suffix("_source").unwrap_or(name);
-
-                        // Get or create ComponentConfig for this component using Default
-                        config.component_configs
-                            .entry(component_name.to_string())
-                            .or_default()
-                            .source = Some(field);
-                    }
-                }
-                // Global source parameter
-                else if name == "source" {
-                    if let Some(field) = OhlcvField::from_str(v) {
-                        config.source = field;
-                    }
-                }
+    fn explicit_period(params: &HashMap<String, IndicatorValue>) -> Option<usize> {
+        for name in ["period", "length", "n", "window"] {
+            if let Some(value) = params.get(name).and_then(|v| v.as_int()) {
+                return Some(value.max(1) as usize);
             }
         }
-
+        None
     }
 
-    /// Build a fresh ComputeInstance from indicator_id + params snapshot.
-    /// Returns None if the indicator is not found in the catalog.
+    /// Fresh factory. `None` when `indicator_id` is not in the contract.
     pub fn build_compute_instance(
-        indicator_id: BarIndicatorId,
+        indicator_id: IndicatorId,
         params: &HashMap<String, IndicatorValue>,
-    ) -> Option<ComputeInstance> {
-        let periods = Self::extract_periods(params);
-        let mut config = IndicatorConfig::new(
-            indicator_id,
-            format!("{:?}", indicator_id),
-            periods,
-        );
-        Self::add_additional_params(&mut config, params);
-        ComputeInstance::create(&config).ok()
+    ) -> Option<ContractInstance> {
+        ContractInstance::build(indicator_id, Self::explicit_period(params))
     }
 
-    /// Feed one bar into an existing ComputeInstance and return the output value.
-    pub fn feed_bar(
-        instance: &mut ComputeInstance,
-        bar: &crate::Bar,
-    ) -> ComputeValue {
-        instance.update_bar(bar.open, bar.high, bar.low, bar.close, bar.volume, Some(bar.time))
+    pub fn feed_bar(instance: &mut ContractInstance, bar: &Bar) -> OutputSample {
+        instance.feed_bar(bar);
+        instance.sample()
     }
 
-    /// Feed one bar plus its real (buy_volume, sell_volume) delta into an
-    /// existing ComputeInstance and return the output value. `delta` follows
-    /// the same contract as [`Self::calculate_with_id`] — `None` falls
-    /// through to the plain [`Self::feed_bar`] path.
     pub fn feed_bar_with_delta(
-        instance: &mut ComputeInstance,
-        bar: &crate::Bar,
+        instance: &mut ContractInstance,
+        bar: &Bar,
         delta: Option<(f64, f64)>,
-    ) -> ComputeValue {
-        match delta {
-            Some((buy, sell)) => instance.update_bar_with_delta(
-                bar.open, bar.high, bar.low, bar.close, bar.volume, buy, sell, Some(bar.time),
-            ),
-            None => Self::feed_bar(instance, bar),
-        }
+    ) -> OutputSample {
+        instance.feed_bar_with_delta(bar, delta);
+        instance.sample()
     }
 
-    /// Feed one non-bar stream event (tick, order book, funding rate, open
-    /// interest, liquidation) into an existing ComputeInstance and return
-    /// the output value.
-    ///
-    /// Dispatches to the matching `IndicatorInstance::update_*` — a no-op
-    /// passthrough (`self.value()`) for any variant that does not consume
-    /// this stream (the mli dispatch tables' own fallback,
-    /// `instance_factory.rs:9022,9034,9056,9073,9163`).
-    pub fn feed_stream_event(instance: &mut ComputeInstance, ev: &StreamEvent) -> ComputeValue {
-        match ev {
-            StreamEvent::Tick(t) => instance.update_tick(t),
-            StreamEvent::OrderBook(b) => instance.update_orderbook(b),
-            StreamEvent::OrderbookDelta(d) => instance.update_delta(d),
-            StreamEvent::Funding(f) => instance.update_funding(f),
-            StreamEvent::OpenInterest(oi) => instance.update_oi(oi),
-            StreamEvent::Liquidation(l) => instance.update_liquidation(l),
-        }
+    pub fn feed_stream_event(instance: &mut ContractInstance, ev: &StreamEvent) -> OutputSample {
+        instance.feed_event(ev);
+        instance.sample()
     }
 
-    /// Extract single-bar outputs from a ComputeValue using rendering metadata.
-    ///
-    /// Returns a HashMap of output_name -> f64.  Falls back to `"value"` key
-    /// when no rendering metadata is available.
     pub fn extract_single_outputs(
-        indicator_id: BarIndicatorId,
-        value: ComputeValue,
+        _indicator_id: IndicatorId,
+        value: OutputSample,
     ) -> HashMap<String, f64> {
-        let rendering = crate::catalog::get_rendering(indicator_id);
-        let mut out = HashMap::new();
-        if let Some(meta) = rendering {
-            for spec in &meta.outputs {
-                let v = crate::catalog::ValueAdapter::extract(&value, &spec.value_extractor)
-                    .unwrap_or(f64::NAN);
-                out.insert(spec.name.clone(), v);
-            }
-        } else {
-            out.insert("value".to_string(), value.main());
-        }
-        out
+        value.map()
     }
 
-    /// Compute a stable FNV-1a fingerprint over an indicator's id + sorted params.
-    ///
-    /// Used to detect parameter changes without storing a full params clone.
     pub fn params_fingerprint(
-        indicator_id: BarIndicatorId,
+        indicator_id: IndicatorId,
         params: &HashMap<String, IndicatorValue>,
     ) -> u64 {
         const FNV_OFFSET: u64 = 14695981039346656037;
         const FNV_PRIME: u64 = 1099511628211;
-
         let mut hash = FNV_OFFSET;
         let fnv_byte = |h: &mut u64, b: u8| {
             *h ^= b as u64;
             *h = h.wrapping_mul(FNV_PRIME);
         };
-
-        // Hash the indicator id string
-        for b in format!("{:?}", indicator_id).bytes() {
+        for b in format!("{indicator_id:?}").bytes() {
             fnv_byte(&mut hash, b);
         }
-
-        // Sort keys for determinism, then hash each key+value pair
         let mut pairs: Vec<(&String, &IndicatorValue)> = params.iter().collect();
         pairs.sort_by_key(|(k, _)| k.as_str());
         for (k, v) in pairs {
             for b in k.bytes() {
                 fnv_byte(&mut hash, b);
             }
-            for b in format!("{:?}", v).bytes() {
+            for b in format!("{v:?}").bytes() {
                 fnv_byte(&mut hash, b);
             }
         }
-
         hash
-    }
-
-    /// Parse a string to MovingAverageType
-    fn parse_ma_type_string(s: &str) -> Option<crate::bar_indicators::average::moving_average::MovingAverageType> {
-        use crate::bar_indicators::average::moving_average::MovingAverageType;
-
-        match s.to_uppercase().as_str() {
-            "SMA" => Some(MovingAverageType::SMA),
-            "EMA" => Some(MovingAverageType::EMA),
-            "WMA" => Some(MovingAverageType::WMA),
-            "RMA" => Some(MovingAverageType::RMA),
-            "DEMA" => Some(MovingAverageType::DEMA),
-            "TEMA" => Some(MovingAverageType::TEMA),
-            "HMA" => Some(MovingAverageType::HMA),
-            "TMA" => Some(MovingAverageType::TMA),
-            "VWMA" => Some(MovingAverageType::VWMA),
-            "VWAP" => Some(MovingAverageType::VWAP),
-            "AMA" => Some(MovingAverageType::AMA),
-            _ => None,
-        }
     }
 }
 
@@ -452,7 +192,6 @@ mod tests {
     fn test_extract_periods() {
         let mut params = HashMap::new();
         params.insert("period".to_string(), IndicatorValue::Int(20));
-
         let periods = IndicatorCalculator::extract_periods(&params);
         assert_eq!(periods, vec![20]);
     }
@@ -461,93 +200,74 @@ mod tests {
     fn test_extract_periods_default() {
         let params = HashMap::new();
         let periods = IndicatorCalculator::extract_periods(&params);
-        assert_eq!(periods, vec![14]); // default
+        assert_eq!(periods, vec![14]);
     }
 
     #[test]
     fn test_calculate_sma() {
-        // Create test bars
-        let bars: Vec<Bar> = (0..100).map(|i| Bar {
-            time: i as i64,
-            open: 100.0 + i as f64,
-            high: 101.0 + i as f64,
-            low: 99.0 + i as f64,
-            close: 100.0 + i as f64,
-            volume: 1000.0,
-        }).collect();
-
+        let bars: Vec<Bar> = (0..100)
+            .map(|i| Bar {
+                time: i as i64,
+                open: 100.0 + i as f64,
+                high: 101.0 + i as f64,
+                low: 99.0 + i as f64,
+                close: 100.0 + i as f64,
+                volume: 1000.0,
+            })
+            .collect();
         let mut params = HashMap::new();
         params.insert("period".to_string(), IndicatorValue::Int(20));
-
-        let result = IndicatorCalculator::calculate_with_id(
-            BarIndicatorId::Sma,
-            &params,
-            &bars,
-            None,
-        );
-
+        let result = IndicatorCalculator::calculate_with_id(IndicatorId::Sma, &params, &bars, None);
         assert!(result.is_some());
         let values = result.unwrap();
         assert!(!values.is_empty());
     }
 
-    // ── feed_stream_event: one indicator per StreamEvent variant ──────────
-    //
-    // Each test feeds a synthetic bar (baseline — these indicators are
-    // no-op passthroughs on `update_bar`, per mli's own dispatch tables)
-    // then a synthetic stream event of the matching kind, and asserts the
-    // output value moved off the bar-only baseline.
-
     fn zero_bar() -> Bar {
-        Bar { time: 0, open: 100.0, high: 101.0, low: 99.0, close: 100.0, volume: 10.0 }
+        Bar {
+            time: 0,
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 10.0,
+        }
+    }
+
+    fn build(id: IndicatorId) -> ContractInstance {
+        IndicatorCalculator::build_compute_instance(id, &HashMap::new()).expect("builds")
     }
 
     #[test]
     fn feed_stream_event_tick_moves_trade_flow_imbalance() {
-        let config = IndicatorConfig::new(BarIndicatorId::TradeFlowImbalance, "TradeFlowImbalance".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("TradeFlowImbalance builds with default params");
-
+        let mut instance = build(IndicatorId::TradeFlowImbalance);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
-
         let tick = crate::Tick::new(0, 100.0, 5.0, true);
         let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Tick(tick));
-
         assert_ne!(updated, baseline);
-        assert_eq!(updated, ComputeValue::Double(1.0, 5.0));
+        assert_eq!(updated.lines, vec![1.0, 5.0]);
     }
 
     #[test]
     fn feed_stream_event_orderbook_moves_book_imbalance() {
-        let config = IndicatorConfig::new(BarIndicatorId::BookImb, "BookImb".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("BookImb builds with default params");
-
+        let mut instance = build(IndicatorId::BookImb);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Single(0.0));
-
         let book = crate::types::OrderBook {
             bids: vec![crate::types::OrderBookLevel::new(100.0, 30.0)],
             asks: vec![crate::types::OrderBookLevel::new(101.0, 10.0)],
             timestamp: 0,
             ..Default::default()
         };
-        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OrderBook(book));
-
+        let updated =
+            IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OrderBook(book));
         assert_ne!(updated, baseline);
         assert!((updated.main() - 0.5).abs() < 1e-9);
     }
 
     #[test]
     fn feed_stream_event_orderbook_delta_moves_book_churn_rate() {
-        let config = IndicatorConfig::new(BarIndicatorId::BookChurnRate, "BookChurnRate".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("BookChurnRate builds with default params");
-
+        let mut instance = build(IndicatorId::BookChurnRate);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Single(0.0));
-
         let delta = crate::types::OrderbookDelta {
             bids: vec![
                 crate::types::OrderBookLevel::new(100.0, 5.0),
@@ -560,63 +280,50 @@ mod tests {
             prev_update_id: None,
             ..Default::default()
         };
-        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OrderbookDelta(delta));
-
+        let updated = IndicatorCalculator::feed_stream_event(
+            &mut instance,
+            &StreamEvent::OrderbookDelta(delta),
+        );
         assert_ne!(updated, baseline);
         assert!((updated.main() - 3.0).abs() < 1e-9);
     }
 
     #[test]
     fn feed_stream_event_funding_moves_funding_momentum() {
-        let config = IndicatorConfig::new(BarIndicatorId::FundingMomentum, "FundingMomentum".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("FundingMomentum builds with default period");
-
+        let mut instance = build(IndicatorId::FundingMomentum);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
-
         let fr = crate::types::FundingRate {
             rate: 0.0001,
             next_funding_time: None,
             timestamp: 1000,
             ..Default::default()
         };
-        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Funding(fr));
-
+        let updated =
+            IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Funding(fr));
         assert_ne!(updated, baseline);
-        assert_eq!(updated, ComputeValue::Double(0.0001, 0.0001));
+        assert_eq!(updated.lines, vec![0.0001, 0.0001]);
     }
 
     #[test]
     fn feed_stream_event_open_interest_moves_oi_change_rate() {
-        let config = IndicatorConfig::new(BarIndicatorId::OiChangeRate, "OiChangeRate".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("OiChangeRate builds with no params");
-
+        let mut instance = build(IndicatorId::OiChangeRate);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
-
         let oi = crate::types::OpenInterest {
             open_interest: 1000.0,
             open_interest_value: None,
             timestamp: 0,
             ..Default::default()
         };
-        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OpenInterest(oi));
-
+        let updated =
+            IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OpenInterest(oi));
         assert_ne!(updated, baseline);
-        assert_eq!(updated, ComputeValue::Double(0.0, 1000.0));
+        assert_eq!(updated.lines, vec![0.0, 1000.0]);
     }
 
     #[test]
     fn feed_stream_event_liquidation_moves_liquidation_rate() {
-        let config = IndicatorConfig::new(BarIndicatorId::LiquidationRate, "LiquidationRate".to_string(), vec![]);
-        let mut instance = ComputeInstance::create(&config)
-            .expect("LiquidationRate builds with default window");
-
+        let mut instance = build(IndicatorId::LiquidationRate);
         let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
-        assert_eq!(baseline, ComputeValue::Single(0.0));
-
         let liq = crate::types::Liquidation {
             symbol: "BTCUSDT".to_string(),
             side: crate::types::TradeSide::Buy,
@@ -626,8 +333,8 @@ mod tests {
             value: None,
             ..Default::default()
         };
-        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Liquidation(liq));
-
+        let updated =
+            IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Liquidation(liq));
         assert_ne!(updated, baseline);
         assert!((updated.main() - 1.0 / 60.0).abs() < 1e-9);
     }

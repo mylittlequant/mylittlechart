@@ -38,7 +38,7 @@ pub struct FibEngineConfig {
     #[serde(default = "default_scan_swing_n")]
     pub scan_default_swing_n: usize,
     /// A freshly placed `FibScan`'s own starting `swing_mode` wire id
-    /// (`"largest"` | `"last_n"`, mirrors `mli::ewa::fib_swing::
+    /// (`"largest"` | `"last_n"`, mirrors `mli::fib::swing::
     /// FibSwingMode`). Default `"largest"` — "the biggest high↔low move in
     /// range," the simplest reading a freshly dragged scan should show.
     #[serde(default = "default_scan_swing_mode")]
@@ -50,7 +50,7 @@ pub struct FibEngineConfig {
     #[serde(default = "default_scan_last_swings_n")]
     pub scan_default_last_swings_n: usize,
     /// A freshly placed `FibScan`'s own starting `direction` wire id
-    /// (`"auto"` | `"up"` | `"down"`, mirrors `mli::ewa::fib_swing::
+    /// (`"auto"` | `"up"` | `"down"`, mirrors `mli::fib::swing::
     /// FibSwingDirection`). Default `"auto"` — no filtering, so an untouched
     /// engine config changes nothing about what a freshly drawn scan shows.
     #[serde(default = "default_scan_direction")]

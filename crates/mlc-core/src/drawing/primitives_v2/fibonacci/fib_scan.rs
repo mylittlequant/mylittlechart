@@ -31,7 +31,7 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{current_language, ConceptKey, SettingsKey};
-use mli::ewa::fib_swing::{FibSwingDirection, FibSwingMode, FibSwingPair};
+use mli::fib::swing::{FibSwingDirection, FibSwingMode, FibSwingPair};
 use mli::ewa::types::EwaSegmentDirection;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
@@ -99,11 +99,11 @@ pub struct FibScan {
     pub p2: f64,
     #[serde(default = "default_coverage")]
     pub coverage: String,
-    /// Per-drawing pivot sensitivity fed to `mli::ewa::swing::extract_pivots`
+    /// Per-drawing pivot sensitivity fed to `mli::ewa::chart_swing::extract_pivots`
     /// — same per-drawing ruling `ElliottScan::swing_n`'s own doc gives.
     #[serde(default = "default_swing_n")]
     pub swing_n: usize,
-    /// `"largest"` | `"last_n"` wire id, mirrors `mli::ewa::fib_swing::
+    /// `"largest"` | `"last_n"` wire id, mirrors `mli::fib::swing::
     /// FibSwingMode` — string-serialized per this crate's own "ids, never
     /// enum indices" convention. An unrecognized id (a stale saved drawing
     /// from a future catalogue) falls back to `LargestSwing` in
@@ -113,7 +113,7 @@ pub struct FibScan {
     /// Only read when `swing_mode == "last_n"`.
     #[serde(default = "default_last_swings_n")]
     pub last_swings_n: usize,
-    /// `"auto"` | `"up"` | `"down"` wire id, mirrors `mli::ewa::fib_swing::
+    /// `"auto"` | `"up"` | `"down"` wire id, mirrors `mli::fib::swing::
     /// FibSwingDirection`.
     #[serde(default = "default_direction")]
     pub direction: String,
@@ -206,9 +206,9 @@ impl FibScan {
     pub fn resolved_scan(&self, bars: &[Bar]) -> Vec<FibSwingPair> {
         let Some((start, end)) = self.resolved_window(bars) else { return Vec::new() };
         let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, self.swing_n.max(1));
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
-        mli::ewa::fib_swing::select_fib_swings(&pivots, &segments, start..end + 1, self.mode(), self.direction_filter())
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, self.swing_n.max(1));
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
+        mli::fib::swing::select_fib_swings(&pivots, &segments, start..end + 1, self.mode(), self.direction_filter())
             .into_iter()
             .filter(|sw| price_band_filter(self.shape, self.p1, self.p2, (sw.start_price + sw.end_price) / 2.0))
             .collect()
@@ -697,9 +697,9 @@ mod tests {
         let swings = scan.resolved_scan(&bars);
 
         let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, 2);
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
-        let direct = mli::ewa::fib_swing::select_fib_swings(
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, 2);
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
+        let direct = mli::fib::swing::select_fib_swings(
             &pivots, &segments, 0..bars.len(), FibSwingMode::LargestSwing, FibSwingDirection::Auto,
         );
 

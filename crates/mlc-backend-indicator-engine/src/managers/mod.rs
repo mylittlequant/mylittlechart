@@ -12,6 +12,7 @@
 //! `IndicatorInstance`, `ComputeCache`, …) and the pure compute helpers
 //! (`IndicatorBridge`, `IndicatorCalculator`) the manager calls into.
 
+pub mod contract_instance;
 pub mod indicator_bridge;
 pub mod indicator_calculator;
 pub mod indicator_manager;

@@ -32,7 +32,7 @@ use super::super::{
     RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, Tone, WaveDegree, parse_table_cell_id},
 };
-use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_hit, ResolvedWaveHit};
+use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_harmonic_hit, ResolvedWaveHit, ScannedKind};
 use super::super::scan_shape::{ScanShape, render_scan_bracket};
 use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 use super::harmonic_scan_kind::HarmonicScanKind;
@@ -65,11 +65,11 @@ fn default_all_kind_ids() -> Vec<String> {
 }
 
 /// The vocabulary's own default harmonic-band tolerance — see
-/// `mli::ewa::harmonic::DEFAULT_HARMONIC_TOLERANCE`'s own doc. Only covers
+/// `mli::harmonic::DEFAULT_HARMONIC_TOLERANCE`'s own doc. Only covers
 /// an old saved scan missing the field entirely; a freshly constructed scan
 /// reads `HarmonicEngineConfig::scan_default_tolerance` instead.
 fn default_tolerance() -> f64 {
-    mli::ewa::harmonic::DEFAULT_HARMONIC_TOLERANCE
+    mli::harmonic::DEFAULT_HARMONIC_TOLERANCE
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -89,7 +89,7 @@ pub struct HarmonicScan {
     pub p2: f64,
     #[serde(default = "default_coverage")]
     pub coverage: String,
-    /// Per-drawing pivot sensitivity fed to `mli::ewa::swing::extract_pivots`
+    /// Per-drawing pivot sensitivity fed to `mli::ewa::chart_swing::extract_pivots`
     /// — same per-drawing ruling `ElliottScan::swing_n`'s own doc gives.
     #[serde(default = "default_swing_n")]
     pub swing_n: usize,
@@ -97,7 +97,7 @@ pub struct HarmonicScan {
     /// needed (score is already returned per-hit).
     #[serde(default)]
     pub min_score: f64,
-    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// Widening delta (`mli::harmonic::widen_band`) applied to every
     /// target leg's own band before `scan_waves_with_harmonic_tolerance`'s
     /// own hard band check (A3.0) — the SAME per-drawing knob
     /// `XabcdPattern`/`FiveZeroPattern`'s own `harmonic_tolerance` field
@@ -188,14 +188,14 @@ impl HarmonicScan {
         let Some((start, end)) = self.resolved_window(bars) else { return Vec::new() };
         let (window_bars, local_range) = ewa_scan_window(bars, start, end);
         let ohlc: Vec<(f64, f64, f64, f64)> = window_bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, self.swing_n.max(1));
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
-        let kinds: Vec<mli::ewa::types::EwaPatternKind> =
-            self.enabled_kinds.iter().filter_map(|id| HarmonicScanKind::from_id(id)).map(|k| k.as_ewa_kind()).collect();
-        mli::ewa::scan::scan_waves_with_harmonic_tolerance(&pivots, &segments, &kinds, local_range, self.tolerance)
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, self.swing_n.max(1));
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
+        let kinds: Vec<mli::harmonic::HarmonicKind> =
+            self.enabled_kinds.iter().filter_map(|id| HarmonicScanKind::from_id(id)).map(|k| k.as_harmonic_kind()).collect();
+        mli::harmonic::chart_scan::scan_waves_with_harmonic_tolerance(&pivots, &segments, &kinds, local_range, self.tolerance)
             .into_iter()
             .filter(|h| h.score >= self.min_score)
-            .filter_map(|h| resolve_hit(h, &pivots, window_bars, self.shape, self.p1, self.p2))
+            .filter_map(|h| resolve_harmonic_hit(h, &pivots, window_bars, self.shape, self.p1, self.p2))
             .collect()
     }
 
@@ -209,7 +209,7 @@ impl HarmonicScan {
         HarmonicScanKind::ALL
             .iter()
             .map(|&kind| {
-                let hits = self.cached_hits.iter().filter(|h| h.kind == kind.as_ewa_kind()).count();
+                let hits = self.cached_hits.iter().filter(|h| h.kind == ScannedKind::Harmonic(kind.as_harmonic_kind())).count();
                 vec![
                     TableCell::EditableCheck(self.enabled(kind)),
                     TableCell::Text(kind.label(lang).to_string()),
@@ -232,7 +232,7 @@ impl HarmonicScan {
         self.cached_hits
             .iter()
             .map(|hit| {
-                let kind_label = HarmonicScanKind::from_ewa_kind(hit.kind).map(|k| k.label(lang).to_string()).unwrap_or_default();
+                let kind_label = hit.kind.harmonic().and_then(HarmonicScanKind::from_harmonic_kind).map(|k| k.label(lang).to_string()).unwrap_or_default();
                 let tone = if hit.score >= 0.7 { Tone::Good } else { Tone::Neutral };
                 vec![
                     TableCell::Text(kind_label),
@@ -788,15 +788,15 @@ mod tests {
         let hits = scan.resolved_scan(&bars);
 
         let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
-        let pivots = mli::ewa::swing::extract_pivots(&ohlc, 2);
-        let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
-        let direct = mli::ewa::scan::scan_waves_with_harmonic_tolerance(
-            &pivots, &segments, &[mli::ewa::types::EwaPatternKind::Gartley], 0..bars.len(), 0.0,
+        let pivots = mli::ewa::chart_swing::extract_pivots(&ohlc, 2);
+        let segments = mli::ewa::chart_swing::build_segments(&ohlc, &pivots);
+        let direct = mli::harmonic::chart_scan::scan_waves_with_harmonic_tolerance(
+            &pivots, &segments, &[mli::harmonic::HarmonicKind::Gartley], 0..bars.len(), 0.0,
         );
 
         assert!(!direct.is_empty(), "fixture must actually contain a textbook Gartley");
         assert_eq!(hits.len(), direct.len());
-        assert_eq!(hits[0].kind, mli::ewa::types::EwaPatternKind::Gartley);
+        assert_eq!(hits[0].kind, super::ScannedKind::Harmonic(mli::harmonic::HarmonicKind::Gartley));
         assert_eq!(hits[0].points.len(), direct[0].pivots.len());
     }
 

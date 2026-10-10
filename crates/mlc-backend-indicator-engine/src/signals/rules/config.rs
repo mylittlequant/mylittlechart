@@ -3,9 +3,9 @@
 //! This module defines the configuration primitives for signal detectors.
 //! Uses BarIndicatorId for type-safe indicator identification.
 
-use crate::bar_indicators::indicator_value::IndicatorValue;
+use crate::OutputSample;
 
-/// Source for extracting values from IndicatorValue
+/// Source for extracting one line from an [`OutputSample`], in `output_ids_of` order.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueSource {
     /// Main/primary value (uses IndicatorValue::main())
@@ -61,94 +61,28 @@ pub enum ValueSource {
 }
 
 impl ValueSource {
-    /// Extract f64 value from IndicatorValue based on this source
-    /// For ValueSource::Price, returns None - caller must handle price separately
-    pub fn extract(&self, value: &IndicatorValue) -> Option<f64> {
-        match self {
-            // Main value - uses the main() method
-            ValueSource::Main => Some(value.main()),
-
-            // Price is handled separately by caller (passed to engine.process)
-            ValueSource::Price => None,
-
-            // First/Second/Third - positional access
-            ValueSource::First => {
-                match value {
-                    IndicatorValue::Double(a, _) => Some(*a),
-                    IndicatorValue::Triple(a, _, _) => Some(*a),
-                    IndicatorValue::Channel3 { upper, .. } => Some(*upper),
-                    IndicatorValue::ChannelExtended { upper, .. } => Some(*upper),
-                    _ => Some(value.main()),
-                }
-            }
-            ValueSource::Second => {
-                match value {
-                    IndicatorValue::Double(_, b) => Some(*b),
-                    IndicatorValue::Triple(_, b, _) => Some(*b),
-                    IndicatorValue::Channel3 { middle, .. } => Some(*middle),
-                    IndicatorValue::ChannelExtended { middle, .. } => Some(*middle),
-                    IndicatorValue::Macd { signal, .. } => Some(*signal),
-                    _ => None,
-                }
-            }
-            ValueSource::Third => {
-                match value {
-                    IndicatorValue::Triple(_, _, c) => Some(*c),
-                    IndicatorValue::Channel3 { lower, .. } => Some(*lower),
-                    IndicatorValue::ChannelExtended { lower, .. } => Some(*lower),
-                    IndicatorValue::Macd { histogram, .. } => Some(*histogram),
-                    _ => None,
-                }
-            }
-
-            // MACD parts
-            ValueSource::MacdLine => value.macd_line(),
-            ValueSource::MacdSignal => value.macd_signal(),
-            ValueSource::MacdHistogram => value.macd_histogram(),
-
-            // Channel parts
-            ValueSource::ChannelUpper => value.upper(),
-            ValueSource::ChannelMiddle => value.middle(),
-            ValueSource::ChannelLower => value.lower(),
-
-            // Ichimoku parts
-            ValueSource::IchimokuTenkan => {
-                match value {
-                    IndicatorValue::Ichimoku { tenkan, .. } => Some(*tenkan),
-                    _ => None,
-                }
-            }
-            ValueSource::IchimokuKijun => {
-                match value {
-                    IndicatorValue::Ichimoku { kijun, .. } => Some(*kijun),
-                    _ => None,
-                }
-            }
-            ValueSource::IchimokuSenkouA => {
-                match value {
-                    IndicatorValue::Ichimoku { senkou_a, .. } => Some(*senkou_a),
-                    _ => None,
-                }
-            }
-            ValueSource::IchimokuSenkouB => {
-                match value {
-                    IndicatorValue::Ichimoku { senkou_b, .. } => Some(*senkou_b),
-                    _ => None,
-                }
-            }
-            ValueSource::IchimokuChikou => {
-                match value {
-                    IndicatorValue::Ichimoku { chikou, .. } => Some(*chikou),
-                    _ => None,
-                }
-            }
-
-            // Index-based access via as_vec()
-            ValueSource::Index(i) => {
-                let vec = value.as_vec();
-                vec.get(*i).copied()
-            }
-        }
+    /// Line index in `output_ids_of` order. `Price` is not on the sample.
+    pub fn extract(&self, value: &OutputSample) -> Option<f64> {
+        let index = match self {
+            ValueSource::Price => return None,
+            ValueSource::Main
+            | ValueSource::First
+            | ValueSource::MacdLine
+            | ValueSource::ChannelUpper
+            | ValueSource::IchimokuTenkan => 0,
+            ValueSource::Second
+            | ValueSource::MacdSignal
+            | ValueSource::ChannelMiddle
+            | ValueSource::IchimokuKijun => 1,
+            ValueSource::Third
+            | ValueSource::MacdHistogram
+            | ValueSource::ChannelLower
+            | ValueSource::IchimokuSenkouA => 2,
+            ValueSource::IchimokuSenkouB => 3,
+            ValueSource::IchimokuChikou => 4,
+            ValueSource::Index(i) => *i,
+        };
+        value.line(index)
     }
 }
 
@@ -435,20 +369,21 @@ impl DetectorConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OutputSample;
+
+    fn sample(lines: &[f64]) -> OutputSample {
+        OutputSample { lines: lines.to_vec(), by_name: Vec::new() }
+    }
 
     #[test]
     fn test_value_source_extract_single() {
-        let value = IndicatorValue::Single(75.0);
+        let value = sample(&[75.0]);
         assert_eq!(ValueSource::Main.extract(&value), Some(75.0));
     }
 
     #[test]
     fn test_value_source_extract_macd() {
-        let value = IndicatorValue::Macd {
-            line: 0.5,
-            signal: 0.3,
-            histogram: 0.2,
-        };
+        let value = sample(&[0.5, 0.3, 0.2]);
 
         assert_eq!(ValueSource::Main.extract(&value), Some(0.5));
         assert_eq!(ValueSource::MacdLine.extract(&value), Some(0.5));
@@ -458,13 +393,10 @@ mod tests {
 
     #[test]
     fn test_value_source_extract_channel() {
-        let value = IndicatorValue::Channel3 {
-            upper: 110.0,
-            middle: 100.0,
-            lower: 90.0,
-        };
+        // Contract order for a channel is upper, middle, lower. Main is line 0.
+        let value = sample(&[110.0, 100.0, 90.0]);
 
-        assert_eq!(ValueSource::Main.extract(&value), Some(100.0));
+        assert_eq!(ValueSource::Main.extract(&value), Some(110.0));
         assert_eq!(ValueSource::ChannelUpper.extract(&value), Some(110.0));
         assert_eq!(ValueSource::ChannelMiddle.extract(&value), Some(100.0));
         assert_eq!(ValueSource::ChannelLower.extract(&value), Some(90.0));
@@ -472,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_value_source_extract_double() {
-        let value = IndicatorValue::Double(80.0, 75.0);
+        let value = sample(&[80.0, 75.0]);
 
         assert_eq!(ValueSource::Main.extract(&value), Some(80.0));
         assert_eq!(ValueSource::First.extract(&value), Some(80.0));
@@ -481,13 +413,7 @@ mod tests {
 
     #[test]
     fn test_value_source_extract_ichimoku() {
-        let value = IndicatorValue::Ichimoku {
-            tenkan: 100.0,
-            kijun: 99.0,
-            senkou_a: 101.0,
-            senkou_b: 98.0,
-            chikou: 100.5,
-        };
+        let value = sample(&[100.0, 99.0, 101.0, 98.0, 100.5]);
 
         assert_eq!(ValueSource::IchimokuTenkan.extract(&value), Some(100.0));
         assert_eq!(ValueSource::IchimokuKijun.extract(&value), Some(99.0));
@@ -498,7 +424,7 @@ mod tests {
 
     #[test]
     fn test_value_source_extract_by_index() {
-        let value = IndicatorValue::Triple(1.0, 2.0, 3.0);
+        let value = sample(&[1.0, 2.0, 3.0]);
 
         assert_eq!(ValueSource::Index(0).extract(&value), Some(1.0));
         assert_eq!(ValueSource::Index(1).extract(&value), Some(2.0));

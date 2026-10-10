@@ -147,7 +147,7 @@ mod tests {
         for kind in EwaScanKind::ALL {
             assert_eq!(EwaScanKind::from_ewa_kind(kind.as_ewa_kind()), Some(kind));
         }
-        assert_eq!(EwaScanKind::from_ewa_kind(EwaPatternKind::Xabcd), None);
+        assert_eq!(EwaScanKind::from_ewa_kind(EwaPatternKind::Correction), None);
     }
 
     #[test]

@@ -1,10 +1,11 @@
 //! Signal Engine - runtime for processing indicator values through configured detectors
 //!
-//! The SignalEngine takes a SignalProfile and processes IndicatorValue through
+//! The SignalEngine takes a SignalProfile and processes an OutputSample through
 //! the configured detectors to generate Signals.
 
-use crate::bar_indicators::bar_indicator_id::BarIndicatorId;
-use crate::bar_indicators::indicator_value::IndicatorValue;
+use mli::engine::contract_engine::IndicatorOutputId;
+
+use crate::OutputSample;
 use crate::signals::{
     ChannelDetector, CrossoverDetector, DivergenceDetector, HistogramDetector, SignalKind,
     SwingDetector, ThresholdMonitor, TrendDetector, VolatilityDetector, VolumeDetector,
@@ -177,7 +178,7 @@ impl DetectorInstance {
     /// Process a value and return `(config_id, SignalKind, Direction)` if a signal fired.
     fn process(
         &mut self,
-        value: &IndicatorValue,
+        value: &OutputSample,
         price: Option<f64>,
         high: f64,
         low: f64,
@@ -257,10 +258,7 @@ impl DetectorInstance {
             DetectorInstance::Trend { config_id, detector, value_source } => {
                 let price_val = price?;
                 let fast_ma = value_source.extract(value)?;
-                let slow_ma = match value {
-                    IndicatorValue::Double(_, b) => *b,
-                    _ => fast_ma,
-                };
+                let slow_ma = value.line(1).unwrap_or(fast_ma);
                 let (kind, direction) = detector.update(price_val, fast_ma, slow_ma)?;
                 Some((config_id.clone(), kind, direction))
             }
@@ -310,7 +308,7 @@ impl DetectorInstance {
 /// Signal Engine - processes indicator values through configured detectors
 pub struct SignalEngine {
     /// Indicator ID this engine is for
-    indicator_id: BarIndicatorId,
+    indicator_id: IndicatorOutputId,
 
     /// Profile name
     profile_name: String,
@@ -345,7 +343,7 @@ impl SignalEngine {
     /// Process an indicator value and return any generated signals
     pub fn process(
         &mut self,
-        value: &IndicatorValue,
+        value: &OutputSample,
         open: f64,
         high: f64,
         low: f64,
@@ -405,7 +403,7 @@ impl SignalEngine {
     /// Process with just indicator value (no price, channel detectors won't work)
     pub fn process_simple(
         &mut self,
-        value: &IndicatorValue,
+        value: &OutputSample,
         timestamp: i64,
         indicator_name: &str,
         is_last_bar: bool,
@@ -424,7 +422,7 @@ impl SignalEngine {
     }
 
     /// Get the indicator ID this engine is for
-    pub fn indicator_id(&self) -> BarIndicatorId {
+    pub fn indicator_id(&self) -> IndicatorOutputId {
         self.indicator_id
     }
 
@@ -466,13 +464,19 @@ mod tests {
     use super::*;
     use crate::signals::rules::defaults;
     use crate::signals::catalog::{ThresholdSub, HistogramSub};
+    use crate::IndicatorId;
+    use crate::OutputSample;
+
+    fn sample(lines: &[f64]) -> OutputSample {
+        OutputSample { lines: lines.to_vec(), by_name: Vec::new() }
+    }
 
     #[test]
     fn test_engine_from_rsi_profile() {
         let profile = defaults::rsi_profile();
         let engine = SignalEngine::from_profile(&profile);
 
-        assert_eq!(engine.indicator_id(), BarIndicatorId::Rsi);
+        assert_eq!(engine.indicator_id().indicator(), IndicatorId::Rsi);
         assert!(engine.detector_count() > 0);
     }
 
@@ -485,7 +489,7 @@ mod tests {
 
         let mut all_signals = Vec::new();
         for &v in &values {
-            let signals = engine.process_simple(&IndicatorValue::Single(v), 0, "Test", false);
+            let signals = engine.process_simple(&sample(&[v]), 0, "Test", false);
             all_signals.extend(signals);
         }
 
@@ -505,21 +509,9 @@ mod tests {
         let mut engine = SignalEngine::from_profile(&profile);
 
         let values = [
-            IndicatorValue::Macd {
-                line: -0.5,
-                signal: 0.0,
-                histogram: -0.5,
-            },
-            IndicatorValue::Macd {
-                line: -0.2,
-                signal: 0.0,
-                histogram: -0.2,
-            },
-            IndicatorValue::Macd {
-                line: 0.3,
-                signal: 0.0,
-                histogram: 0.3,
-            },
+            sample(&[-0.5, 0.0, -0.5]),
+            sample(&[-0.2, 0.0, -0.2]),
+            sample(&[0.3, 0.0, 0.3]),
         ];
 
         let mut all_signals = Vec::new();
@@ -541,9 +533,9 @@ mod tests {
         let mut engine = SignalEngine::from_profile(&profile);
 
         let values = [
-            IndicatorValue::Double(20.0, 30.0), // K=20, D=30
-            IndicatorValue::Double(28.0, 29.0), // K=28, D=29
-            IndicatorValue::Double(35.0, 30.0), // K=35, D=30 — crossover!
+            sample(&[20.0, 30.0]),
+            sample(&[28.0, 29.0]),
+            sample(&[35.0, 30.0]),
         ];
 
         let mut all_signals = Vec::new();
@@ -564,8 +556,8 @@ mod tests {
         let profile = defaults::rsi_profile();
         let mut engine = SignalEngine::from_profile(&profile);
 
-        engine.process_simple(&IndicatorValue::Single(75.0), 0, "Test", false);
-        engine.process_simple(&IndicatorValue::Single(80.0), 0, "Test", false);
+        engine.process_simple(&sample(&[75.0]), 0, "Test", false);
+        engine.process_simple(&sample(&[80.0]), 0, "Test", false);
 
         assert!(engine.bar_index() > 0);
 
@@ -590,21 +582,9 @@ mod tests {
         let mut engine = SignalEngine::from_profile(&profile);
 
         let values = [
-            IndicatorValue::Macd {
-                line: -0.5,
-                signal: -0.3,
-                histogram: -0.2,
-            },
-            IndicatorValue::Macd {
-                line: -0.1,
-                signal: -0.2,
-                histogram: 0.1,
-            },
-            IndicatorValue::Macd {
-                line: 0.2,
-                signal: 0.0,
-                histogram: 0.2,
-            },
+            sample(&[-0.5, -0.3, -0.2]),
+            sample(&[-0.1, -0.2, 0.1]),
+            sample(&[0.2, 0.0, 0.2]),
         ];
 
         let mut all_signals = Vec::new();

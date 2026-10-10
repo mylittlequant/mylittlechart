@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::i18n::{current_language, ConceptKey, ConfigKey, Language};
-use mli::ewa::harmonic::{self, HarmonicLeg};
-use mli::ewa::types::EwaPatternKind;
+use mli::harmonic::{self, HarmonicLeg};
+use mli::harmonic::HarmonicKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -55,20 +55,20 @@ const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
 const PIVOT_NAMES: [&str; 5] = ["X", "A", "B", "C", "D"];
 
 /// Which named harmonic pattern this XABCD drawing claims to be — the
-/// identity `mli::ewa::harmonic::targets_for` needs to pick the right
+/// identity `mli::harmonic::targets_for` needs to pick the right
 /// target-ratio table. `Unclassified` (the default) reproduces today's
 /// behaviour exactly: no table, no target-band recolouring — matching
-/// `mli::ewa::harmonic::targets_for(EwaPatternKind::Xabcd)`, which is
+/// `mli::harmonic::targets_for(HarmonicKind::Xabcd)`, which is
 /// deliberately empty for the unclassified five-point container (see that
 /// function's own doc).
 ///
-/// `mli::ewa::types::EwaPatternKind` is the vocabulary's own type for this,
+/// `mli::ewa::types::HarmonicKind` is the vocabulary's own type for this,
 /// but it derives neither `Serialize` nor `Deserialize` (it names EVERY
 /// Elliott/harmonic shape, not a wire type this crate controls) — so a
 /// `#[derive(Serialize, Deserialize)]` primitive cannot store it directly.
 /// This type mirrors the five named-harmonic variants this primitive can
 /// actually claim and maps onto the vocabulary's own enum in exactly one
-/// place, [`XabcdHarmonicKind::as_ewa_kind`] — no second vocabulary, just a
+/// place, [`XabcdHarmonicKind::as_harmonic_kind`] — no second vocabulary, just a
 /// serializable shim over the same five names.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum XabcdHarmonicKind {
@@ -84,19 +84,19 @@ pub enum XabcdHarmonicKind {
 }
 
 impl XabcdHarmonicKind {
-    /// Maps to `mli::ewa::harmonic::targets_for`'s own vocabulary.
-    /// `Unclassified` maps to `EwaPatternKind::Xabcd` — the unclassified
+    /// Maps to `mli::harmonic::targets_for`'s own vocabulary.
+    /// `Unclassified` maps to `HarmonicKind::Xabcd` — the unclassified
     /// container `targets_for` itself always returns an empty table for.
-    pub fn as_ewa_kind(self) -> EwaPatternKind {
+    pub fn as_harmonic_kind(self) -> HarmonicKind {
         match self {
-            Self::Unclassified => EwaPatternKind::Xabcd,
-            Self::Gartley => EwaPatternKind::Gartley,
-            Self::Bat => EwaPatternKind::Bat,
-            Self::AltBat => EwaPatternKind::AltBat,
-            Self::Butterfly => EwaPatternKind::Butterfly,
-            Self::Crab => EwaPatternKind::Crab,
-            Self::DeepCrab => EwaPatternKind::DeepCrab,
-            Self::Shark => EwaPatternKind::Shark,
+            Self::Unclassified => HarmonicKind::Xabcd,
+            Self::Gartley => HarmonicKind::Gartley,
+            Self::Bat => HarmonicKind::Bat,
+            Self::AltBat => HarmonicKind::AltBat,
+            Self::Butterfly => HarmonicKind::Butterfly,
+            Self::Crab => HarmonicKind::Crab,
+            Self::DeepCrab => HarmonicKind::DeepCrab,
+            Self::Shark => HarmonicKind::Shark,
         }
     }
 
@@ -185,7 +185,7 @@ pub struct XabcdPattern {
     /// target-ratio table, no out-of-band marking.
     #[serde(default)]
     pub pattern_kind: XabcdHarmonicKind,
-    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// Widening delta (`mli::harmonic::widen_band`) applied to every
     /// target leg's own band before matching — defaults to the
     /// vocabulary's own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a
     /// second tolerance constant of this crate's own.
@@ -252,12 +252,12 @@ fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
 
 /// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
 /// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
-/// `mli::ewa::harmonic::targets_for(kind)`: the leg, its (tolerance-widened)
+/// `mli::harmonic::targets_for(kind)`: the leg, its (tolerance-widened)
 /// target band, and the measured ratio ([`measured_ratio`] — the SAME
 /// function `render()` uses for its own on-chart labels), toned by
 /// [`harmonic::ratio_matches`] (never a local comparison). `None` for an
 /// unclassified drawing — `targets_for` has no legs to tabulate.
-fn target_ratio_table_property(points: &[(i64, f64); 5], kind: EwaPatternKind, tolerance: f64) -> Option<ConfigProperty> {
+fn target_ratio_table_property(points: &[(i64, f64); 5], kind: HarmonicKind, tolerance: f64) -> Option<ConfigProperty> {
     let table = harmonic::targets_for(kind);
     if table.is_empty() {
         return None;
@@ -338,7 +338,7 @@ impl Primitive for XabcdPattern {
         // an unclassified drawing, by construction (`harmonic::targets_for`)
         // — every block below branches on that to leave an unclassified
         // XABCD rendering byte-identical to before this field existed.
-        let target_table = harmonic::targets_for(self.pattern_kind.as_ewa_kind());
+        let target_table = harmonic::targets_for(self.pattern_kind.as_harmonic_kind());
         // Every currently out-of-band target leg (tolerance-widened,
         // `ratio_matches` — the SAME rule `style_properties()`'s own table
         // reads) — empty for an unclassified drawing.
@@ -550,7 +550,7 @@ impl Primitive for XabcdPattern {
                 .with_order(19)
                 .in_group(PropertyGroup::TargetRatios),
         );
-        if let Some(table) = target_ratio_table_property(&self.points, self.pattern_kind.as_ewa_kind(), self.harmonic_tolerance) {
+        if let Some(table) = target_ratio_table_property(&self.points, self.pattern_kind.as_harmonic_kind(), self.harmonic_tolerance) {
             props.push(table);
         }
         props
@@ -730,7 +730,7 @@ mod harmonic_tests {
     /// A Gartley-shaped XABCD, by construction: AB/XA = 0.618 (exact),
     /// BC/AB = 0.5 (in [0.382, 0.886]), CD/BC ≈ 1.544 (in [1.13, 1.618]),
     /// AD/XA = 0.786 (exact) — every leg lands squarely inside its own
-    /// Gartley target band (`mli::ewa::harmonic::GARTLEY`, read via
+    /// Gartley target band (`mli::harmonic::GARTLEY`, read via
     /// `targets_for`, never re-typed here). Direction/sign is irrelevant —
     /// `measured_ratio` only ever reads absolute price differences.
     fn gartley_points() -> [(i64, f64); 5] {
@@ -742,7 +742,7 @@ mod harmonic_tests {
         let mut prim = XabcdPattern::new(gartley_points(), "#9C27B0");
         prim.pattern_kind = XabcdHarmonicKind::Gartley;
 
-        let table = harmonic::targets_for(prim.pattern_kind.as_ewa_kind());
+        let table = harmonic::targets_for(prim.pattern_kind.as_harmonic_kind());
         assert_eq!(table.len(), 4, "Gartley's own table has 4 legs");
         for entry in table {
             let ratio = measured_ratio(&prim.points, entry).expect("every Gartley leg has a nonzero reference on this fixture");
@@ -765,7 +765,7 @@ mod harmonic_tests {
         // touch B at all, so this isolates exactly one broken leg.
         prim.points[2].1 = 30.0;
 
-        let table = harmonic::targets_for(prim.pattern_kind.as_ewa_kind());
+        let table = harmonic::targets_for(prim.pattern_kind.as_harmonic_kind());
         let out_of_band: Vec<(&str, &str)> = table
             .iter()
             .filter(|entry| {
@@ -783,13 +783,13 @@ mod harmonic_tests {
     fn unclassified_default_reports_no_targets_and_marks_nothing() {
         let prim = XabcdPattern::new(gartley_points(), "#9C27B0");
         assert_eq!(prim.pattern_kind, XabcdHarmonicKind::Unclassified);
-        assert!(harmonic::targets_for(prim.pattern_kind.as_ewa_kind()).is_empty());
-        assert!(target_ratio_table_property(&prim.points, prim.pattern_kind.as_ewa_kind(), prim.harmonic_tolerance).is_none());
+        assert!(harmonic::targets_for(prim.pattern_kind.as_harmonic_kind()).is_empty());
+        assert!(target_ratio_table_property(&prim.points, prim.pattern_kind.as_harmonic_kind(), prim.harmonic_tolerance).is_none());
     }
 
     #[test]
     fn tolerance_field_widens_the_band() {
-        let ab_leg = harmonic::targets_for(EwaPatternKind::Gartley)
+        let ab_leg = harmonic::targets_for(HarmonicKind::Gartley)
             .iter()
             .find(|entry| entry.leg == ("A", "B"))
             .expect("Gartley has an AB leg");
@@ -845,7 +845,7 @@ mod harmonic_tests {
         let mut prim = XabcdPattern::new(alt_bat_points(), "#9C27B0");
         prim.pattern_kind = XabcdHarmonicKind::AltBat;
 
-        let table = harmonic::targets_for(prim.pattern_kind.as_ewa_kind());
+        let table = harmonic::targets_for(prim.pattern_kind.as_harmonic_kind());
         assert!(!table.is_empty(), "AltBat must have a real target-ratio table");
         for entry in table {
             let ratio = measured_ratio(&prim.points, entry).expect("every AltBat leg has a nonzero reference on this fixture");
@@ -874,7 +874,7 @@ mod harmonic_tests {
         let mut prim = XabcdPattern::new(deep_crab_points(), "#9C27B0");
         prim.pattern_kind = XabcdHarmonicKind::DeepCrab;
 
-        let table = harmonic::targets_for(prim.pattern_kind.as_ewa_kind());
+        let table = harmonic::targets_for(prim.pattern_kind.as_harmonic_kind());
         assert!(!table.is_empty(), "DeepCrab must have a real target-ratio table");
         for entry in table {
             let ratio = measured_ratio(&prim.points, entry).expect("every DeepCrab leg has a nonzero reference on this fixture");
@@ -892,11 +892,11 @@ mod harmonic_tests {
         let mut prim = XabcdPattern::new(gartley_points(), "#9C27B0");
         prim.pattern_kind = XabcdHarmonicKind::Gartley;
 
-        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_ewa_kind(), prim.harmonic_tolerance)
+        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_harmonic_kind(), prim.harmonic_tolerance)
             .expect("a classified drawing has a target-ratio table");
         let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
 
-        let target_table = harmonic::targets_for(prim.pattern_kind.as_ewa_kind());
+        let target_table = harmonic::targets_for(prim.pattern_kind.as_harmonic_kind());
         assert_eq!(rows.len(), target_table.len());
         for (row, entry) in rows.iter().zip(target_table.iter()) {
             let TableCell::Toned(actual_text, _) = &row[2] else { panic!("Actual column must be a Toned cell") };
@@ -917,13 +917,13 @@ mod harmonic_tests {
     fn applying_pattern_kind_through_apply_path_changes_the_table() {
         let mut prim = XabcdPattern::new(gartley_points(), "#9C27B0");
         assert_eq!(prim.pattern_kind, XabcdHarmonicKind::Unclassified);
-        assert!(target_ratio_table_property(&prim.points, prim.pattern_kind.as_ewa_kind(), prim.harmonic_tolerance).is_none());
+        assert!(target_ratio_table_property(&prim.points, prim.pattern_kind.as_harmonic_kind(), prim.harmonic_tolerance).is_none());
 
         let applied = prim.apply_style_property(PATTERN_KIND_PROPERTY_ID, &PropertyValue::String("gartley".to_string()));
         assert!(applied, "apply_style_property must recognise the pattern_kind id");
         assert_eq!(prim.pattern_kind, XabcdHarmonicKind::Gartley);
 
-        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_ewa_kind(), prim.harmonic_tolerance)
+        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_harmonic_kind(), prim.harmonic_tolerance)
             .expect("classified after apply_style_property");
         let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
         let segments: Vec<String> = rows
@@ -945,7 +945,7 @@ mod harmonic_tests {
         assert!(applied, "apply_style_property must recognise the harmonic_tolerance id");
         assert!((prim.harmonic_tolerance - 0.05).abs() < 1e-12);
 
-        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_ewa_kind(), prim.harmonic_tolerance)
+        let table_property = target_ratio_table_property(&prim.points, prim.pattern_kind.as_harmonic_kind(), prim.harmonic_tolerance)
             .expect("classified drawing has a table");
         let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
 
