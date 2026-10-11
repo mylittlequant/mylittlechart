@@ -90,7 +90,7 @@ opt-level = 2
 digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
 digdigdig3-station = { path = "../digdigdig3/crates/digdigdig3-station" }
 digdigdig3-core = { path = "../digdigdig3/crates/dig3-core" }
-# Local mli (mylittleindicators) path build — same policy as uzor/dig3.
-# The mli-contract branch is a virtual workspace; the package is crates/mli.
-# Host pins are 0.2.0. mlc-promo's published =0.1.8 pin is not in this workspace.
-mylittleindicators = { path = "../mylittleindicators/crates/mli" }
+# mylittleindicators comes from crates.io. Published tip is 0.2.0
+# (origin/master 91989b8, 2026-10-11). Member pins are "0.2.0".
+# Do not path-patch the local tree. mlc-promo's =0.1.8 pin is outside
+# this workspace.
