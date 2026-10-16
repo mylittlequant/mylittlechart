@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2021"
 license.workspace = true
 repository.workspace = true
+description = "Logging, crash capture, and a watchdog for the chart shells."
 
 [lib]
 name = "mlc_shell_diagnostics"

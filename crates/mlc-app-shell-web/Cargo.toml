@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Browser shell for the chart application. The body compiles on wasm32."
 
 [lib]
 name = "mlc_app_shell_web"

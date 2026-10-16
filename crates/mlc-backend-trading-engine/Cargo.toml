@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Trading value types, config, and read-only snapshots."
 
 [lib]
 name = "mlc_backend_trading_engine"

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Trading panel state and renderers hosted in chart sidebar slots."
 
 [lib]
 name = "mlc_app_panels"

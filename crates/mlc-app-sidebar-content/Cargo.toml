@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license.workspace = true
 repository.workspace = true
+description = "Right-sidebar content rendering for the chart application."
 
 [lib]
 name = "mlc_app_sidebar_content"

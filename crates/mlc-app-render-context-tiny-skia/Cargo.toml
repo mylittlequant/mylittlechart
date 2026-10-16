@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "TinySkiaChartRenderContext, a chart-aware wrapper over tiny-skia."
 
 [lib]
 name = "mlc_app_render_context_tiny_skia"

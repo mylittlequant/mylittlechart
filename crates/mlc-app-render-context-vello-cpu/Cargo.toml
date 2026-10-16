@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license.workspace = true
 repository.workspace = true
+description = "VelloCpuChartRenderContext, a chart-aware wrapper over the Vello CPU backend."
 
 [lib]
 name = "mlc_app_render_context_vello_cpu"

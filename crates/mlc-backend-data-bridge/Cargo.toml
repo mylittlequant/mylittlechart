@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Live data bridge from exchange connectors into the sync chart."
 
 [lib]
 name = "mlc_backend_data_bridge"
