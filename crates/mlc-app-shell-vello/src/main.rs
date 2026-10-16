@@ -80,7 +80,7 @@ use app_state::AppState;
 /// The PNG bytes are embedded at compile time so there is no runtime I/O.
 /// Returns `None` if decoding fails so a missing icon never crashes the app.
 fn load_window_icon() -> Option<Icon> {
-    let icon_bytes = include_bytes!("../../../assets/mascot/icon_32.png");
+    let icon_bytes = include_bytes!("../assets/mascot/icon_32.png");
     let decoder = png::Decoder::new(std::io::Cursor::new(icon_bytes));
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];

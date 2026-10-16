@@ -10,7 +10,7 @@ use mlc_core::state::toolbar_state::{MascotAnim, MascotAnimKind};
 
 /// The brand mark (owner ruling 2026-09-10: the bull is retired, the magic
 /// hat replaces it everywhere the mascot is drawn).
-const MAGIC_HAT_SVG: &str = include_str!("../../../../assets/mascot/magic_hat.svg");
+const MAGIC_HAT_SVG: &str = include_str!("../../assets/mascot/magic_hat.svg");
 
 // =============================================================================
 // Local type definitions (replace core's WidgetRect and IconId)

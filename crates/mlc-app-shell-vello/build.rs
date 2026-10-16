@@ -4,7 +4,7 @@ fn main() {
     {
         let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
         let mut res = winresource::WindowsResource::new();
-        res.set_icon("../../assets/mascot/icon.ico");
+        res.set_icon("assets/mascot/icon.ico");
         res.set("ProductName",      "My Little Chart");
         res.set("CompanyName",      "chart.example");
         res.set("FileDescription",  "mylittlechart");
