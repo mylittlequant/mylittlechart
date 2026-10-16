@@ -3,6 +3,7 @@ name = "mylittlechart-cloud"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Cloud sync client for the MLC server API — serde models + transport. Wasm32 transport via web-sys fetch; native transport lands with updater phase 2."
 
 [lib]

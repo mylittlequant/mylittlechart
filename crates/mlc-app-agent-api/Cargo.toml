@@ -3,6 +3,7 @@ name = "mylittlechart-app-agent-api"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Render-agnostic Agent API plumbing — snapshot builders + command dispatch over ChartApp"
 
 [lib]

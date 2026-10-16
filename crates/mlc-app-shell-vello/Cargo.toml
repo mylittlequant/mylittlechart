@@ -1,9 +1,10 @@
 [package]
-name = "mylittlechart-app-shell-vello"
+name = "mylittlechart"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Standalone chart vello/winit runner — like terminal-vello but for chart-app"
+repository.workspace = true
+description = "GPU-accelerated desktop charting and order-flow terminal for 18 crypto exchanges. 480+ indicators, multi-window, scriptable agent API."
 
 [[bin]]
 name = "mylittlechart"

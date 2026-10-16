@@ -3,6 +3,7 @@ name = "mylittlechart-app-render-context-vello"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "VelloGpuRenderContext — chart-aware wrapper delegating to uzor-backend-vello-gpu"
 
 [lib]

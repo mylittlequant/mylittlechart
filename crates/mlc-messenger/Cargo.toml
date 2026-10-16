@@ -3,8 +3,8 @@ name = "mylittlechart-messenger"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
-description = "Sans-I/O Matrix Client-Server-subset sync + E2EE (Olm/Megolm) engine -- no network, no disk; shells execute OutgoingRequests and persist sealed records the core exports through a flush-before-send barrier."
+repository.workspace = true
+description = "Sans-I/O Matrix Client-Server-subset sync + E2EE (Olm, Megolm, SAS) engine -- no network, no disk; shells execute OutgoingRequests and persist sealed records the core exports through a flush-before-send barrier."
 
 [lib]
 name = "mlc_messenger"

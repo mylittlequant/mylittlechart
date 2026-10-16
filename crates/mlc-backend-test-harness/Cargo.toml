@@ -3,6 +3,7 @@ name = "mylittlechart-backend-test-harness"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Test harness for mlc-backend + mlc-backend-shell-daemon + mlc-backend-shell-http. Spins a real BackendCore, drives it with synthetic LiveUpdates, talks to the daemon over HTTP. Not a tests/ folder — a real lib crate so it can be reused by other consumers."
 
 [lib]

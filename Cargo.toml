@@ -66,6 +66,7 @@ base64 = "0.22"
 version = "0.5.656"
 edition = "2021"
 license = "MIT"
+repository = "https://github.com/ZENG3LD/mylittlechart"
 
 [profile.release]
 opt-level = "s"
@@ -80,4 +81,5 @@ opt-level = 2
 
 # digdigdig3, digdigdig3-station, and digdigdig3-core come from crates.io.
 # Direct pins are "=0.3.32". uzor is crates.io 1.5.3. mylittleindicators
-# is crates.io 0.2.0. No path patch. mlc-promo stays "=0.1.8".
+# is the exact pin "=0.2.0" (0.2.1 adds Family::Candle, not matched here).
+# No path patch. mlc-promo stays "=0.1.8".

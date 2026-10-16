@@ -3,6 +3,7 @@ name = "mylittlechart-app-layout"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Desktop/wasm frontend layer for mylittlechart — layout, render, ui widgets, hit-testing, input. Consumes mlc-core state; temporary until the tessera app shell lands."
 
 [lib]

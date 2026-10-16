@@ -3,6 +3,7 @@ name = "mylittlechart-alert-delivery"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Alert notification delivery for zengeld-terminal"
 
 [lib]

@@ -3,6 +3,7 @@ name = "mylittlechart-backend-shell-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Mode-2 backend daemon — Arc<BackendCore> + HTTP server, no embedded ChartApp. N external apps attach over HTTP/WS."
 
 [[bin]]

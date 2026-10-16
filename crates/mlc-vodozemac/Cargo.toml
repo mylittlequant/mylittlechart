@@ -4,7 +4,7 @@ version.workspace = true
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0"
-publish = false
+repository = "https://github.com/ZENG3LD/mylittlechart"
 description = "Vendored, reduced fork of vodozemac 0.10.0 (Olm, Megolm, SAS) -- see FORK.md."
 
 [lib]

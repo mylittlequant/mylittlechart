@@ -3,6 +3,7 @@ name = "mylittlechart-app-shell-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Dual-mode CLI for the mlc backend. Default: HTTP client against a running mlc-backend-shell-daemon. Mirrors every Mode-2 control plane endpoint as a flat sub-command."
 
 [[bin]]

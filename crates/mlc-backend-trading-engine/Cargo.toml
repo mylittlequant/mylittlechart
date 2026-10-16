@@ -3,6 +3,7 @@ name = "mylittlechart-backend-trading-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [lib]
 name = "mlc_backend_trading_engine"

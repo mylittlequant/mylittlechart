@@ -3,6 +3,7 @@ name = "mylittlechart-backend"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Shared data plane (bridge + bubble + indicators + trading + presets) for every mylittlechart consumer — embedded apps and the headless backend daemon."
 
 [lib]

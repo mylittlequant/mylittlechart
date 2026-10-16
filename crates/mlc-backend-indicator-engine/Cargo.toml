@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Technical indicators library for zengeld-terminal"
 license = "MIT"
+repository = "https://github.com/ZENG3LD/mylittlechart"
 
 [lib]
 name = "mlc_backend_indicator_engine"
@@ -23,7 +24,7 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 # re-exports BarIndicatorId, IndicatorInstance, RenderingMetadata, and
 # IndicatorValue from mli while keeping the mlc-owned UI layer
 # (IndicatorManager state, SignalEngine, value_adapter, indicator_bridge).
-mli = { version = "0.2.0", package = "mylittleindicators" }
+mli = { version = "=0.2.0", package = "mylittleindicators" }
 
 [lints]
 workspace = true
