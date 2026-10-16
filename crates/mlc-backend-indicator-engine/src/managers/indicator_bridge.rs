@@ -202,7 +202,7 @@ fn map_family(family: Option<Family>) -> IndicatorCategory {
         Some(Family::Oscillator) => IndicatorCategory::Momentum,
         Some(Family::Volatility) => IndicatorCategory::Volatility,
         Some(Family::OrderBook | Family::Liquidations) => IndicatorCategory::Volume,
-        Some(Family::OpenInterest) | None => IndicatorCategory::Custom,
+        Some(Family::OpenInterest) | Some(Family::Candle) | None => IndicatorCategory::Custom,
     }
 }
 
@@ -234,6 +234,7 @@ fn family_phrase(family: Option<Family>) -> &'static str {
         Some(Family::OrderBook) => "order book",
         Some(Family::OpenInterest) => "open interest",
         Some(Family::Liquidations) => "liquidation",
+        Some(Family::Candle) => "candle",
         None => "",
     }
 }

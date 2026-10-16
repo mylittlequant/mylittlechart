@@ -81,5 +81,5 @@ opt-level = 2
 
 # digdigdig3, digdigdig3-station, and digdigdig3-core come from crates.io.
 # Direct pins are "=0.3.32". uzor is crates.io 1.5.3. mylittleindicators
-# is the exact pin "=0.2.0" (0.2.1 adds Family::Candle, not matched here).
+# is the exact pin "=0.2.1". Family::Candle maps to Custom.
 # No path patch. mlc-promo stays "=0.1.8".
