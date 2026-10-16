@@ -56,7 +56,7 @@ base64.workspace = true
 test-support = []
 
 [dev-dependencies]
-mylittlechart-messenger = { version = "0.5.656", path = ".", features = ["test-support"] }
+mylittlechart-messenger = { path = ".", features = ["test-support"] }
 # `tests/live_two_core.rs` (all `#[ignore]`) drives real `MessengerDriver`s
 # over HTTP against a local `mylittlechart-server` stand. Same reqwest 0.12 /
 # rustls-tls shape the native shell already uses, plus `blocking` so the pump
