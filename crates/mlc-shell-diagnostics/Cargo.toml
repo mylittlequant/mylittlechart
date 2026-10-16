@@ -2,6 +2,7 @@
 name = "mylittlechart-shell-diagnostics"
 version.workspace = true
 edition = "2021"
+license.workspace = true
 
 [lib]
 name = "mlc_shell_diagnostics"

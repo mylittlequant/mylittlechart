@@ -53,6 +53,7 @@ Thumbs.db
 
 # Env / secrets (defense in depth — secrets should NEVER hit a tracked file)
 *.env
+build.local.env
 /env/
 secrets.toml
 credentials.json

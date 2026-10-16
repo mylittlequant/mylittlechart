@@ -2,6 +2,7 @@
 name = "mylittlechart-app"
 version = "0.1.0"
 edition = "2021"
+license.workspace = true
 
 [lib]
 name = "mlc_app"
@@ -27,7 +28,7 @@ mlc-cloud = { path = "../mlc-cloud", package = "mylittlechart-cloud", optional =
 uuid = { version = "1", features = ["v4"] }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
-digdigdig3 = "=0.3.31"
+digdigdig3 = "=0.3.32"
 # Book levels come off the shared station trackers as `Decimal` — the same
 # conversion the DOM panels do on their side of the handle.
 rust_decimal = "1"
@@ -54,7 +55,7 @@ vt100 = "0.15"
 
 [dev-dependencies]
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-digdigdig3-station = "=0.3.31"
+digdigdig3-station = "=0.3.32"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["console"] }

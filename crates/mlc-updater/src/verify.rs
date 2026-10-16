@@ -7,10 +7,10 @@
 //!
 //! # Key rotation
 //!
-//! [`ALLOWED_PUBLIC_KEYS`] is a fixed-size slice of 32-byte Ed25519 public
-//! keys. During a key rotation, add the new key to the array and deploy a
-//! release. Once all clients have updated, remove the old key in a subsequent
-//! release. See the PRD (`prd-code-signing.md` §7.2) for the full procedure.
+//! [`allowed_public_keys`] is the 32-byte Ed25519 public key from
+//! `MLC_UPDATE_PUBLIC_KEY` (64 hex characters) at build time, or empty when
+//! that value is unset. During a key rotation, ship a build that trusts the
+//! new key. See the PRD (`prd-code-signing.md` §7.2) for the full procedure.
 //!
 //! # Transition period
 //!
@@ -26,32 +26,54 @@ use sha2::{Digest, Sha256};
 // Trusted public keys
 // =============================================================================
 
-/// Primary Ed25519 public key (32 raw bytes).
-///
-/// To generate a real keypair (offline, trusted machine):
-/// ```text
-/// openssl genpkey -algorithm Ed25519 -out signing_key.pem
-/// openssl pkey -in signing_key.pem -pubout -out signing_key_pub.pem
-/// # Extract 32-byte raw public key (for embedding here):
-/// openssl pkey -in signing_key_pub.pem -pubin -outform DER | tail -c 32 | xxd -i
-/// # Extract 32-byte raw private key (for GitHub Secret RELEASE_SIGNING_KEY):
-/// openssl pkey -in signing_key.pem -outform DER | tail -c 32 | base64
-/// ```
-///
-const PRIMARY_PUBLIC_KEY: &[u8; 32] = &[
-    0x12, 0x9a, 0xcc, 0x36, 0xb6, 0x12, 0x74, 0x4c,
-    0xd0, 0x52, 0xd0, 0xbc, 0x5f, 0x85, 0xf3, 0xab,
-    0x14, 0xb8, 0xb2, 0x21, 0x84, 0x7f, 0xc3, 0x82,
-    0x4a, 0xd1, 0xc8, 0x09, 0xdd, 0xee, 0xe4, 0x44,
-];
+const fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
 
-/// All currently trusted public keys.
+/// `MLC_UPDATE_PUBLIC_KEY` is 64 hex chars (32 bytes). Anything else is no key.
+const fn parse_pubkey_hex(hex: &str) -> Option<[u8; 32]> {
+    let bytes = hex.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        let hi = match hex_nibble(bytes[i * 2]) {
+            Some(v) => v,
+            None => return None,
+        };
+        let lo = match hex_nibble(bytes[i * 2 + 1]) {
+            Some(v) => v,
+            None => return None,
+        };
+        out[i] = (hi << 4) | lo;
+        i += 1;
+    }
+    Some(out)
+}
+
+/// Key from `MLC_UPDATE_PUBLIC_KEY`, when the build supplied 64 hex characters.
+static UPDATE_PUBLIC_KEY: Option<[u8; 32]> = match option_env!("MLC_UPDATE_PUBLIC_KEY") {
+    Some(hex) => parse_pubkey_hex(hex),
+    None => None,
+};
+
+/// Trusted Ed25519 public keys.
 ///
-/// During key rotation, both old and new keys are present here simultaneously.
-/// After all clients have updated to the new key, the old key is removed.
-pub const ALLOWED_PUBLIC_KEYS: &[&[u8; 32]] = &[
-    PRIMARY_PUBLIC_KEY,
-];
+/// Empty when `MLC_UPDATE_PUBLIC_KEY` is unset or not 64 hex characters.
+/// Unsigned manifests then stay [`VerifyResult::Unsigned`].
+pub fn allowed_public_keys() -> &'static [[u8; 32]] {
+    match UPDATE_PUBLIC_KEY.as_ref() {
+        Some(key) => std::slice::from_ref(key),
+        None => &[],
+    }
+}
 
 // =============================================================================
 // Verification result
@@ -83,7 +105,7 @@ pub enum VerifyResult {
 /// The `signature_b64` argument must be a standard (RFC 4648) base64-encoded
 /// 64-byte Ed25519 signature — the same format produced by `tools/signer/`.
 ///
-/// Returns [`VerifyResult::Valid`] if any key in [`ALLOWED_PUBLIC_KEYS`]
+/// Returns [`VerifyResult::Valid`] if any key in [`allowed_public_keys`]
 /// accepts the signature.  All other variants indicate either an unsigned
 /// release (allowed during transition) or a security violation (must reject).
 pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> VerifyResult {
@@ -121,11 +143,11 @@ pub fn verify_binary_signature(binary_data: &[u8], signature_b64: &str) -> Verif
     let hash = Sha256::digest(binary_data);
 
     // Try each trusted public key.  The first match is sufficient.
-    for pubkey_bytes in ALLOWED_PUBLIC_KEYS {
+    for pubkey_bytes in allowed_public_keys() {
         let verifying_key = match VerifyingKey::from_bytes(pubkey_bytes) {
             Ok(k) => k,
             Err(e) => {
-                log::warn!("[Updater] Skipping malformed public key in ALLOWED_PUBLIC_KEYS: {}", e);
+                log::warn!("[Updater] Skipping malformed public key in allowed_public_keys: {}", e);
                 continue;
             }
         };

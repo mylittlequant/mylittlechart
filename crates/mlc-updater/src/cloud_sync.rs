@@ -1,4 +1,4 @@
-//! Cloud sync HTTP module — push/pull sync items to/from chart.example.
+//! Cloud sync HTTP module — push/pull sync items to/from [`crate::UPDATE_SERVER`].
 //!
 //! This module handles:
 //! - Collecting local profile data and classifying it into sync tiers.

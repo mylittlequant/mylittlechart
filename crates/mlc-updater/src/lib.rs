@@ -61,7 +61,19 @@ use tokio::sync::{mpsc, watch};
 use std::sync::Arc;
 
 /// Base URL for the update server.
-const UPDATE_SERVER: &str = "https://chart.example";
+///
+/// `MLC_ORIGIN` from `build.local.env` (see `build.local.env.example`) when
+/// that value is non-empty. Otherwise the stand-in host.
+pub const UPDATE_SERVER: &str = match option_env!("MLC_ORIGIN") {
+    Some(origin) => {
+        if origin.is_empty() {
+            "https://chart.example"
+        } else {
+            origin
+        }
+    }
+    None => "https://chart.example",
+};
 
 /// The release track this client asks the server for.
 ///
@@ -149,7 +161,7 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// the existing tokio runtime (spawned via `tokio::spawn`).
 ///
 /// `connected` controls whether the updater makes any HTTP calls to
-/// chart.example on startup. In standalone mode (`connected = false`)
+/// [`UPDATE_SERVER`] on startup. In standalone mode (`connected = false`)
 /// the loop still runs so it can handle commands, but no network traffic
 /// is generated until a `SetCloudEnabled(true)` command arrives.
 ///

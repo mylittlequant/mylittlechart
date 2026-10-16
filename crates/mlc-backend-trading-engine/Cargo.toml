@@ -2,12 +2,13 @@
 name = "mylittlechart-backend-trading-engine"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "mlc_backend_trading_engine"
 
 [dependencies]
-digdigdig3 = "=0.3.31"
+digdigdig3 = "=0.3.32"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

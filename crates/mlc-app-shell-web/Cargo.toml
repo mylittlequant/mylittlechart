@@ -2,6 +2,7 @@
 name = "mylittlechart-app-shell-web"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "mlc_app_shell_web"
@@ -58,7 +59,7 @@ uzor-render-canvas2d  = "=1.5.3"
 # uzor-render-vello-hybrid = { version = "=1.4.16", optional = true }
 # uzor-render-vello-gpu    = { version = "=1.4.16", optional = true }
 
-digdigdig3 = "=0.3.31"
+digdigdig3 = "=0.3.32"
 
 # wasm-bindgen ecosystem
 wasm-bindgen         = "0.2"

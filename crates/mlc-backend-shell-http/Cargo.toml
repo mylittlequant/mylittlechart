@@ -2,6 +2,7 @@
 name = "mylittlechart-backend-shell-http"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "mlc_backend_shell_http"

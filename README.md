@@ -2,7 +2,7 @@
 
 GPU-accelerated desktop charting and order-flow terminal for crypto traders. 18 exchanges, 480+ indicators, multi-window, scriptable through a local HTTP agent API.
 
-**Site:** [chart.example](https://chart.example)
+**Origin:** set `MLC_ORIGIN` in `build.local.env`. See `build.local.env.example`.
 **Telegram channel:** [@mylittlechart](https://t.me/mylittlechart) · **X:** [@mylittlechart](https://x.com/mylittlechart)
 
 > **Status:** Alpha. Trading is not yet wired to live exchange APIs — market data only. Paper trading engine works locally.
@@ -53,13 +53,7 @@ Requires Rust stable. Primary development target is Windows 11; macOS and Linux 
 
 ## License
 
-[Business Source License 1.1](LICENSE).
-
-- Free for personal trading, non-commercial use, and internal business use within a single organization.
-- A commercial license is required to provide a "Commercial Trading Service" — any product or service made available to third parties (free or paid) that gives users the ability to trade financial instruments.
-- Change Date **2030-05-24** — at that point the code converts to Apache 2.0.
-
-For commercial licensing inquiries: open an issue tagged `commercial-license` or reach out via [Telegram @zeng3ld](https://t.me/zeng3ld).
+[MIT](LICENSE).
 
 ## Contributing
 

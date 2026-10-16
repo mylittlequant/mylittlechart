@@ -65,7 +65,7 @@ base64 = "0.22"
 [workspace.package]
 version = "0.5.656"
 edition = "2021"
-license = "BUSL-1.1"
+license = "MIT"
 
 [profile.release]
 opt-level = "s"
@@ -78,19 +78,6 @@ strip = "none"
 [profile.dev.package.mylittlechart-backend-indicator-engine]
 opt-level = 2
 
-[patch.crates-io]
-# uzor comes from crates.io. Published tip is 1.5.3 (owner 2026-10-03:
-# do not path-patch the local tree; its 1.6.0-dev label is not a release).
-# Pins below are "=1.5.3".
-# Local dig3 path build. Pins stay at the published
-# 0.3.25; the patch resolves them to the working tree so in-flight dig3
-# fixes are picked up without a publish round-trip. Keep pins == published
-# dig3 version on every bump; all three crates patched together so the
-# graph resolves one consistent version.
-digdigdig3 = { path = "../digdigdig3/crates/digdigdig3" }
-digdigdig3-station = { path = "../digdigdig3/crates/digdigdig3-station" }
-digdigdig3-core = { path = "../digdigdig3/crates/dig3-core" }
-# mylittleindicators comes from crates.io. Published tip is 0.2.0
-# (origin/master 91989b8, 2026-10-11). Member pins are "0.2.0".
-# Do not path-patch the local tree. mlc-promo's =0.1.8 pin is outside
-# this workspace.
+# digdigdig3, digdigdig3-station, and digdigdig3-core come from crates.io.
+# Direct pins are "=0.3.32". uzor is crates.io 1.5.3. mylittleindicators
+# is crates.io 0.2.0. No path patch. mlc-promo stays "=0.1.8".

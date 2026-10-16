@@ -854,7 +854,7 @@ async fn fetch_news_feed(
         .build()
         .unwrap_or_default();
     let body: serde_json::Value = client
-        .get("https://chart.example/api/posts?limit=100")
+        .get(format!("{}/api/posts?limit=100", mlc_updater::UPDATE_SERVER))
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -6706,7 +6706,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         raw_url
                     } else {
                         let path = raw_url.strip_prefix('/').unwrap_or(&raw_url);
-                        format!("https://chart.example/{path}")
+                        format!("{}/{path}", mlc_updater::UPDATE_SERVER)
                     };
                     pw.chart.pending_open_url = Some(url);
                 }

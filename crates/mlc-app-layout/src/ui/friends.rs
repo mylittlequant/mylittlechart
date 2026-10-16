@@ -110,7 +110,19 @@ pub mod hit {
 }
 
 /// The origin invite links are shared under.
-pub const INVITE_ORIGIN: &str = "https://chart.example";
+///
+/// `MLC_ORIGIN` from `build.local.env` when that value is non-empty.
+/// Otherwise the stand-in host.
+pub const INVITE_ORIGIN: &str = match option_env!("MLC_ORIGIN") {
+    Some(origin) => {
+        if origin.is_empty() {
+            "https://chart.example"
+        } else {
+            origin
+        }
+    }
+    None => "https://chart.example",
+};
 
 /// The shareable link of an invite token.
 pub fn invite_link(token: &str) -> String {
