@@ -10,10 +10,10 @@ description = "Platform-neutral input pipeline shared by vello and web shells"
 name = "mlc_app_input_shell"
 
 [dependencies]
-mlc-app    = { path = "../mlc-app",    package = "mylittlechart-app"    }
-mlc-core   = { path = "../mlc-core",   package = "mylittlechart-core"   }
-mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
-mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+mlc-app    = { version = "0.1.0", path = "../mlc-app",    package = "mylittlechart-app"    }
+mlc-core   = { version = "0.5.656", path = "../mlc-core",   package = "mylittlechart-core"   }
+mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 uzor       = "=1.5.3"
 web-time   = "1"
 # NO winit, NO arboard, NO wasm-bindgen, NO vello

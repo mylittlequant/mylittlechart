@@ -11,17 +11,17 @@ name = "mlc_messenger"
 path = "src/lib.rs"
 
 [dependencies]
-mylittlechart-vodozemac = { path = "../mlc-vodozemac" }
+mylittlechart-vodozemac = { version = "0.5.656", path = "../mlc-vodozemac" }
 # The legacy-DM decrypt path (`src/legacy_dm.rs`, M11) reuses
 # `mlc_vault::dm` as-is (X25519 identity, per-conversation ECDH, AES-GCM
 # seal/open, the shared `message_aad` AAD helper) rather than
 # reimplementing it a second time in this sans-I/O crate -- `mlc-vault` is
 # itself a pure leaf (no workspace deps of its own), so this stays a
 # one-way dependency edge, same shape as `mylittlechart-vodozemac` above.
-mylittlechart-vault = { path = "../mlc-vault" }
+mylittlechart-vault = { version = "0.5.656", path = "../mlc-vault" }
 # The UI data contract `provider::SnapshotProvider` implements -- a pure-std,
 # zero-dependency leaf, so this adds no supply-chain surface.
-mylittlechart-messenger-model = { path = "../mlc-messenger-model" }
+mylittlechart-messenger-model = { version = "0.5.656", path = "../mlc-messenger-model" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
@@ -56,7 +56,7 @@ base64.workspace = true
 test-support = []
 
 [dev-dependencies]
-mylittlechart-messenger = { path = ".", features = ["test-support"] }
+mylittlechart-messenger = { version = "0.5.656", path = ".", features = ["test-support"] }
 # `tests/live_two_core.rs` (all `#[ignore]`) drives real `MessengerDriver`s
 # over HTTP against a local `mylittlechart-server` stand. Same reqwest 0.12 /
 # rustls-tls shape the native shell already uses, plus `blocking` so the pump

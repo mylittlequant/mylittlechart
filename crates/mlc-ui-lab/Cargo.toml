@@ -21,17 +21,17 @@ crate-type = ["cdylib", "rlib"]
 # Serve:  see README.md (port 17498)
 
 [dependencies]
-mlc-core        = { path = "../mlc-core",        package = "mylittlechart-core" }
+mlc-core        = { version = "0.5.656", path = "../mlc-core",        package = "mylittlechart-core" }
 # `cloud` unconditional (not a lab-local feature): `crate::community` hosts
 # the REAL Community modal (`layout::modals::community`, `cloud`-gated in
 # mlc-app-layout itself) — see that module's own doc. Cheap to always carry:
 # mlc-app-layout's own `cloud` feature turns on only `mlc-core/cloud`, none
 # of the heavier optional deps (`mlc-cloud`/`mlc-vault`) that gate
 # mlc-app-shell-web's own same-named feature.
-mlc-app-layout  = { path = "../mlc-app-layout",  package = "mylittlechart-app-layout", features = ["cloud"] }
+mlc-app-layout  = { version = "0.5.656", path = "../mlc-app-layout",  package = "mylittlechart-app-layout", features = ["cloud"] }
 # The messenger UI's own data contract (`community.rs`'s fixture
 # `MessengerProvider` impl, messenger concept v1 screen 1 parity).
-mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
+mlc-messenger-model = { version = "0.5.656", path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
 
 # uzor web bindings — wasm32-only at runtime, unconditional in Cargo.toml so
 # cargo can resolve the graph on native (the cfg-gate in src/lib.rs keeps the

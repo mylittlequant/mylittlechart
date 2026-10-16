@@ -11,8 +11,8 @@ name = "mlc_app_sidebar_content"
 
 [dependencies]
 web-time = "1"
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 uzor = "=1.5.3"
 serde = { version = "1.0", features = ["derive"] }
 

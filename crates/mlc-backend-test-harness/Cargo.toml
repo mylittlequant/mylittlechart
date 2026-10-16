@@ -11,9 +11,9 @@ name = "mlc_backend_test_harness"
 
 [dependencies]
 web-time = "1"
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 digdigdig3 = "=0.3.32"
 digdigdig3-station = "=0.3.32"
 serde_json = "1"
@@ -27,7 +27,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # shell-http tugs in axum + full tokio; native-only because both fail to
 # compile to wasm32 (mio / socket2 dependencies).
-mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
+mlc-backend-shell-http = { version = "0.5.656", path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["sync", "macros"] }

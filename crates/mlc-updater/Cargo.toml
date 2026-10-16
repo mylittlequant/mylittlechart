@@ -11,8 +11,8 @@ name = "mlc_updater"
 path = "src/lib.rs"
 
 [dependencies]
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
 tokio = { version = "1", features = ["rt", "time", "sync", "process", "fs", "macros", "net", "io-util"] }
 reqwest = { version = "0.12", features = ["rustls-tls", "stream", "json", "multipart"], default-features = false }
 sha2 = "0.10"

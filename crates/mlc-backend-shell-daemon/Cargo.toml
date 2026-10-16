@@ -12,10 +12,10 @@ path = "src/main.rs"
 
 [dependencies]
 web-time = "1"
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync"] }
 axum = { version = "0.7", features = ["http1", "json"] }
 tower = "0.4"

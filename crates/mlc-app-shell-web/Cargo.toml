@@ -18,31 +18,31 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # MLC lib graph — all 12 lib crates compile to wasm32 after Phase 0-2
-mlc-app          = { path = "../mlc-app",          package = "mylittlechart-app"          }
-mlc-app-input-shell  = { path = "../mlc-app-input-shell",  package = "mylittlechart-app-input-shell"  }
-mlc-app-layout    = { path = "../mlc-app-layout",    package = "mylittlechart-app-layout"    }
-mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-mlc-backend-data-bridge    = { path = "../mlc-backend-data-bridge",    package = "mylittlechart-backend-data-bridge"    }
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
-mlc-core         = { path = "../mlc-core",         package = "mylittlechart-core"         }
+mlc-app          = { version = "0.1.0", path = "../mlc-app",          package = "mylittlechart-app"          }
+mlc-app-input-shell  = { version = "0.5.656", path = "../mlc-app-input-shell",  package = "mylittlechart-app-input-shell"  }
+mlc-app-layout    = { version = "0.5.656", path = "../mlc-app-layout",    package = "mylittlechart-app-layout"    }
+mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+mlc-backend-data-bridge    = { version = "0.5.656", path = "../mlc-backend-data-bridge",    package = "mylittlechart-backend-data-bridge"    }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-core         = { version = "0.5.656", path = "../mlc-core",         package = "mylittlechart-core"         }
 # Cloud sync client (server API). Optional: official builds enable the
 # `cloud` feature; a bare OSS checkout builds the purely local chart.
-mlc-cloud        = { path = "../mlc-cloud",        package = "mylittlechart-cloud", optional = true }
+mlc-cloud        = { version = "0.5.656", path = "../mlc-cloud",        package = "mylittlechart-cloud", optional = true }
 # DM crypto (`mlc_vault::dm`) for the Community modal's Messages tab —
 # paid web users hold the vault too (owner ruling 2026-09-09); E2E rides
 # through the server, which never decrypts. Already resolves to wasm32 as
 # a transitive dep of `mlc-backend`/`mlc-app` here — this crate calls it
 # directly only from `cloud_session.rs`, hence gated with `cloud` below
 # rather than pulled in unconditionally.
-mlc-vault        = { path = "../mlc-vault",        package = "mylittlechart-vault", optional = true }
+mlc-vault        = { version = "0.5.656", path = "../mlc-vault",        package = "mylittlechart-vault", optional = true }
 # `messenger_io.rs`: the web glue over `mlc_messenger::driver::MessengerDriver` (fetch +
 # IndexedDB + a Web Lock). Gated with `cloud` like `mlc-vault`: the messenger talks to
 # the account server with the cloud bearer token and is keyed by the vault.
-mlc-messenger    = { path = "../mlc-messenger",    package = "mylittlechart-messenger", optional = true }
+mlc-messenger    = { version = "0.5.656", path = "../mlc-messenger",    package = "mylittlechart-messenger", optional = true }
 # `VaultState` (the "open in another tab" state a waiting tab reports) lives in the
 # messenger view-model leaf; `mlc-messenger` does not re-export it. Already in the
 # graph through `mlc-messenger`, so this adds no new package.
-mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model", optional = true }
+mlc-messenger-model = { version = "0.5.656", path = "../mlc-messenger-model", package = "mylittlechart-messenger-model", optional = true }
 # `messenger_io.rs` wraps the vault key as `Zeroizing<[u8; 32]>` for `MessengerDriver::new`
 # (same use as `mlc-app-shell-vello`); already a dependency of `mlc-vault`/`mlc-messenger`.
 zeroize          = { version = "1", optional = true }

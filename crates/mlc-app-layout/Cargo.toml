@@ -12,9 +12,9 @@ path = "src/lib.rs"
 
 [dependencies]
 web-time = "1"
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-messenger-model = { version = "0.5.656", path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
 uzor = "=1.5.3"
 uzor-text = "=1.5.3"
 

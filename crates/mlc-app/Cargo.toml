@@ -11,25 +11,25 @@ name = "mlc_app"
 
 [dependencies]
 web-time = "1"
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
-mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
 uzor = "=1.5.3"
-mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-mlc-app-panels = { path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
-mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+mlc-app-panels = { version = "0.5.656", path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
+mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
 # `MessengerProvider` / `MessengerIntent` — the seam `ChartApp::set_messenger_provider`
 # hands the Messages tab an outside (Matrix-shaped) provider through. A pure-std,
 # zero-dependency leaf, already a dependency of `mlc-app-layout`.
-mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
+mlc-messenger-model = { version = "0.5.656", path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
 # Billing wire models for the checkout bridge (`checkout_bridge.rs`): models
 # only, the fetch transport stays in the web shell. Cloud builds only.
-mlc-cloud = { path = "../mlc-cloud", package = "mylittlechart-cloud", optional = true }
+mlc-cloud = { version = "0.5.656", path = "../mlc-cloud", package = "mylittlechart-cloud", optional = true }
 uuid = { version = "1", features = ["v4"] }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-backend-trading-engine = { version = "0.5.656", path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 digdigdig3 = "=0.3.32"
 # Book levels come off the shared station trackers as `Decimal` — the same
 # conversion the DOM panels do on their side of the handle.
@@ -56,7 +56,7 @@ vt100 = "0.15"
 # runs on wasm32 (headless Chrome) AND native (tokio multi-thread).
 
 [dev-dependencies]
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 digdigdig3-station = "=0.3.32"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -12,11 +12,11 @@ name = "mlc_backend"
 [dependencies]
 web-time = "1"
 log = "0.4"
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
-mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-backend-trading-engine = { version = "0.5.656", path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
 digdigdig3 = "=0.3.32"
 digdigdig3-station = "=0.3.32"
 dashmap = "6"

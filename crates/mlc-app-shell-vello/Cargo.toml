@@ -13,20 +13,20 @@ path = "src/main.rs"
 [dependencies]
 tracing = "0.1"
 web-time = "1"
-mlc-shell-diagnostics = { path = "../mlc-shell-diagnostics", package = "mylittlechart-shell-diagnostics" }
-mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
-mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-app-render-context-vello = { path = "../mlc-app-render-context-vello", package = "mylittlechart-app-render-context-vello" }
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
-mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+mlc-shell-diagnostics = { version = "0.5.656", path = "../mlc-shell-diagnostics", package = "mylittlechart-shell-diagnostics" }
+mlc-app = { version = "0.1.0", path = "../mlc-app", package = "mylittlechart-app" }
+mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
+mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-app-render-context-vello = { version = "0.5.656", path = "../mlc-app-render-context-vello", package = "mylittlechart-app-render-context-vello" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-input-shell = { version = "0.5.656", path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 # `messenger_io.rs`'s own I/O glue over `mlc_messenger::driver::MessengerDriver`
 # (M15 piece D1/D2) -- not wired into `ChartApp` yet (the MLC coordinator
 # does that separately).
-mlc-messenger = { path = "../mlc-messenger", package = "mylittlechart-messenger" }
+mlc-messenger = { version = "0.5.656", path = "../mlc-messenger", package = "mylittlechart-messenger" }
 # `messenger_io.rs` wraps the vault key it's handed as `Zeroizing<[u8; 32]>`
 # before handing it to `MessengerDriver::new` -- already a direct dependency
 # of `mlc-vault`/`mlc-messenger` themselves, so this adds no new
@@ -52,19 +52,19 @@ serde_json = "1"
 # default-features=false. Leaving this on pulls in native-tls (reqwest's
 # "default-tls" default feature) alongside rustls in the same binary.
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
-mlc-updater = { path = "../mlc-updater", package = "mylittlechart-updater" }
-mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
-mlc-app-agent-api = { path = "../mlc-app-agent-api", package = "mylittlechart-app-agent-api" }
-mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-updater = { version = "0.5.656", path = "../mlc-updater", package = "mylittlechart-updater" }
+mlc-backend-shell-http = { version = "0.5.656", path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
+mlc-app-agent-api = { version = "0.5.656", path = "../mlc-app-agent-api", package = "mylittlechart-app-agent-api" }
+mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
 sysinfo = "0.34"
-mlc-app-render-context-instanced = { path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
+mlc-app-render-context-instanced = { version = "0.1.0", path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
 uzor-render-wgpu-instanced = "=1.5.3"
-mlc-app-render-context-vello-cpu = { path = "../mlc-app-render-context-vello-cpu", package = "mylittlechart-app-render-context-vello-cpu" }
-mlc-app-render-context-vello-hybrid = { path = "../mlc-app-render-context-vello-hybrid", package = "mylittlechart-app-render-context-vello-hybrid" }
+mlc-app-render-context-vello-cpu = { version = "0.1.0", path = "../mlc-app-render-context-vello-cpu", package = "mylittlechart-app-render-context-vello-cpu" }
+mlc-app-render-context-vello-hybrid = { version = "0.1.0", path = "../mlc-app-render-context-vello-hybrid", package = "mylittlechart-app-render-context-vello-hybrid" }
 uzor-render-vello-hybrid = "=1.5.3"
 vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
-mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
+mlc-app-render-context-tiny-skia = { version = "0.5.656", path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 keyring = "3"
 base64.workspace = true
 

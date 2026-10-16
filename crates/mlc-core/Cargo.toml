@@ -16,8 +16,8 @@ web-time = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uzor = "=1.5.3"
-mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
 uuid = { version = "1", features = ["v4"] }
 rand.workspace = true
 

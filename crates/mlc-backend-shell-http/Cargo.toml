@@ -24,13 +24,13 @@ socket2 = "0.5"
 hex.workspace = true
 
 # Workspace path dependencies
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
 # Auth: SecretStore (RAM-only, TTL-bounded agent-key sidecar) + the
 # fingerprint/constant-time-compare helpers in mlc_vault::crypto. Does not
 # pull in mlc-core — this shell only ever sees `Arc<SecretStore>` and
 # `VaultKey`, never `VaultSecrets`.
-mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
 
 [dev-dependencies]
 # `Router::oneshot` for the auth-middleware unit tests — same tower version

@@ -12,10 +12,10 @@ path = "src/lib.rs"
 
 [dependencies]
 web-time = "1"
-mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
-mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
-mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
-mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
+mlc-app = { version = "0.1.0", path = "../mlc-app", package = "mylittlechart-app" }
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 digdigdig3 = "=0.3.32"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
