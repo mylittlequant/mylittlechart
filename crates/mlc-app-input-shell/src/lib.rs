@@ -24,4 +24,4 @@ pub use events::{
 pub use platform::{Platform, DispatchOut};
 pub use state::{InputState, DirtyFlags};
 pub use tooltip::{TooltipState, TooltipRequest, calculate_tooltip_position};
-pub use dispatch::process_event;
+pub use dispatch::{press_chrome_hit, process_event};

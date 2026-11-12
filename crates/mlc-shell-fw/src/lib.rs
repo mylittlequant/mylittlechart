@@ -149,8 +149,13 @@ pub struct HostedApp {
     /// The preset-name dialog's field while it is open.
     pub preset_name: Option<String>,
     sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
+    chrome_sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
+    /// The chrome strip is drawn as uzor DOM ([`dom::chrome`]) where it covers the state.
+    pub chrome_on_dom: bool,
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
+    /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
+    pub chrome_hits: Vec<(String, uzor::types::Rect)>,
     chart_settings_shown: bool,
     /// The pointer stream the app needs beyond presses (see [`Self::poll_pointer`]).
     pointer: PointerPoll,
@@ -187,7 +192,10 @@ impl HostedApp {
             frames: 0,
             preset_name: None,
             sheet: None,
+            chrome_sheet: None,
+            chrome_on_dom: false,
             last_hits: Vec::new(),
+            chrome_hits: Vec::new(),
             chart_settings_shown: false,
             pointer: PointerPoll::default(),
         }
@@ -197,16 +205,37 @@ impl HostedApp {
     pub fn with_dom(mut chart: mlc_app::ChartApp) -> Self {
         chart.panel_app.dom_hosted.preset_name = true;
         chart.panel_app.dom_hosted.chart_settings = true;
-        Self::new(chart)
+        let mut host = Self::new(chart);
+        host.chrome_on_dom = true;
+        host
     }
 
     fn sheet(&mut self, css: String) -> uzor::ui::style::Sheet {
-        let gen = uzor::ui::media::generation();
-        if self.sheet.as_ref().is_none_or(|(g, c, _)| *g != gen || *c != css) {
-            let s = uzor::ui::domkit::sheet_with(&css).expect("dom css parses");
-            self.sheet = Some((gen, css, s));
+        cached_sheet(&mut self.sheet, css)
+    }
+
+    /// The chrome strip on DOM, when it covers the state; `false` = the app paints it.
+    fn chrome_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) -> bool {
+        let r = cx.rect;
+        let skeleton = self.chart.panel_app.user_settings_state.profile_manager_mandatory;
+        if !(self.chrome_on_dom && dom::chrome::covers(&self.chrome, r.width, skeleton)) {
+            return false;
         }
-        self.sheet.as_ref().expect("sheet").2.clone()
+        let sheet = cached_sheet(&mut self.chrome_sheet, dom::chrome::css(&self.chrome));
+        cx.render.set_font("12px sans-serif");
+        let text_w: Vec<f64> = self.chrome.tabs.iter().map(|t| cx.render.measure_text(&t.name)).collect();
+        let tree = dom::chrome::tree(&self.chrome, r.width, &text_w);
+        let strip = uzor::types::Rect::new(r.x, r.y, r.width, chrome::CHROME_HEIGHT);
+        let resp = uzor_framework::widgets::kit::dom(strip, &sheet, tree).build(cx);
+        self.chrome_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
+        if let Some(hit) = resp.clicked.as_deref().and_then(dom::chrome::hit_of) {
+            let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
+            mlc_app_input_shell::press_chrome_hit(hit, x, y, &mut self.input, &mut self.chrome, &mut self.dirty, &mut self.chart, &self.platform, &mut self.out);
+            for c in self.platform_cmds() {
+                cx.out.command(c);
+            }
+        }
+        true
     }
 
     fn preset_name_open(&self) -> bool {
@@ -357,17 +386,30 @@ impl HostedApp {
     }
 
     fn flush_platform(&mut self, cx: &mut IntentCx<'_, HostSpec>) {
-        let Some(win) = self.win else { return };
-        for c in self.platform.cmds.borrow_mut().drain(..) {
-            match c {
-                PlatformCmd::Minimize(m) => cx.command(AppCommand::Window(WindowCmd::Minimize { win, minimized: m })),
-                PlatformCmd::Maximize(m) => cx.command(AppCommand::Window(WindowCmd::Maximize { win, maximized: m })),
-                PlatformCmd::Clipboard(t) => cx.command(AppCommand::Clipboard(ClipboardCmd::Write(t))),
-            }
+        for c in self.platform_cmds() {
+            cx.command(c);
         }
+    }
+
+    /// The window operations the dispatcher asked for since the last call, as
+    /// framework commands.
+    fn platform_cmds(&mut self) -> Vec<AppCommand<HostSpec>> {
+        let Some(win) = self.win else { return Vec::new() };
+        let mut out: Vec<AppCommand<HostSpec>> = self
+            .platform
+            .cmds
+            .borrow_mut()
+            .drain(..)
+            .map(|c| match c {
+                PlatformCmd::Minimize(m) => AppCommand::Window(WindowCmd::Minimize { win, minimized: m }),
+                PlatformCmd::Maximize(m) => AppCommand::Window(WindowCmd::Maximize { win, maximized: m }),
+                PlatformCmd::Clipboard(t) => AppCommand::Clipboard(ClipboardCmd::Write(t)),
+            })
+            .collect();
         if std::mem::take(&mut self.out.close_requested) || std::mem::take(&mut self.out.close_window_requested) {
-            cx.command(AppCommand::Window(WindowCmd::Close(win)));
+            out.push(AppCommand::Window(WindowCmd::Close(win)));
         }
+        out
     }
 }
 
@@ -398,9 +440,30 @@ impl App for HostedApp {
         let wall = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
         cx.render.save();
         cx.render.translate(r.x, r.y);
+        let skeleton = self.chart.panel_app.user_settings_state.profile_manager_mandatory;
+        // Whether the DOM strip takes this frame is decided on the widths fitted last
+        // frame; `paint_under` refits them before the strip is built.
+        let dom_strip = self.chrome_on_dom && dom::chrome::covers(&self.chrome, r.width, skeleton);
         {
             let mut ctx = ctx::ChartCtx::new(&mut *cx.render);
-            frame::paint_window(&mut self.chart, &mut self.chrome, &mut ctx, r.width, r.height, wall, frame::Layers::All);
+            frame::paint_under(&mut self.chart, &mut self.chrome, &mut ctx, r.width, r.height, wall, frame::Layers::All, !dom_strip);
+        }
+        cx.render.restore();
+        self.chrome_hits.clear();
+        if dom_strip && !self.chrome_layer(cx) {
+            // The refit changed the verdict (a tab got too wide): the app paints it.
+            cx.render.save();
+            cx.render.translate(r.x, r.y);
+            let mut ctx = ctx::ChartCtx::new(&mut *cx.render);
+            chrome::render(&mut ctx, &self.chrome, r.width, skeleton, &self.chart.input_coordinator);
+            drop(ctx);
+            cx.render.restore();
+        }
+        cx.render.save();
+        cx.render.translate(r.x, r.y);
+        {
+            let mut ctx = ctx::ChartCtx::new(&mut *cx.render);
+            frame::paint_over(&mut self.chart, &self.chrome, &mut ctx, r.width, wall);
         }
         cx.render.restore();
         self.dom_layer(cx);
@@ -447,4 +510,15 @@ impl App for HostedApp {
             _ => {}
         }
     }
+}
+
+/// `slot`'s sheet for `css`, parsed again only when the CSS or the media generation
+/// changed.
+fn cached_sheet(slot: &mut Option<(u64, String, uzor::ui::style::Sheet)>, css: String) -> uzor::ui::style::Sheet {
+    let gen = uzor::ui::media::generation();
+    if slot.as_ref().is_none_or(|(g, c, _)| *g != gen || *c != css) {
+        let s = uzor::ui::domkit::sheet_with(&css).expect("dom css parses");
+        *slot = Some((gen, css, s));
+    }
+    slot.as_ref().expect("sheet").2.clone()
 }

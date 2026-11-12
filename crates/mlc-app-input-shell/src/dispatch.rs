@@ -605,291 +605,8 @@ pub fn process_event(
                 let (win_w, win_h) = platform.window_size();
                 let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
 
-                // A press on chrome the modal veil covers puts the modal
-                // away instead of firing the control (owner 2026-09-02).
-                // Same `is_veiled_hit` list the hover suppression uses, so
-                // "does not light up" and "does not act" can never disagree
-                // — before this, a veiled button stayed dark and still fired.
-                // The system cluster, the caption drag and the resize edges
-                // are outside that list and keep working: a dimmed window
-                // must still be movable, resizable and closable.
-                if chart.panel_app.dim_backdrop_color().is_some() && chrome::is_veiled_hit(hit) {
-                    chart.dismiss_dimmed_modal();
+                if press_chrome_hit(hit, x, y, state, chrome_st, dirty, chart, platform, out) {
                     return;
-                }
-
-                // Inline tab rename routing: a press INSIDE the renaming tab
-                // is caret placement in the shared text store (geometry pushed
-                // by the render hook every frame; store coords are chart-local,
-                // hence the chrome-height shift); a press anywhere else commits
-                // the edit first — mirrors the modal flows' click-away commit —
-                // and then falls through to whatever the press hit.
-                if let Some(rename_idx) = chrome_st.renaming_tab {
-                    if hit == ChromeHit::Tab(rename_idx) {
-                        // The store hit-tests its own field rects — the same
-                        // call the chart-area press path makes for every
-                        // registered text field.
-                        chart.input_coordinator.borrow_mut().text_fields_mut()
-                            .on_drag_start(x, y - state.chrome_height);
-                        return;
-                    }
-                    commit_tab_rename(chart, chrome_st);
-                }
-
-                match hit {
-                    ChromeHit::Caption => {
-                        platform.drag_window();
-                        return;
-                    }
-                    ChromeHit::MinimizeButton => {
-                        platform.set_minimized(true);
-                        return;
-                    }
-                    ChromeHit::MaximizeButton => {
-                        let maximized = platform.is_maximized();
-                        platform.set_maximized(!maximized);
-                        chrome_st.is_maximized = !maximized;
-                        return;
-                    }
-                    ChromeHit::CloseButton => {
-                        out.close_requested = true;
-                        return;
-                    }
-                    ChromeHit::Tab(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            // Arm the drag&drop reorder — it activates past a
-                            // 4 px move and applies on release (CursorMoved /
-                            // the release path above own it from there).
-                            let grab_dx = x - chrome::tab_left_x(chrome_st, idx);
-                            chrome_st.tab_drag = Some(chrome::TabDrag {
-                                index: idx,
-                                press_x: x,
-                                grab_dx,
-                                cur_x: x,
-                                active: false,
-                            });
-                            // Tab double-click (same 400 ms / 5 px rule as the
-                            // chart-area path below) opens the rename flow. The
-                            // chart-area `last_click` logic is unreachable for
-                            // chrome hits because every chrome press returns
-                            // early, hence the dedicated `last_tab_click`.
-                            let now = web_time::Instant::now();
-                            let is_double_click = if let Some((last_time, last_idx, last_x, last_y)) = state.last_tab_click {
-                                let elapsed = now.duration_since(last_time).as_millis();
-                                let dist = ((x - last_x).powi(2) + (y - last_y).powi(2)).sqrt();
-                                last_idx == idx && elapsed < 400 && dist < 5.0
-                            } else {
-                                false
-                            };
-                            if is_double_click {
-                                state.last_tab_click = None;
-                                start_tab_rename(chart, chrome_st, idx);
-                            } else {
-                                state.last_tab_click = Some((now, idx, x, y));
-                                if let Some(tab) = chrome_st.tabs.get(idx) {
-                                    let tab_id = tab.id.clone();
-                                    chart.load_preset(&tab_id);
-                                }
-                            }
-                            dirty.chart_dirty = true;
-                            platform.request_redraw();
-                        }
-                        return;
-                    }
-                    ChromeHit::TabRename(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            open_tab_rename(chart, chrome_st, idx);
-                            dirty.chart_dirty = true;
-                            platform.request_redraw();
-                        }
-                        return;
-                    }
-                    ChromeHit::TabClose(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            if let Some(tab) = chrome_st.tabs.get(idx).cloned() {
-                                chart.close_tab(&tab.id);
-                            }
-                        }
-                        return;
-                    }
-                    ChromeHit::NewTabButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            let already_open = chart.panel_app.toolbar_state
-                                .open_dropdown_id.as_deref() == Some("new_tab_menu");
-                            if already_open {
-                                let ts = &mut chart.panel_app.toolbar_state;
-                                ts.open_dropdown_id = None;
-                                ts.open_dropdown_position = None;
-                            } else {
-                                let btn_x = chrome::new_tab_button_x(chrome_st, chart.width as f64);
-                                // R23 (owner ruling 2026-09-23): the "+" menu
-                                // must not paint on top of a still-open
-                                // floating settings modal — same choke point
-                                // `mlc-app`'s own dropdown-open paths use.
-                                chart.close_modals_for_toolbar_dropdown();
-                                let ts = &mut chart.panel_app.toolbar_state;
-                                ts.open_dropdown_id = Some("new_tab_menu".to_string());
-                                ts.open_dropdown_position = Some((btn_x, 0.0));
-                            }
-                            eprintln!(
-                                "[Chrome] + clicked, new_tab_menu open={}",
-                                chart.panel_app.toolbar_state.open_dropdown_id.is_some()
-                            );
-                        }
-                        return;
-                    }
-                    ChromeHit::TabOverflow => {
-                        // Click toggles the list (hover already opens it);
-                        // the hover-enter guard keys on the hovered
-                        // TRANSITION, so a click-close while parked on the
-                        // button stays closed.
-                        chrome_st.tab_list_open = !chrome_st.tab_list_open;
-                        dirty.chart_dirty = true;
-                        platform.request_redraw();
-                        return;
-                    }
-                    ChromeHit::MenuButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            chart.open_user_settings();
-                        }
-                        return;
-                    }
-                    ChromeHit::LoginButton => {
-                        #[cfg(feature = "cloud")]
-                        {
-                            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                            if !skeleton_active {
-                                if chrome_st.account_label.is_some() {
-                                    // Signed in: the header's own account
-                                    // button opens the account menu (Upgrade /
-                                    // Plans, Account settings) on a shell with
-                                    // a checkout driver; without one it opens
-                                    // straight onto User Settings' Account
-                                    // tab (owner ruling 2026-09-09) — the
-                                    // login overlay's own job (choose a
-                                    // provider, or watch the sign-in
-                                    // complete) is already done. Toggle
-                                    // closed if it is already open there, the
-                                    // same "click again to close" the
-                                    // overlay itself used to give this
-                                    // button.
-                                    if mlc_app_layout::ui::checkout::entry_points_enabled() {
-                                        chrome_st.account_menu_open = true;
-                                        chrome_st.account_menu_hovered = -1;
-                                    } else {
-                                        toggle_account_settings(chart);
-                                    }
-                                    // The overlay's own "sign out" stays for
-                                    // the signed-out→signed-in TRANSITION
-                                    // screens only (owner ruling) — once
-                                    // already signed in, this button never
-                                    // opens it, so close it here rather than
-                                    // leaving it stacked behind Settings.
-                                    chart.panel_app.cloud_login_state.close();
-                                } else {
-                                    use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
-                                    chart.panel_app.cloud_login_state.toggle();
-                                    // Which flow the modal opens into is a
-                                    // property of the shell, not of the
-                                    // click. Native signs in through a
-                                    // loopback redirect and has no
-                                    // device-code driver at all, so opening
-                                    // on `RequestCode` would sit at
-                                    // "Requesting sign-in code…" forever.
-                                    if chrome_st.flavor == crate::ChromeFlavor::Native
-                                        && chart.panel_app.cloud_login_state.is_open
-                                    {
-                                        chart.panel_app.cloud_login_state.phase = CloudLoginPhase::ChooseProvider;
-                                    }
-                                }
-                                chart.panel_app.cloud_overlay_state.close();
-                                dirty.chart_dirty = true;
-                                platform.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-                    ChromeHit::NewsButton | ChromeHit::DownloadButton => {
-                        #[cfg(feature = "cloud")]
-                        {
-                            use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
-                            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                            if !skeleton_active {
-                                let kind = match hit {
-                                    ChromeHit::NewsButton => CloudOverlayKind::News,
-                                    _ => CloudOverlayKind::Download,
-                                };
-                                // While an installed update is waiting, this
-                                // control is the restart, not a way into the
-                                // catalogue. Pressing what says "Restart" must
-                                // restart.
-                                if hit == ChromeHit::DownloadButton
-                                    && chrome_st.update == chrome::ChromeUpdate::Restart
-                                {
-                                    out.restart_requested = true;
-                                    return;
-                                }
-                                chart.panel_app.cloud_overlay_state.toggle(kind);
-                                chart.panel_app.cloud_login_state.close();
-                                dirty.chart_dirty = true;
-                                platform.request_redraw();
-                            }
-                        }
-                        return;
-                    }
-                    ChromeHit::CloseWindowButton => {
-                        out.close_window_requested = true;
-                        return;
-                    }
-                    ChromeHit::MascotButton => {
-                        eprintln!("[Chrome] Mascot clicked — future modal");
-                        return;
-                    }
-                    ChromeHit::NewWindowButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
-                        if !skeleton_active {
-                            out.spawn_new_window = true;
-                        }
-                        return;
-                    }
-                    ChromeHit::ResizeTop => {
-                        platform.drag_resize_window(ResizeDir::North);
-                        return;
-                    }
-                    ChromeHit::ResizeBottom => {
-                        platform.drag_resize_window(ResizeDir::South);
-                        return;
-                    }
-                    ChromeHit::ResizeLeft => {
-                        platform.drag_resize_window(ResizeDir::West);
-                        return;
-                    }
-                    ChromeHit::ResizeRight => {
-                        platform.drag_resize_window(ResizeDir::East);
-                        return;
-                    }
-                    ChromeHit::ResizeTopLeft => {
-                        platform.drag_resize_window(ResizeDir::NorthWest);
-                        return;
-                    }
-                    ChromeHit::ResizeTopRight => {
-                        platform.drag_resize_window(ResizeDir::NorthEast);
-                        return;
-                    }
-                    ChromeHit::ResizeBottomLeft => {
-                        platform.drag_resize_window(ResizeDir::SouthWest);
-                        return;
-                    }
-                    ChromeHit::ResizeBottomRight => {
-                        platform.drag_resize_window(ResizeDir::SouthEast);
-                        return;
-                    }
-                    ChromeHit::None => {}
                 }
             }
 
@@ -1394,4 +1111,310 @@ fn toggle_account_settings(chart: &mut mlc_app::ChartApp) {
         uss.open();
         uss.set_tab(UserSettingsTab::Account);
     }
+}
+
+/// What a primary press on chrome element `hit` does at window point `(x, y)`: the
+/// veiled-press dismissal, the inline-rename commit, then the element's own action.
+/// `false` = nothing there (`ChromeHit::None`), the press goes on. Shared by the
+/// press path of [`process_event`] and by a host that hit-tests the strip itself
+/// (the uzor DOM strip calls it with the element it clicked).
+#[allow(clippy::too_many_arguments)]
+pub fn press_chrome_hit(
+    hit: ChromeHit,
+    x: f64,
+    y: f64,
+    state: &mut InputState,
+    chrome_st: &mut chrome::ChromeState,
+    dirty: &mut DirtyFlags,
+    chart: &mut mlc_app::ChartApp,
+    platform: &dyn Platform,
+    out: &mut DispatchOut,
+) -> bool {
+    // A press on chrome the modal veil covers puts the modal
+    // away instead of firing the control (owner 2026-09-02).
+    // Same `is_veiled_hit` list the hover suppression uses, so
+    // "does not light up" and "does not act" can never disagree
+    // — before this, a veiled button stayed dark and still fired.
+    // The system cluster, the caption drag and the resize edges
+    // are outside that list and keep working: a dimmed window
+    // must still be movable, resizable and closable.
+    if chart.panel_app.dim_backdrop_color().is_some() && chrome::is_veiled_hit(hit) {
+        chart.dismiss_dimmed_modal();
+        return true;
+    }
+
+    // Inline tab rename routing: a press INSIDE the renaming tab
+    // is caret placement in the shared text store (geometry pushed
+    // by the render hook every frame; store coords are chart-local,
+    // hence the chrome-height shift); a press anywhere else commits
+    // the edit first — mirrors the modal flows' click-away commit —
+    // and then falls through to whatever the press hit.
+    if let Some(rename_idx) = chrome_st.renaming_tab {
+        if hit == ChromeHit::Tab(rename_idx) {
+            // The store hit-tests its own field rects — the same
+            // call the chart-area press path makes for every
+            // registered text field.
+            chart.input_coordinator.borrow_mut().text_fields_mut()
+                .on_drag_start(x, y - state.chrome_height);
+            return true;
+        }
+        commit_tab_rename(chart, chrome_st);
+    }
+
+    match hit {
+        ChromeHit::Caption => {
+            platform.drag_window();
+            return true;
+        }
+        ChromeHit::MinimizeButton => {
+            platform.set_minimized(true);
+            return true;
+        }
+        ChromeHit::MaximizeButton => {
+            let maximized = platform.is_maximized();
+            platform.set_maximized(!maximized);
+            chrome_st.is_maximized = !maximized;
+            return true;
+        }
+        ChromeHit::CloseButton => {
+            out.close_requested = true;
+            return true;
+        }
+        ChromeHit::Tab(idx) => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                // Arm the drag&drop reorder — it activates past a
+                // 4 px move and applies on release (CursorMoved /
+                // the release path above own it from there).
+                let grab_dx = x - chrome::tab_left_x(chrome_st, idx);
+                chrome_st.tab_drag = Some(chrome::TabDrag {
+                    index: idx,
+                    press_x: x,
+                    grab_dx,
+                    cur_x: x,
+                    active: false,
+                });
+                // Tab double-click (same 400 ms / 5 px rule as the
+                // chart-area path below) opens the rename flow. The
+                // chart-area `last_click` logic is unreachable for
+                // chrome hits because every chrome press returns
+                // early, hence the dedicated `last_tab_click`.
+                let now = web_time::Instant::now();
+                let is_double_click = if let Some((last_time, last_idx, last_x, last_y)) = state.last_tab_click {
+                    let elapsed = now.duration_since(last_time).as_millis();
+                    let dist = ((x - last_x).powi(2) + (y - last_y).powi(2)).sqrt();
+                    last_idx == idx && elapsed < 400 && dist < 5.0
+                } else {
+                    false
+                };
+                if is_double_click {
+                    state.last_tab_click = None;
+                    start_tab_rename(chart, chrome_st, idx);
+                } else {
+                    state.last_tab_click = Some((now, idx, x, y));
+                    if let Some(tab) = chrome_st.tabs.get(idx) {
+                        let tab_id = tab.id.clone();
+                        chart.load_preset(&tab_id);
+                    }
+                }
+                dirty.chart_dirty = true;
+                platform.request_redraw();
+            }
+            return true;
+        }
+        ChromeHit::TabRename(idx) => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                open_tab_rename(chart, chrome_st, idx);
+                dirty.chart_dirty = true;
+                platform.request_redraw();
+            }
+            return true;
+        }
+        ChromeHit::TabClose(idx) => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                if let Some(tab) = chrome_st.tabs.get(idx).cloned() {
+                    chart.close_tab(&tab.id);
+                }
+            }
+            return true;
+        }
+        ChromeHit::NewTabButton => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                let already_open = chart.panel_app.toolbar_state
+                    .open_dropdown_id.as_deref() == Some("new_tab_menu");
+                if already_open {
+                    let ts = &mut chart.panel_app.toolbar_state;
+                    ts.open_dropdown_id = None;
+                    ts.open_dropdown_position = None;
+                } else {
+                    let btn_x = chrome::new_tab_button_x(chrome_st, chart.width as f64);
+                    // R23 (owner ruling 2026-09-23): the "+" menu
+                    // must not paint on top of a still-open
+                    // floating settings modal — same choke point
+                    // `mlc-app`'s own dropdown-open paths use.
+                    chart.close_modals_for_toolbar_dropdown();
+                    let ts = &mut chart.panel_app.toolbar_state;
+                    ts.open_dropdown_id = Some("new_tab_menu".to_string());
+                    ts.open_dropdown_position = Some((btn_x, 0.0));
+                }
+                eprintln!(
+                    "[Chrome] + clicked, new_tab_menu open={}",
+                    chart.panel_app.toolbar_state.open_dropdown_id.is_some()
+                );
+            }
+            return true;
+        }
+        ChromeHit::TabOverflow => {
+            // Click toggles the list (hover already opens it);
+            // the hover-enter guard keys on the hovered
+            // TRANSITION, so a click-close while parked on the
+            // button stays closed.
+            chrome_st.tab_list_open = !chrome_st.tab_list_open;
+            dirty.chart_dirty = true;
+            platform.request_redraw();
+            return true;
+        }
+        ChromeHit::MenuButton => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                chart.open_user_settings();
+            }
+            return true;
+        }
+        ChromeHit::LoginButton => {
+            #[cfg(feature = "cloud")]
+            {
+                let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+                if !skeleton_active {
+                    if chrome_st.account_label.is_some() {
+                        // Signed in: the header's own account
+                        // button opens the account menu (Upgrade /
+                        // Plans, Account settings) on a shell with
+                        // a checkout driver; without one it opens
+                        // straight onto User Settings' Account
+                        // tab (owner ruling 2026-09-09) — the
+                        // login overlay's own job (choose a
+                        // provider, or watch the sign-in
+                        // complete) is already done. Toggle
+                        // closed if it is already open there, the
+                        // same "click again to close" the
+                        // overlay itself used to give this
+                        // button.
+                        if mlc_app_layout::ui::checkout::entry_points_enabled() {
+                            chrome_st.account_menu_open = true;
+                            chrome_st.account_menu_hovered = -1;
+                        } else {
+                            toggle_account_settings(chart);
+                        }
+                        // The overlay's own "sign out" stays for
+                        // the signed-out→signed-in TRANSITION
+                        // screens only (owner ruling) — once
+                        // already signed in, this button never
+                        // opens it, so close it here rather than
+                        // leaving it stacked behind Settings.
+                        chart.panel_app.cloud_login_state.close();
+                    } else {
+                        use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
+                        chart.panel_app.cloud_login_state.toggle();
+                        // Which flow the modal opens into is a
+                        // property of the shell, not of the
+                        // click. Native signs in through a
+                        // loopback redirect and has no
+                        // device-code driver at all, so opening
+                        // on `RequestCode` would sit at
+                        // "Requesting sign-in code…" forever.
+                        if chrome_st.flavor == crate::ChromeFlavor::Native
+                            && chart.panel_app.cloud_login_state.is_open
+                        {
+                            chart.panel_app.cloud_login_state.phase = CloudLoginPhase::ChooseProvider;
+                        }
+                    }
+                    chart.panel_app.cloud_overlay_state.close();
+                    dirty.chart_dirty = true;
+                    platform.request_redraw();
+                }
+            }
+            return true;
+        }
+        ChromeHit::NewsButton | ChromeHit::DownloadButton => {
+            #[cfg(feature = "cloud")]
+            {
+                use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
+                let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+                if !skeleton_active {
+                    let kind = match hit {
+                        ChromeHit::NewsButton => CloudOverlayKind::News,
+                        _ => CloudOverlayKind::Download,
+                    };
+                    // While an installed update is waiting, this
+                    // control is the restart, not a way into the
+                    // catalogue. Pressing what says "Restart" must
+                    // restart.
+                    if hit == ChromeHit::DownloadButton
+                        && chrome_st.update == chrome::ChromeUpdate::Restart
+                    {
+                        out.restart_requested = true;
+                        return true;
+                    }
+                    chart.panel_app.cloud_overlay_state.toggle(kind);
+                    chart.panel_app.cloud_login_state.close();
+                    dirty.chart_dirty = true;
+                    platform.request_redraw();
+                }
+            }
+            return true;
+        }
+        ChromeHit::CloseWindowButton => {
+            out.close_window_requested = true;
+            return true;
+        }
+        ChromeHit::MascotButton => {
+            eprintln!("[Chrome] Mascot clicked — future modal");
+            return true;
+        }
+        ChromeHit::NewWindowButton => {
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            if !skeleton_active {
+                out.spawn_new_window = true;
+            }
+            return true;
+        }
+        ChromeHit::ResizeTop => {
+            platform.drag_resize_window(ResizeDir::North);
+            return true;
+        }
+        ChromeHit::ResizeBottom => {
+            platform.drag_resize_window(ResizeDir::South);
+            return true;
+        }
+        ChromeHit::ResizeLeft => {
+            platform.drag_resize_window(ResizeDir::West);
+            return true;
+        }
+        ChromeHit::ResizeRight => {
+            platform.drag_resize_window(ResizeDir::East);
+            return true;
+        }
+        ChromeHit::ResizeTopLeft => {
+            platform.drag_resize_window(ResizeDir::NorthWest);
+            return true;
+        }
+        ChromeHit::ResizeTopRight => {
+            platform.drag_resize_window(ResizeDir::NorthEast);
+            return true;
+        }
+        ChromeHit::ResizeBottomLeft => {
+            platform.drag_resize_window(ResizeDir::SouthWest);
+            return true;
+        }
+        ChromeHit::ResizeBottomRight => {
+            platform.drag_resize_window(ResizeDir::SouthEast);
+            return true;
+        }
+        ChromeHit::None => {}
+    }
+    false
 }

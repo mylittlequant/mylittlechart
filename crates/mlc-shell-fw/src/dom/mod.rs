@@ -2,4 +2,5 @@
 //! while its piece is open, so a closed piece costs nothing.
 
 pub mod chart_settings;
+pub mod chrome;
 pub mod preset_name;

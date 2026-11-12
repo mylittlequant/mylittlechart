@@ -57,6 +57,20 @@ pub enum Layers {
 
 /// Paint one frame of `app` at `w`×`h` into `ctx`.
 pub fn paint_window(app: &mut mlc_app::ChartApp, state: &mut chrome::ChromeState, ctx: &mut dyn MlcRenderContext, w: f64, h: f64, now: u64, layers: Layers) {
+    paint_under(app, state, ctx, w, h, now, layers, true);
+    if layers == Layers::All {
+        paint_over(app, state, ctx, w, now);
+    } else if let Some(backdrop) = app.panel_app.dim_backdrop_color() {
+        chrome::render_backdrop_dim(ctx, w, state.flavor, &backdrop);
+    }
+}
+
+/// The first half of [`paint_window`]: the background, the chart and (`strip`) the
+/// chrome strip. Without `strip` the strip's place is left for a host that draws it
+/// itself between the two halves (the uzor DOM strip); its tab widths are fitted
+/// either way.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_under(app: &mut mlc_app::ChartApp, state: &mut chrome::ChromeState, ctx: &mut dyn MlcRenderContext, w: f64, h: f64, now: u64, layers: Layers, strip: bool) {
     sync_chrome(state, app);
     ctx.set_fill_color("#131722");
     ctx.fill_rect(0.0, 0.0, w, h);
@@ -66,16 +80,20 @@ pub fn paint_window(app: &mut mlc_app::ChartApp, state: &mut chrome::ChromeState
         app.render(ctx, now, false);
         ctx.restore();
     }
-    ctx.set_fill_color(&state.colors.background);
-    ctx.fill_rect(0.0, 0.0, w, chrome::CHROME_HEIGHT);
     chrome::update_tab_widths(ctx, state, w, &app.input_coordinator);
-    let skeleton = app.panel_app.user_settings_state.profile_manager_mandatory;
-    chrome::render(ctx, state, w, skeleton, &app.input_coordinator);
+    if strip {
+        ctx.set_fill_color(&state.colors.background);
+        ctx.fill_rect(0.0, 0.0, w, chrome::CHROME_HEIGHT);
+        let skeleton = app.panel_app.user_settings_state.profile_manager_mandatory;
+        chrome::render(ctx, state, w, skeleton, &app.input_coordinator);
+    }
+}
+
+/// The second half of [`paint_window`]: the modal veil over the strip, the modal
+/// layer and the toasts.
+pub fn paint_over(app: &mut mlc_app::ChartApp, state: &chrome::ChromeState, ctx: &mut dyn MlcRenderContext, w: f64, now: u64) {
     if let Some(backdrop) = app.panel_app.dim_backdrop_color() {
         chrome::render_backdrop_dim(ctx, w, state.flavor, &backdrop);
-    }
-    if layers == Layers::ChromeOnly {
-        return;
     }
     ctx.save();
     ctx.translate(0.0, chrome::CHROME_HEIGHT);

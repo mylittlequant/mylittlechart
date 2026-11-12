@@ -75,7 +75,8 @@ mod hosted {
     }
 
     fn hit(h: &Host, id: &str) -> uzor::types::Rect {
-        h.runtime().app().last_hits.iter().find(|(k, _)| k == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("no hit {id}"))
+        let app = h.runtime().app();
+        app.last_hits.iter().chain(&app.chrome_hits).find(|(k, _)| k == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("no hit {id}"))
     }
 
     fn click(h: &mut Host, win: WindowId, id: &str) {
@@ -245,5 +246,48 @@ mod hosted {
         h.advance(0.017);
         h.advance(0.017);
         assert!(!h.runtime().app().input.mouse_pressed, "the release reached mlc");
+    }
+
+    fn move_to(h: &mut Host, win: WindowId, x: f64, y: f64) {
+        let pos = uzor_framework::Point { x, y };
+        h.input(win, InputEvent::Pointer(PointerInput::Moved { pos, mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_chrome_strip_is_dom_and_its_buttons_run_the_apps_actions() {
+        let (mut h, win) = host();
+        let ids: Vec<String> = h.runtime().app().chrome_hits.iter().map(|(k, _)| k.clone()).collect();
+        for id in ["chrome:new_tab", "chrome:new_window", "chrome:menu", "chrome:close_window", "chrome:minimize", "chrome:maximize", "chrome:close"] {
+            assert!(ids.iter().any(|k| k == id), "{id} in {ids:?}");
+        }
+        assert_eq!(hit(&h, "chrome:close").x, 1280.0 - 46.0, "the cells keep the old geometry");
+        click(&mut h, win, "chrome:new_tab");
+        assert_eq!(h.runtime().app().chart.panel_app.toolbar_state.open_dropdown_id.as_deref(), Some("new_tab_menu"), "+ opens the new-tab menu");
+        click(&mut h, win, "chrome:new_tab");
+        assert_eq!(h.runtime().app().chart.panel_app.toolbar_state.open_dropdown_id, None, "and closes it again");
+        click(&mut h, win, "chrome:menu");
+        assert!(h.runtime().app().chart.panel_app.user_settings_state.is_open, "the gear opens user settings");
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn chrome_hover_is_the_apps_and_the_caption_still_goes_to_the_app() {
+        let (mut h, win) = host();
+        move_to(&mut h, win, 20.0, 16.0);
+        assert_eq!(h.runtime().app().chrome.hovered, mlc_app_input_shell::chrome::ChromeHit::Tab(0));
+        assert!(h.runtime().app().chrome_hits.iter().any(|(k, _)| k == "chrome:tab_close:0"), "the hovered tab shows its ×");
+        // A press on the empty strip has no DOM cell: the app's own hit test makes it
+        // a window drag (recorded until the framework carries app-side drags).
+        let pos = uzor_framework::Point { x: 600.0, y: 16.0 };
+        let b = uzor::input::MouseButton::Left;
+        move_to(&mut h, win, pos.x, pos.y);
+        h.input(win, InputEvent::Pointer(PointerInput::Down { pos, button: b, mods: Default::default() }));
+        h.advance(0.017);
+        h.input(win, InputEvent::Pointer(PointerInput::Up { pos, button: b, mods: Default::default() }));
+        h.advance(0.017);
+        assert!(h.runtime().app().platform.unsupported.borrow().contains(&"drag_window"));
     }
 }
