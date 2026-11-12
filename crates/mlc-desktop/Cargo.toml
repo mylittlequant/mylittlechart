@@ -1,0 +1,30 @@
+[package]
+name = "mlc-desktop"
+description = "mylittlechart as one uzor-framework App (phase 1 of the move off the hand-drawn UI): DOM toolbar, the chart in a paint slot, a watchlist column. Host-agnostic; mlc-shell-native runs it on the desktop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "mlc_desktop"
+
+[dependencies]
+mlc-chart-view = { path = "../mlc-chart-view" }
+uzor = { version = "=1.5.36", default-features = false, features = ["flow-flex", "flow-grid"] }
+uzor-framework = { version = "=1.5.36", default-features = false }
+serde_json = { version = "1", optional = true }
+
+[dev-dependencies]
+uzor = { version = "=1.5.36", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
+uzor-render-tiny-skia = "=1.5.36"
+
+[features]
+default = []
+# Live bars through mlc's data bridge (demo bars when it does not answer).
+live = ["mlc-chart-view/live"]
+# Dev control: the app reports its state to the automation port (dev builds only).
+dev-control = ["uzor-framework/dev-control", "mlc-chart-view/dev-control", "dep:serde_json"]
+
+[lints]
+workspace = true

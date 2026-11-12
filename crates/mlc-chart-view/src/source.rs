@@ -31,29 +31,44 @@ pub trait Source: 'static {
 }
 
 /// Demo candles, no network.
-#[derive(Default)]
 pub struct DemoSource {
     pending: Vec<Feed>,
     /// End of the demo series (unix seconds); fixed for repeatable screenshots.
     pub end: i64,
+    symbol: String,
+    venue: String,
+    level: (f64, u64),
+}
+
+impl Default for DemoSource {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 impl DemoSource {
+    /// Binance BTC/USDT.
     pub fn new(end: i64) -> Self {
-        Self { pending: Vec::new(), end }
+        Self::for_symbol("BTC/USDT", "Binance", end)
+    }
+
+    /// Demo candles for `symbol` on `venue`, at a price level of its own.
+    pub fn for_symbol(symbol: &str, venue: &str, end: i64) -> Self {
+        Self { pending: Vec::new(), end, symbol: symbol.to_string(), venue: venue.to_string(), level: crate::demo::level_for(symbol) }
     }
 }
 
 impl Source for DemoSource {
     fn venue(&self) -> &str {
-        "Binance"
+        &self.venue
     }
     fn symbol(&self) -> &str {
-        "BTC/USDT"
+        &self.symbol
     }
     fn request(&mut self, code: &str) {
         let tf = crate::demo::TIMEFRAMES.iter().position(|(c, _)| *c == code).unwrap_or(3);
-        self.pending.push(Feed::Bars { tf: code.to_string(), bars: crate::demo::series(tf, self.end), live: false });
+        let (price, seed) = self.level;
+        self.pending.push(Feed::Bars { tf: code.to_string(), bars: crate::demo::series_for(tf, self.end, price, seed), live: false });
     }
     fn poll(&mut self) -> Vec<Feed> {
         std::mem::take(&mut self.pending)

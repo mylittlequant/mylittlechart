@@ -36,6 +36,8 @@ members = [
     "crates/mlc-chart-view",
     "crates/mlc-shell-web2",
     "crates/mlc-shell-mobile",
+    "crates/mlc-desktop",
+    "crates/mlc-shell-native",
 ]
 resolver = "2"
 

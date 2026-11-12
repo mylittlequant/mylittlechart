@@ -1,0 +1,29 @@
+[package]
+name = "mlc-shell-native"
+description = "mylittlechart desktop shell on uzor-framework: runs mlc-desktop's App in the native host (winit + uzor-render-hub). Phase 1 of the move off mlc-app-shell-vello."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "mlc-fw"
+path = "src/main.rs"
+
+[dependencies]
+mlc-desktop = { path = "../mlc-desktop" }
+mlc-chart-view = { path = "../mlc-chart-view" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uzor-framework = { version = "=1.5.36", features = ["native"] }
+
+[features]
+default = []
+# Live bars through mlc's data bridge (demo bars when it does not answer).
+live = ["mlc-desktop/live", "mlc-chart-view/live"]
+# Dev control: `--dev` / `MLC_DEV=1` serves the loopback automation port (click,
+# type, dump-tree, screenshot). Dev builds only.
+dev-control = ["uzor-framework/dev-control", "mlc-desktop/dev-control"]
+
+[lints]
+workspace = true

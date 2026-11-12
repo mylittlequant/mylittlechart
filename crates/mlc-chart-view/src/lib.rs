@@ -16,7 +16,10 @@ pub mod live;
 pub mod model;
 pub mod paint;
 pub mod screen;
+pub mod slot;
 pub mod source;
+
+pub use slot::{apply_op, ChartSlot, Shown, DEFAULT_TF};
 
 #[cfg(test)]
 mod shots;
@@ -32,16 +35,13 @@ use uzor_framework::{
     WindowIntent, WindowSpec,
 };
 
+#[cfg(feature = "dev-control")]
 use crate::demo::TIMEFRAMES;
-use crate::i18n::{t, K};
-use crate::input::{ChartInput, ChartOp, Mouse};
-use crate::model::ChartModel;
-use crate::source::{DemoSource, Feed, Source};
+use crate::input::Mouse;
+use crate::source::{DemoSource, Source};
 
 /// The canvas element id the web shell draws into.
 pub const CANVAS_ID: &str = "mlc-canvas";
-/// Timeframe shown first (`1h`).
-pub const DEFAULT_TF: usize = 3;
 
 /// The single panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,43 +80,15 @@ impl Spec for ChartSpec {
     }
 }
 
-/// Where the shown bars came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shown {
-    /// Waiting for the first bars.
-    Loading,
-    Demo,
-    /// Live source failed or timed out: demo bars, said so.
-    Offline,
-    Live,
-}
-
-/// Apply one chart op to `model` for a plot `width` px wide.
-pub fn apply_op(model: &mut ChartModel, op: ChartOp, width: f64) {
-    match op {
-        ChartOp::Pan(dx) => model.pan(dx, width),
-        ChartOp::Zoom { factor, anchor } => model.zoom(factor, anchor, width),
-        ChartOp::Crosshair(c) => model.crosshair = c,
-        ChartOp::Reset => model.reset(),
-    }
-}
-
 /// The chart app.
 pub struct ChartViewApp {
-    pub model: ChartModel,
-    pub input: ChartInput,
-    pub tf: usize,
-    pub shown: Shown,
-    source: Box<dyn Source>,
-    live_source: bool,
-    requested_at: Option<f64>,
+    /// The chart: source, view, input, painter.
+    pub chart: ChartSlot,
     sheet: Option<(u64, uzor::ui::style::Sheet)>,
     win: Option<WindowId>,
-    waker_win: Option<std::sync::Arc<std::sync::Mutex<Option<WindowId>>>>,
-    /// Hit targets and the chart rect of the last frame (tests, dev control).
+    waker_win: std::sync::Arc<std::sync::Mutex<Option<WindowId>>>,
+    /// Hit targets of the last frame (tests, dev control).
     pub last_hits: Vec<(String, Rect)>,
-    pub last_chart: Option<Rect>,
-    demo_end: i64,
 }
 
 impl ChartViewApp {
@@ -127,23 +99,7 @@ impl ChartViewApp {
 
     /// Bars from `source`; `live` says it is a network source (demo fallback on timeout).
     pub fn with_source(source: Box<dyn Source>, live: bool, demo_end: i64) -> Self {
-        let mut app = Self {
-            model: ChartModel::default(),
-            input: ChartInput::default(),
-            tf: DEFAULT_TF,
-            shown: Shown::Loading,
-            source,
-            live_source: live,
-            requested_at: None,
-            sheet: None,
-            win: None,
-            waker_win: None,
-            last_hits: Vec::new(),
-            last_chart: None,
-            demo_end,
-        };
-        app.source.request(TIMEFRAMES[DEFAULT_TF].0);
-        app
+        Self { chart: ChartSlot::new(source, live, demo_end), sheet: None, win: None, waker_win: Default::default(), last_hits: Vec::new() }
     }
 
     /// Live Binance BTC/USDT (feature `live`), demo bars if it does not answer.
@@ -160,63 +116,9 @@ impl ChartViewApp {
         RuntimeConfig { windows: vec![spec], tokens: Tokens::builtin(BuiltinSet::Dark), dark: true, tick: TickRate::Dirty, ..RuntimeConfig::default() }
     }
 
-    fn set_tf(&mut self, tf: usize, now: f64) {
-        if tf != self.tf || self.shown == Shown::Offline {
-            self.tf = tf;
-            self.requested_at = Some(now);
-            self.source.request(TIMEFRAMES[tf].0);
-        }
-    }
-
-    /// Apply what the source delivered; fall back to demo on timeout.
-    pub fn pump(&mut self, now: f64) {
-        for f in self.source.poll() {
-            match f {
-                Feed::Bars { tf, bars, live } => {
-                    if TIMEFRAMES[self.tf].0 == tf {
-                        self.model.set_bars(bars);
-                        self.shown = if live { Shown::Live } else if self.live_source { Shown::Offline } else { Shown::Demo };
-                        self.requested_at = None;
-                    }
-                }
-                Feed::Bar(b) if self.shown == Shown::Live => self.model.push_bar(b),
-                Feed::Bar(_) => {}
-                Feed::Offline => self.fallback(),
-            }
-        }
-        if self.live_source && self.shown != Shown::Live {
-            let since = *self.requested_at.get_or_insert(now);
-            #[cfg(feature = "live")]
-            let timeout = live::TIMEOUT_S;
-            #[cfg(not(feature = "live"))]
-            let timeout = 12.0;
-            if now - since > timeout {
-                self.requested_at = None;
-                if self.shown == Shown::Loading {
-                    self.fallback();
-                }
-            }
-        }
-    }
-
-    fn fallback(&mut self) {
-        self.model.set_bars(demo::series(self.tf, self.demo_end));
-        self.shown = Shown::Offline;
-        self.requested_at = None;
-    }
-
-    /// Apply one chart op for a plot `width` px wide.
-    pub fn apply(&mut self, op: ChartOp, width: f64) {
-        apply_op(&mut self.model, op, width);
-    }
-
-    /// The faint note in the plot corner.
-    pub fn plot_label(&self) -> Option<&'static str> {
-        match self.shown {
-            Shown::Demo => Some(t(K::Demo)),
-            Shown::Offline => Some(t(K::Offline)),
-            _ => None,
-        }
+    /// The chart's content box on the last frame.
+    pub fn last_chart(&self) -> Option<Rect> {
+        self.chart.last_rect
     }
 
     fn sheet(&mut self) -> &uzor::ui::style::Sheet {
@@ -231,49 +133,44 @@ impl ChartViewApp {
     /// Lay out, paint and wire one frame into `cx.rect`.
     fn frame(&mut self, cx: &mut PanelCx<'_, ChartSpec>) {
         let now = cx.time.now.0;
-        self.pump(now);
-        let header = screen::Header { symbol: self.source.symbol(), venue: self.source.venue(), live: self.shown == Shown::Live };
-        let tree = screen::tree(&header, self.tf).css(format!("height: {}px", cx.rect.height));
+        self.chart.pump(now);
+        let tree = {
+            let src = self.chart.source();
+            let header = screen::Header { symbol: src.symbol(), venue: src.venue(), live: self.chart.shown == Shown::Live };
+            screen::tree(&header, self.chart.tf).css(format!("height: {}px", cx.rect.height))
+        };
         let rect = cx.rect;
         let sheet = self.sheet().clone();
         let id = WidgetId::from(screen::CHART_SLOT);
         // The mouse is read from the view before the tree is built (it reports the
         // last frame's targets); fingers come with the slot frame.
         let mouse = Mouse::read(cx.view, &id);
-        let label = self.plot_label();
-        let (model, input) = (&mut self.model, &mut self.input);
-        let mut chart = None;
+        let chart = &mut self.chart;
         let mut painter = |ctx: &mut dyn RenderContext, f: &SlotFrame<'_>| {
-            if f.key != screen::CHART_SLOT {
-                return;
+            if f.key == screen::CHART_SLOT {
+                chart.paint(ctx, f, &mouse, now);
             }
-            let plot = paint::areas(f.rect).plot;
-            for op in input.ops(&f.gestures, f.pointer, f.clicked, &mouse, plot, now) {
-                apply_op(model, op, plot.width);
-            }
-            paint::chart(ctx, f.rect, model, label);
-            chart = Some(f.rect);
         };
         let resp = kit::dom(rect, &sheet, tree).paint_slots(&mut painter).build(cx);
         match resp.clicked.as_deref() {
-            Some(screen::RESET_ID) => self.model.reset(),
+            Some(screen::RESET_ID) => self.chart.model.reset(),
             Some(id) => {
                 if let Some(tf) = screen::picked_tf(id) {
-                    self.set_tf(tf, now);
+                    self.chart.set_tf(tf, now);
                 }
             }
             None => {}
         }
         self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
-        self.last_chart = chart;
-        if let Some(chart) = chart {
+        if let Some(r) = self.chart.last_rect {
             // The DOM registers the slot for clicks, hover and its fingers; the chart
             // also takes the mouse drag and the wheel.
-            cx.widgets.coord.register(id, chart, Sense::CLICK_AND_DRAG.union(Sense::SCROLL).with_touch().with_gesture());
+            cx.widgets.coord.register(id, r, Sense::CLICK_AND_DRAG.union(Sense::SCROLL).with_touch().with_gesture());
         }
         // A requested series arrives on a later frame (demo: the next one; live: the
-        // waker, or the timeout below while loading).
-        if self.requested_at.is_some() || self.shown == Shown::Loading {
+        // waker, or the timeout while loading); a click changed what this frame's tree
+        // showed.
+        if resp.clicked.is_some() || self.chart.wants_frame() {
             cx.out.request_frame();
         }
     }
@@ -284,14 +181,12 @@ impl App for ChartViewApp {
 
     fn init(&mut self, cx: &mut InitCx<'_, ChartSpec>) {
         let h = cx.handle();
-        let win = std::sync::Arc::new(std::sync::Mutex::new(None::<WindowId>));
-        let w2 = win.clone();
-        self.source.set_waker(Box::new(move || {
-            if let Some(w) = *w2.lock().unwrap_or_else(|e| e.into_inner()) {
+        let win = self.waker_win.clone();
+        self.chart.set_waker(std::sync::Arc::new(move || {
+            if let Some(w) = *win.lock().unwrap_or_else(|e| e.into_inner()) {
                 let _ = h.request_repaint(w);
             }
         }));
-        self.waker_win = Some(win);
     }
 
     fn chrome_model(&self, _win: WindowId) -> ChromeModel {
@@ -313,9 +208,7 @@ impl App for ChartViewApp {
     fn intent(&mut self, intent: Intent<ChartSpec>, cx: &mut IntentCx<'_, ChartSpec>) {
         if let Intent::Window(WindowIntent::Opened { win, .. }) = intent {
             self.win = Some(win);
-            if let Some(w) = &self.waker_win {
-                *w.lock().unwrap_or_else(|e| e.into_inner()) = Some(win);
-            }
+            *self.waker_win.lock().unwrap_or_else(|e| e.into_inner()) = Some(win);
             cx.command(AppCommand::Layout(LayoutCmd::SetChrome { win, visible: false, height: 0.0 }));
             cx.command(AppCommand::Layout(LayoutCmd::OpenPanel { win, panel: ChartPanel, at: DockTarget::Root }));
         }
@@ -325,13 +218,13 @@ impl App for ChartViewApp {
     fn automation_state(&self) -> Option<String> {
         Some(
             serde_json::json!({
-                "tf": TIMEFRAMES[self.tf].0,
-                "shown": format!("{:?}", self.shown),
-                "bars": self.model.bars.len(),
-                "count": self.model.count,
-                "right": self.model.right,
-                "crosshair": self.model.crosshair,
-                "follow": self.model.follow,
+                "tf": TIMEFRAMES[self.chart.tf].0,
+                "shown": format!("{:?}", self.chart.shown),
+                "bars": self.chart.model.bars.len(),
+                "count": self.chart.model.count,
+                "right": self.chart.model.right,
+                "crosshair": self.chart.model.crosshair,
+                "follow": self.chart.model.follow,
             })
             .to_string(),
         )

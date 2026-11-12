@@ -37,7 +37,7 @@ fn shots() {
         if lang == Lang::En {
             continue;
         }
-        let c = h.runtime().app().last_chart.unwrap();
+        let c = h.runtime().app().last_chart().unwrap();
         // Pinch in.
         let y = c.y + c.height / 2.0;
         touch(&mut h, win, TouchInput::Start { id: 1, pos: Point::new(170.0, y) });

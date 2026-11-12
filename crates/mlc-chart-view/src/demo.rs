@@ -38,8 +38,30 @@ pub fn bars(n: usize, secs: i64, end: i64, start_price: f64, seed: u64) -> Vec<B
 /// The demo series of a timeframe index ([`TIMEFRAMES`]): 500 bars of BTC/USDT-like
 /// prices ending at `end`.
 pub fn series(tf: usize, end: i64) -> Vec<Bar> {
+    series_for(tf, end, 64_000.0, 0)
+}
+
+/// The demo series of a timeframe index for another instrument: 500 bars from
+/// `start_price`, `seed` making its walk its own.
+pub fn series_for(tf: usize, end: i64, start_price: f64, seed: u64) -> Vec<Bar> {
     let (_, secs) = TIMEFRAMES[tf.min(TIMEFRAMES.len() - 1)];
-    bars(500, secs, end, 64_000.0, tf as u64 + 1)
+    bars(500, secs, end, start_price, (tf as u64 + 1) ^ seed.wrapping_mul(0x100_0000_01B3))
+}
+
+/// A demo price level and seed for `symbol`: BTC near 64k, ETH near 3.2k, the rest
+/// somewhere between 0.1 and 500, the same every time.
+pub fn level_for(symbol: &str) -> (f64, u64) {
+    let base = symbol.split(['/', '-', ' ']).next().unwrap_or(symbol).to_ascii_uppercase();
+    match base.as_str() {
+        "BTC" => (64_000.0, 0),
+        "ETH" => (3_200.0, 2),
+        _ => {
+            // FNV-1a: stable on every target.
+            let h = base.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01B3));
+            let price = 10f64.powf(-1.0 + (h % 3700) as f64 / 1000.0);
+            (price, h)
+        }
+    }
 }
 
 #[cfg(test)]
