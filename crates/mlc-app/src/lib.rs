@@ -6246,6 +6246,25 @@ impl ChartApp {
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
     }
 
+    /// A click on the chart settings modal, by the id it has under its
+    /// `chart_settings:` prefix (`close`, `ok`, `template`, `tab:<id>`,
+    /// `item:<id>`, `footer:<id>`): the same handler the app's own hit rects reach.
+    pub fn chart_settings_click(&mut self, rest: &str) {
+        self.handle_chart_settings_click(rest, 0.0, 0.0);
+    }
+
+    /// A wheel step over the chart settings body (`dy` > 0 scrolls up, as the
+    /// shell's events have it), with the body's content and viewport heights.
+    pub fn chart_settings_wheel(&mut self, dy: f64, content_h: f64, viewport_h: f64) {
+        self.panel_app.chart_settings_state.scroll.handle_wheel(-dy, content_h, viewport_h);
+    }
+
+    /// The top-left of the chart content area (window coordinates below the chrome
+    /// strip): where the modals centre themselves from.
+    pub fn chart_content_origin(&self) -> (f64, f64) {
+        (self.content_rect.x, self.content_rect.y)
+    }
+
     /// The text the preset-name modal opened with (the app's own field store).
     pub fn preset_name_text(&self) -> String {
         let id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);

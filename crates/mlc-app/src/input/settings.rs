@@ -22,7 +22,7 @@ impl ChartApp {
     // -------------------------------------------------------------------------
 
     /// Handle clicks on widgets registered with the "chart_settings:" prefix.
-    pub(super) fn handle_chart_settings_click(&mut self, rest: &str, x: f64, _y: f64) {
+    pub(crate) fn handle_chart_settings_click(&mut self, rest: &str, x: f64, _y: f64) {
         use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
 
         // Auto-commit: if an input field is being edited and the click lands on a

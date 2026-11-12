@@ -151,6 +151,7 @@ pub struct HostedApp {
     sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
+    chart_settings_shown: bool,
 }
 
 impl HostedApp {
@@ -172,12 +173,14 @@ impl HostedApp {
             preset_name: None,
             sheet: None,
             last_hits: Vec::new(),
+            chart_settings_shown: false,
         }
     }
 
     /// Host `chart` with the pieces already ported to uzor DOM taken over from it.
     pub fn with_dom(mut chart: mlc_app::ChartApp) -> Self {
         chart.panel_app.dom_hosted.preset_name = true;
+        chart.panel_app.dom_hosted.chart_settings = true;
         Self::new(chart)
     }
 
@@ -195,12 +198,61 @@ impl HostedApp {
         p.dom_hosted.preset_name && p.preset_name_input.is_open && p.preset_name_input.mode != mlc_app_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
     }
 
+    /// Whether the DOM chart settings modal is up (`Some` with the app's data).
+    fn chart_settings_dom(&self) -> Option<mlc_app_layout::layout::modals::chart_settings::ChartSettingsData> {
+        let p = &self.chart.panel_app;
+        if !(p.dom_hosted.chart_settings && p.chart_settings_state.is_open) {
+            return None;
+        }
+        let data = self.chart.build_chart_settings_data();
+        p.chart_settings_on_dom(&data).then_some(data)
+    }
+
+    /// Whether any DOM piece is up (it takes the wheel instead of the chart).
+    pub fn dom_modal_open(&self) -> bool {
+        self.preset_name.is_some() || self.chart_settings_shown
+    }
+
+    /// The chart settings modal on DOM.
+    fn chart_settings_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>, data: &mlc_app_layout::layout::modals::chart_settings::ChartSettingsData) {
+        use dom::chart_settings as cs;
+        let look = cs::Look::of(&self.chart);
+        let sheet = self.sheet(look.css());
+        let st = &self.chart.panel_app.chart_settings_state;
+        let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
+        let scroll = st.scroll.animated_offset();
+        let tree = cs::tree(st, &data.instrument, at, scroll);
+        let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+            if f.key == cs::SCROLLBAR {
+                use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
+                let r = f.rect;
+                let track = uzor::types::Rect::new(r.x, r.y + 4.0, r.width, r.height - 8.0);
+                let mut c = ctx::ChartCtx::new(ctx);
+                let theme = mlc_app_layout::ui::widgets::WidgetTheme::default();
+                draw_scrollbar(&mut c, &ScrollbarConfig::new(cs::content_height(), cs::VIEW_H, scroll), ScrollbarState::Active, track, &theme, None);
+            }
+        };
+        let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
+        if let Some(r) = resp.dom.rect(cs::VIEWPORT) {
+            self.last_hits.push((cs::VIEWPORT.to_string(), r));
+        }
+        if let Some(id) = resp.clicked.as_deref().and_then(cs::app_id) {
+            self.chart.chart_settings_click(&id);
+        }
+    }
+
     /// The DOM pieces over the app's own frame.
     fn dom_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
         use dom::preset_name as pn;
+        self.chart_settings_shown = false;
         if !self.preset_name_open() {
             self.preset_name = None;
             self.last_hits.clear();
+            if let Some(data) = self.chart_settings_dom() {
+                self.chart_settings_shown = true;
+                self.chart_settings_layer(cx, &data);
+            }
             return;
         }
         if self.preset_name.is_none() {
@@ -256,6 +308,16 @@ impl HostedApp {
     /// The app clock in ms since start (what `tick` takes).
     pub fn now_ms(&self) -> u64 {
         self.started.elapsed().as_millis() as u64
+    }
+
+    /// A wheel step while a DOM piece is up: over the chart settings body it
+    /// scrolls it; anywhere else it is swallowed (the modal is on top).
+    fn dom_wheel(&mut self, u: &uzor_framework::UnhandledInput, dy: f64) {
+        let uzor_framework::UnhandledInput::Wheel { wheel, .. } = u else { return };
+        let over = self.last_hits.iter().any(|(k, r)| k == dom::chart_settings::VIEWPORT && r.contains(wheel.pos.x, wheel.pos.y));
+        if self.chart_settings_shown && over {
+            self.chart.chart_settings_wheel(dy, dom::chart_settings::content_height(), dom::chart_settings::VIEW_H);
+        }
     }
 
     fn flush_platform(&mut self, cx: &mut IntentCx<'_, HostSpec>) {
@@ -327,6 +389,12 @@ impl App for HostedApp {
             Intent::Unhandled(u) => {
                 let mods = self.input.modifiers;
                 for ev in input::shell_events(&u, mods) {
+                    if let mlc_app_input_shell::ShellEvent::Scroll { dy, .. } = ev {
+                        if self.dom_modal_open() {
+                            self.dom_wheel(&u, dy);
+                            continue;
+                        }
+                    }
                     self.dispatch(ev);
                 }
                 self.flush_platform(cx);

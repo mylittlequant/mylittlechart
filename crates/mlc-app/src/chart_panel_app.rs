@@ -55,6 +55,10 @@ pub struct DomHosted {
     /// The preset-name modal (save as, rename, new chart; not the indicator-set mode,
     /// which sits over the indicator search).
     pub preset_name: bool,
+    /// The chart settings modal, in the states the DOM version covers (see
+    /// `ChartPanelApp::chart_settings_on_dom`); any other state falls back to the
+    /// app's own drawing.
+    pub chart_settings: bool,
 }
 
 pub struct ChartPanelApp {
@@ -399,6 +403,29 @@ impl ChartPanelApp {
             crosshair_label_bg_styled:  rt.crosshair_label_bg_styled(),
             crosshair_label_text:       rt.chart.crosshair_label_text.clone(),
         }
+    }
+
+    /// Whether a uzor-framework host draws the chart settings modal this frame: it
+    /// has taken it over (`dom_hosted.chart_settings`), the modal shows the
+    /// Instrument tab of a candle-family chart at its natural size, and nothing that
+    /// only the app's own drawing has yet (an open dropdown, the colour picker, the
+    /// template menu or name field, a text field, a drag) is up.
+    pub fn chart_settings_on_dom(&self, data: &ChartSettingsData) -> bool {
+        use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
+        let s = &self.chart_settings_state;
+        self.dom_hosted.chart_settings
+            && s.is_open
+            && s.active_tab == ChartSettingsTab::Instrument
+            && matches!(data.instrument.chart_type.as_str(), "candles" | "bars" | "heikin_ashi")
+            && s.size.is_none()
+            && !s.is_color_picker_open()
+            && s.active_dropdown.is_none()
+            && !s.template_dropdown_open
+            && !s.save_template_mode
+            && s.active_field_id.is_none()
+            && s.resize_drag.is_none()
+            && s.slider_drag.is_none()
+            && !s.is_dragging
     }
 
     /// Build a `FrameTheme` render struct from the current theme_manager state.
@@ -828,7 +855,9 @@ impl ChartPanelApp {
         }
 
         // Chart settings modal
-        if self.chart_settings_state.is_open {
+        if self.chart_settings_state.is_open
+            && !chart_settings_data.is_some_and(|d| self.chart_settings_on_dom(d))
+        {
             if let (Some(data), Some(tm)) = (chart_settings_data, theme_manager) {
                 result.chart_settings = Some(render_settings_modal(
                     ctx,

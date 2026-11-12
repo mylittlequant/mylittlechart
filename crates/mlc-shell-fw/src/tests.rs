@@ -89,6 +89,8 @@ mod hosted {
         h.input(win, InputEvent::Pointer(PointerInput::Up { pos, button: b, mods: Default::default() }));
         h.advance(0.017);
         h.advance(0.017);
+        // The click lands in a frame's DOM pass; one more frame paints its result.
+        h.advance(0.017);
     }
 
     fn key(h: &mut Host, win: WindowId, code: uzor::input::keyboard::KeyCode, text: Option<&str>) {
@@ -140,5 +142,84 @@ mod hosted {
         key(&mut h, win, uzor::input::keyboard::KeyCode::Enter, None);
         assert!(!h.runtime().app().chart.panel_app.preset_name_input.is_open, "Enter saves");
         assert_eq!(presets(&h).len(), before + 1);
+    }
+
+    // ── Chart settings on DOM ─────────────────────────────────────────────
+
+    fn open_chart_settings(h: &mut Host) {
+        h.runtime_mut().app_mut().chart.open_settings();
+        h.advance(0.017);
+        h.advance(0.017);
+    }
+
+    fn cs_shown(h: &Host) -> bool {
+        h.runtime().app().chart_settings_shown
+    }
+
+    fn cs_state(h: &Host) -> &mlc_app_layout::ui::modal_settings::ChartSettingsState {
+        &h.runtime().app().chart.panel_app.chart_settings_state
+    }
+
+    fn body_enabled(h: &Host) -> bool {
+        h.runtime().app().chart.build_chart_settings_data().instrument.body_enabled
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn chart_settings_checkbox_goes_through_the_apps_handler_and_ok_closes() {
+        let (mut h, win) = host();
+        open_chart_settings(&mut h);
+        assert!(cs_shown(&h), "the Instrument tab is on DOM");
+        let before = body_enabled(&h);
+        click(&mut h, win, "cs:item:instrument:body_enabled");
+        assert_eq!(body_enabled(&h), !before, "the checkbox toggled the app's setting");
+        click(&mut h, win, "cs:foot:0");
+        assert!(!cs_state(&h).is_open, "OK closes");
+        assert!(!cs_shown(&h));
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn chart_settings_close_and_other_tabs_fall_back() {
+        let (mut h, win) = host();
+        open_chart_settings(&mut h);
+        click(&mut h, win, "cs:tab:status_line");
+        assert_eq!(cs_state(&h).active_tab, mlc_app_layout::ui::modal_settings::ChartSettingsTab::StatusLine);
+        assert!(cs_state(&h).is_open && !cs_shown(&h), "another tab is still the app's renderer");
+        h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = Default::default();
+        h.advance(0.017);
+        h.advance(0.017);
+        assert!(cs_shown(&h), "back on the Instrument tab");
+        click(&mut h, win, "cs:item:dropdown_menu:candle_style");
+        assert!(cs_state(&h).active_dropdown.is_some(), "the chevron opens the app's list");
+        assert!(!cs_shown(&h), "an open list is drawn by the app");
+        h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_dropdown = None;
+        h.advance(0.017);
+        h.advance(0.017);
+        click(&mut h, win, "cs:close");
+        assert!(!cs_state(&h).is_open, "the close button closes");
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_wheel_scrolls_the_body_and_not_the_chart() {
+        let (mut h, win) = host();
+        open_chart_settings(&mut h);
+        let r = hit(&h, crate::dom::chart_settings::VIEWPORT);
+        let pos = uzor_framework::Point { x: r.x + r.width / 2.0, y: r.y + r.height / 2.0 };
+        let wheel = |y: f64| InputEvent::Wheel(uzor_framework::WheelInput { pos, delta: uzor_framework::WheelDelta::Lines { x: 0.0, y }, mods: Default::default() });
+        h.input(win, wheel(-3.0));
+        for _ in 0..30 {
+            h.advance(0.017);
+        }
+        let off = cs_state(&h).scroll.target;
+        assert!(off > 0.0, "scrolled down: {off}");
+        // Outside the body the wheel is swallowed: the body stays where it is.
+        let pos = uzor_framework::Point { x: 10.0, y: 400.0 };
+        h.input(win, InputEvent::Wheel(uzor_framework::WheelInput { pos, delta: uzor_framework::WheelDelta::Lines { x: 0.0, y: 3.0 }, mods: Default::default() }));
+        for _ in 0..30 {
+            h.advance(0.017);
+        }
+        assert_eq!(cs_state(&h).scroll.target, off);
     }
 }
