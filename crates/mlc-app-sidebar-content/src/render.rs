@@ -960,7 +960,7 @@ const COUNTERS_ROW_H: f64 = 15.0;
 /// of `COUNTERS_ROW_H * rows.len()`.
 const COUNTERS_CHROME_H: f64 = 16.0 + 4.0;
 
-fn counters_block_h(show_counters: bool, counter_rows: &[crate::types::CounterRowData]) -> f64 {
+pub fn counters_block_h(show_counters: bool, counter_rows: &[crate::types::CounterRowData]) -> f64 {
     if show_counters && !counter_rows.is_empty() {
         COUNTERS_CHROME_H + COUNTERS_ROW_H * counter_rows.len() as f64
     } else {
@@ -1433,20 +1433,20 @@ fn render_slot_spawn_dropdown(
 
 /// Minimum gap in pixels between adjacent separators (and between a separator
 /// and the area edge).  Approximately 2 characters at 11px font.
-const WATCHLIST_SEP_MIN_GAP: f64 = 16.0;
+pub const WATCHLIST_SEP_MIN_GAP: f64 = 16.0;
 
 /// Header of the account-type column. Cells are one-letter (`S`/`F`/`M`);
 /// the header is the wide case. When the column is squeezed below this
 /// label it collapses to `WATCHLIST_TYPE_COMPACT`.
-const WATCHLIST_TYPE_HEADER: &str = "Type";
-const WATCHLIST_TYPE_COMPACT: &str = "T";
-const WATCHLIST_TYPE_PAD: f64 = 6.0;
+pub const WATCHLIST_TYPE_HEADER: &str = "Type";
+pub const WATCHLIST_TYPE_COMPACT: &str = "T";
+pub const WATCHLIST_TYPE_PAD: f64 = 6.0;
 
 /// Column starts and separator X for the watchlist. The Type column (if
 /// present) takes its natural header width; remaining space is split
 /// equally among the other columns. Custom `separator_offsets` still win
 /// when their count matches.
-fn watchlist_col_layout(
+pub fn watchlist_col_layout(
     n_cols: usize,
     area_left: f64,
     usable_w: f64,
@@ -2249,7 +2249,7 @@ fn render_watchlist_items(
 }
 
 /// Format a volume number as a compact string (e.g. 1234567 → "1.23M").
-fn format_volume(v: f64) -> String {
+pub fn format_volume(v: f64) -> String {
     if v >= 1_000_000_000.0 {
         format!("{:.2}B", v / 1_000_000_000.0)
     } else if v >= 1_000_000.0 {
@@ -2264,7 +2264,7 @@ fn format_volume(v: f64) -> String {
 /// Format a price compactly: integers for large values, fewer decimals for mid-range.
 ///
 /// Examples: 42257.47 → "42257", 1.2345 → "1.235", 0.000123 → "0.00012"
-fn format_price(v: f64) -> String {
+pub fn format_price(v: f64) -> String {
     let abs = v.abs();
     if abs >= 10_000.0 {
         format!("{:.2}", v)
@@ -2284,7 +2284,7 @@ fn format_price(v: f64) -> String {
 /// Format a price for compact High/Low columns: integers for large values.
 ///
 /// Examples: 95000.0 → "95000", 123.4 → "123.4", 1.2345 → "1.23", 0.000123 → "0.000123"
-fn format_price_compact(v: f64) -> String {
+pub fn format_price_compact(v: f64) -> String {
     let abs = v.abs();
     if abs >= 1_000.0 {
         format!("{:.0}", v)
@@ -4563,7 +4563,7 @@ fn render_connectors_panel(
 /// [`draw_sparkline`] (0-anchored, fixed slot count) this scales to the
 /// window's own price range so small moves stay visible, and spreads the
 /// samples across the full width.
-fn draw_price_sparkline(
+pub fn draw_price_sparkline(
     ctx: &mut dyn RenderContext,
     x: f64, y: f64, w: f64, h: f64,
     data: &[f64],

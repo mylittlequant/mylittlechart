@@ -78,7 +78,11 @@ fn parse_size(s: &str) -> Option<(u32, u32)> {
 }
 
 /// What the window shows in a reference shot.
-const SCENES: &[&str] = &["main", "chart-settings", "user-settings", "chart-browser", "preset-rename"];
+const SCENES: &[&str] = &[
+    "main", "chart-settings", "user-settings", "chart-browser", "preset-rename",
+    // A right sidebar panel open (`sb-` + the app's persisted panel key).
+    "sb-watchlist", "sb-alerts", "sb-object_tree", "sb-signals", "sb-performance", "sb-screener", "sb-events",
+];
 
 fn open_scene(app: &mut mlc_app::ChartApp, scene: &str) {
     match scene {
@@ -92,6 +96,10 @@ fn open_scene(app: &mut mlc_app::ChartApp, scene: &str) {
             if app.panel_app.active_modal != mlc_core::modal::ChartOpenModal::PresetNameInput {
                 app.open_preset_save_as();
             }
+        }
+        s if s.starts_with("sb-") => {
+            app.sidebar_state.toggle_right_panel(mlc_app::ChartApp::str_to_panel(&s[3..]));
+            app.sidebar_data_dirty = true;
         }
         _ => {}
     }

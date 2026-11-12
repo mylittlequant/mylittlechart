@@ -49,6 +49,8 @@ pub mod checkout_bridge;
 pub mod friends_bridge;
 pub mod panel_grid;
 pub mod panels_render;
+pub mod paint_off;
+pub mod sidebar_dom;
 pub mod panels_store;
 pub mod scroll_dispatch;
 pub mod share_live;
@@ -9110,8 +9112,18 @@ impl ChartApp {
             // When the cached sidebar_scene is composited on top these pixels
             // are overwritten, but the widget registrations survive until end_frame().
             let panels_store = &self.panels_store;
+            // A uzor-framework host draws this panel itself (`dom_hosted.sidebar`): the
+            // layout and hit zones stay here, the paint goes nowhere.
+            let sidebar_dom = self.sidebar_on_dom();
+            let mut sidebar_off;
+            let sidebar_ctx: &mut dyn RenderContext = if sidebar_dom {
+                sidebar_off = crate::paint_off::PaintOff(&mut *ctx);
+                &mut sidebar_off
+            } else {
+                &mut *ctx
+            };
             let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
-                ctx,
+                sidebar_ctx,
                 &sidebar_rect,
                 &mut self.sidebar_state,
                 &sidebar_toolbar_theme,
@@ -10196,8 +10208,18 @@ impl ChartApp {
         });
 
         let panels_store = &self.panels_store;
+        // A uzor-framework host draws this panel itself (`dom_hosted.sidebar`): the
+        // layout and hit zones stay here, the paint goes nowhere.
+        let sidebar_dom = self.sidebar_on_dom();
+        let mut sidebar_off;
+        let sidebar_ctx: &mut dyn RenderContext = if sidebar_dom {
+            sidebar_off = crate::paint_off::PaintOff(&mut *ctx);
+            &mut sidebar_off
+        } else {
+            &mut *ctx
+        };
         let sidebar_result = mlc_app_sidebar_content::render::render_right_sidebar(
-            ctx,
+            sidebar_ctx,
             &sidebar_rect,
             &mut self.sidebar_state,
             &sidebar_toolbar_theme,

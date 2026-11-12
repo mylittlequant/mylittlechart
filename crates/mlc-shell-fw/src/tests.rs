@@ -488,4 +488,149 @@ mod hosted {
         assert!(opened > 0, "some press opened something");
         assert_eq!(dom.runtime().app().toolbar_slots.len(), 3);
     }
+
+    fn open_watchlist(h: &mut Host, rows: usize) {
+        let app = &mut h.runtime_mut().app_mut().chart;
+        app.sidebar_state.toggle_right_panel(mlc_app::ChartApp::str_to_panel("watchlist"));
+        app.sidebar_data_dirty = true;
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        let items = &mut h.runtime_mut().app_mut().chart.sidebar_state.watchlist_items;
+        for i in 0..rows {
+            items.push(mlc_app_sidebar_content::types::WatchlistItem {
+                symbol: format!("SYM{i}USDT"),
+                exchange: "binance".into(),
+                last_price: 100.0 + i as f64 * 7.25,
+                change_percent: if i % 2 == 0 { 1.5 } else { -2.25 },
+                high_24h: 120.0,
+                low_24h: 90.0,
+                volume_24h: 1.5e6,
+                spark: (0..20).map(|k| ((k * (i + 3)) % 11) as f64).collect(),
+                ..Default::default()
+            });
+        }
+        h.advance(0.017);
+        h.advance(0.017);
+    }
+
+    /// The window painted with the DOM sidebar on or off.
+    fn sidebar_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
+        use uzor::render::{Painter, ShapeHelpers};
+        h.runtime_mut().app_mut().chart.panel_app.dom_hosted.sidebar = dom;
+        h.advance(0.017);
+        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx.set_fill_color("#131722");
+        ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx).expect("window");
+        // Hover is the DOM's from the frame before: paint once more.
+        let mut ctx2 = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx2.set_fill_color("#131722");
+        ctx2.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx2).expect("window");
+        ctx2.pixmap().data().to_vec()
+    }
+
+    fn sb_hit(h: &Host, id: &str) -> uzor::types::Rect {
+        h.runtime().app().sidebar_hits.iter().find(|(k, _)| k == id).map(|(_, r)| *r).unwrap_or_else(|| panic!("no sidebar hit {id}"))
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_dom_watchlist_paints_what_the_app_painted_under_the_pointer() {
+        let (mut h, win) = host();
+        open_watchlist(&mut h, 6);
+        sidebar_pixels(&mut h, win, true);
+        assert!(!h.runtime().app().sidebar_hits.is_empty(), "the watchlist is on DOM");
+        let ids = ["right_sidebar_close", "watchlist_column_config", "watchlist_open_modal", "watchlist_sort_color", "watchlist_1", "watchlist_flag_2", "watchlist_metrics_sep"];
+        let spots: Vec<(String, f64, f64)> = ids
+            .iter()
+            .map(|id| {
+                let r = sb_hit(&h, id);
+                (id.to_string(), r.x + r.width / 2.0, r.y + r.height / 2.0)
+            })
+            .chain([("rows".to_string(), 700.0, 400.0)])
+            .collect();
+        let sb = sb_hit(&h, "right_sidebar_close");
+        let left = (sb.x + sb.width + 2.0 - 341.0) as usize;
+        for (id, x, y) in spots {
+            move_to(&mut h, win, x, y);
+            let old = sidebar_pixels(&mut h, win, false);
+            let new = sidebar_pixels(&mut h, win, true);
+            if id != "rows" {
+                assert_eq!(h.runtime().app().sidebar_hover.as_deref(), Some(id.as_str()), "DOM hover at {id}");
+            }
+            let off: Vec<usize> = old
+                .chunks_exact(4)
+                .zip(new.chunks_exact(4))
+                .enumerate()
+                .filter(|(i, (a, b))| (i % 1280) >= left && (i % 1280) < 1228 && (72..760).contains(&(i / 1280)) && a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8))
+                .map(|(i, _)| i)
+                .collect();
+            if let Some(dir) = std::env::var_os("MLC_SB_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("sb-{n}-{id}.png"));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            if off.len() > 40 {
+                let (x0, x1) = (off.iter().map(|i| i % 1280).min().unwrap(), off.iter().map(|i| i % 1280).max().unwrap());
+                let (y0, y1) = (off.iter().map(|i| i / 1280).min().unwrap(), off.iter().map(|i| i / 1280).max().unwrap());
+                panic!("hover at {id}: {} pixels differ in x {x0}..={x1}, y {y0}..={y1}", off.len());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn watchlist_presses_reach_the_app_as_before() {
+        let (mut dom, wd) = host();
+        let (mut old, wo) = host();
+        old.runtime_mut().app_mut().chart.panel_app.dom_hosted.sidebar = false;
+        for (h, w) in [(&mut dom, wd), (&mut old, wo)] {
+            open_watchlist(h, 4);
+            sidebar_pixels(h, w, h.runtime().app().chart.panel_app.dom_hosted.sidebar);
+        }
+        let spot = |h: &Host, id: &str| {
+            let r = sb_hit(h, id);
+            (r.x + r.width / 2.0, r.y + r.height / 2.0)
+        };
+        let state = |h: &Host| {
+            let s = &h.runtime().app().chart.sidebar_state;
+            (s.is_right_open(), s.watchlist_config_dropdown_open, s.watchlist_sort_mode)
+        };
+        let ids = ["watchlist_sort_color", "watchlist_sort_color", "watchlist_column_config", "watchlist_column_config", "right_sidebar_close"];
+        // Where the DOM put them (the column menu, once open, is the app's again).
+        let spots: Vec<(f64, f64)> = ids.iter().map(|id| spot(&dom, id)).collect();
+        for (id, (x, y)) in ids.iter().zip(spots) {
+            press_at(&mut dom, wd, x, y);
+            press_at(&mut old, wo, x, y);
+            assert_eq!(state(&dom), state(&old), "press on {id}");
+            dom.advance(0.017);
+        }
+        assert!(!state(&dom).0, "the close button closed it");
+        assert!(dom.runtime().app().sidebar_hits.is_empty(), "closed: nothing on DOM");
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_wheel_scrolls_the_watchlist_rows_into_the_apps_scroll_state() {
+        let (mut h, win) = host();
+        open_watchlist(&mut h, 40);
+        sidebar_pixels(&mut h, win, true);
+        let r = sb_hit(&h, "watchlist_10");
+        let pos = uzor_framework::Point { x: r.x + 40.0, y: r.y + 10.0 };
+        h.input(win, InputEvent::Wheel(uzor_framework::WheelInput { pos, delta: uzor_framework::WheelDelta::Lines { x: 0.0, y: -3.0 }, mods: Default::default() }));
+        for _ in 0..30 {
+            h.advance(0.017);
+        }
+        let off = h.runtime().app().chart.sidebar_state.current_right_scroll().offset;
+        assert!(off > 50.0, "the rows scrolled ({off})");
+        let r2 = sb_hit(&h, "watchlist_10");
+        assert!((r.y - r2.y - off).abs() < 1.0, "row 10 moved up by the offset: {} -> {} ({off})", r.y, r2.y);
+    }
 }

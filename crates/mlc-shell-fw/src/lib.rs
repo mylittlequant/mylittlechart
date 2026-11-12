@@ -211,15 +211,22 @@ pub struct HostedApp {
     pub toolbar_slots: Vec<&'static str>,
     /// The toolbar item the DOM reported under the pointer last frame (its DOM id).
     pub toolbar_hover: Option<String>,
-    /// The toolbar item held down whose press went to the app (DOM id).
-    toolbar_pressed: Option<String>,
-    toolbar_was_pressed: bool,
+    toolbar_press: PressForward,
     /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
     pub chrome_hits: Vec<(String, uzor::types::Rect)>,
     /// The strip element the DOM reported under the pointer last frame.
     chrome_hover: Option<String>,
     chrome_tab_down: bool,
     chrome_tab_forwarded: bool,
+    /// The right sidebar's DOM hit rects of the last frame (empty while the app paints it).
+    pub sidebar_hits: Vec<(String, uzor::types::Rect)>,
+    /// The sidebar element the DOM reported under the pointer last frame.
+    pub sidebar_hover: Option<String>,
+    sidebar_sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
+    sidebar_press: PressForward,
+    sidebar_shown: bool,
+    /// The panel scroll offset last copied between the DOM rows and the app.
+    sidebar_scroll: Option<f64>,
     chart_settings_shown: bool,
     /// The chart settings body's DOM scroll was seeded from the app's offset.
     cs_scroll_seeded: bool,
@@ -238,6 +245,45 @@ struct PointerPoll {
     last: Option<(f64, f64)>,
     /// The button of a press mlc took, until its release is seen.
     held: Option<mlc_app_input_shell::MouseBtn>,
+}
+
+/// Raw press forwarding for DOM pieces whose clicks stay the app's: the DOM lays the
+/// elements out and says which one the pointer is on; the press itself goes to the
+/// app as the raw press it always got (its hit test sees the same boxes), and its
+/// release (seen by [`PointerPoll`]) runs the click through the app's own path.
+#[derive(Default)]
+struct PressForward {
+    /// The element held down whose press went to the app (DOM id).
+    pressed: Option<String>,
+    was_pressed: bool,
+}
+
+/// What [`PressForward::step`] wants sent to the app.
+#[derive(Debug, PartialEq)]
+enum Forward {
+    /// The press (the release follows through the pointer poll).
+    Press,
+    /// A whole click the app never saw (down and up between two frames).
+    Click,
+}
+
+impl PressForward {
+    /// One frame: `pressed`, the DOM element held down now; `clicked`, the DOM's
+    /// click this frame (which arrives a frame after the release).
+    fn step(&mut self, pressed: Option<String>, clicked: Option<&str>) -> Vec<Forward> {
+        let mut out = Vec::new();
+        if pressed.is_some() && !self.was_pressed {
+            out.push(Forward::Press);
+            self.pressed = pressed.clone();
+        }
+        if let Some(id) = clicked {
+            if self.pressed.take().as_deref() != Some(id) {
+                out.push(Forward::Click);
+            }
+        }
+        self.was_pressed = pressed.is_some();
+        out
+    }
 }
 
 impl HostedApp {
@@ -269,8 +315,13 @@ impl HostedApp {
             chrome_tab_forwarded: false,
             toolbar_slots: Vec::new(),
             toolbar_hover: None,
-            toolbar_pressed: None,
-            toolbar_was_pressed: false,
+            toolbar_press: PressForward::default(),
+            sidebar_hits: Vec::new(),
+            sidebar_hover: None,
+            sidebar_sheet: None,
+            sidebar_press: PressForward::default(),
+            sidebar_shown: false,
+            sidebar_scroll: None,
             chart_settings_shown: false,
             cs_scroll_seeded: false,
             pointer: PointerPoll::default(),
@@ -281,6 +332,7 @@ impl HostedApp {
     pub fn with_dom(mut chart: mlc_app::ChartApp) -> Self {
         chart.panel_app.dom_hosted.preset_name = true;
         chart.panel_app.dom_hosted.chart_settings = true;
+        chart.panel_app.dom_hosted.sidebar = true;
         let mut host = Self::new(chart);
         host.chrome_on_dom = true;
         host.toolbars_on_dom = true;
@@ -360,28 +412,135 @@ impl HostedApp {
             uzor_framework::widgets::kit::dom(e, &sheet, dom::toolbar::edge_tree(e)).build(cx);
         }
         self.toolbar_hover = hover;
-        let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
         // The DOM laid the items out and says which one the pointer is on; the
-        // press itself goes to the app as the raw press it always got (its hit test
-        // sees the same boxes): it arms what it arms on a press (a drawing group's
-        // drag onto the favourites arc), and its release runs the click — the
-        // item's action, a double-click, a drag's end — through the app's own path.
+        // press itself goes to the app (see [`PressForward`]): it arms what it arms
+        // on a press (a drawing group's drag onto the favourites arc), and its
+        // release runs the click — the item's action, a double-click, a drag's end.
+        let f = self.toolbar_press.step(pressed, clicked.as_deref());
+        self.forward(&f);
+    }
+
+    /// Send `f` to the app at the pointer.
+    fn forward(&mut self, f: &[Forward]) {
         use mlc_app_input_shell::{MouseBtn, ShellEvent};
-        if pressed.is_some() && !self.toolbar_was_pressed {
-            self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
-            self.pointer.held = Some(MouseBtn::Left);
-            self.toolbar_pressed = pressed.clone();
-        }
-        if let Some(id) = clicked {
-            // The DOM reports the click a frame after the release the app already
-            // got; only a press it never saw (down and up between two frames) is
-            // handed over here, whole.
-            if self.toolbar_pressed.take().as_deref() != Some(id.as_str()) {
-                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
-                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: false, x, y });
+        let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
+        for f in f {
+            match f {
+                Forward::Press => {
+                    self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+                    self.pointer.held = Some(MouseBtn::Left);
+                }
+                Forward::Click => {
+                    self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+                    self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: false, x, y });
+                }
             }
         }
-        self.toolbar_was_pressed = pressed.is_some();
+    }
+
+    /// The right sidebar on DOM ([`dom::sidebar`]) when the app hands it over
+    /// (`ChartApp::sidebar_on_dom`); else the app painted it.
+    fn sidebar_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        use dom::sidebar as sb;
+        let was_shown = std::mem::replace(&mut self.sidebar_shown, false);
+        self.sidebar_hits.clear();
+        let rect = match (self.chart.sidebar_on_dom(), self.chart.last_sidebar_result.as_ref()) {
+            (true, Some(res)) => res.sidebar_rect,
+            _ => {
+                self.sidebar_hover = None;
+                self.sidebar_scroll = None;
+                self.sidebar_press = PressForward::default();
+                return;
+            }
+        };
+        if !was_shown {
+            self.sidebar_scroll = None;
+        }
+        self.sidebar_shown = true;
+        let r = cx.rect;
+        let o = uzor::types::Rect::new(r.x + rect.x, r.y + rect.y + chrome::CHROME_HEIGHT, rect.width, rect.height);
+        let theme = self.chart.panel_app.toolbar_theme_for_render();
+        let data = self.chart.watchlist_dom_data();
+        let sheet = cached_sheet(&mut self.sidebar_sheet, sb::css(&theme));
+        // The rows scroll themselves; an offset the app set (its scrollbar drag, a
+        // reveal) is pushed into them, else theirs is copied back to the app.
+        let app = self.chart.sidebar_state.current_right_scroll();
+        let (app_y, dragging) = (app.offset, app.is_dragging);
+        let pushed = match self.sidebar_scroll {
+            Some(last) if (last - app_y).abs() < 0.5 => None,
+            _ => Some(app_y),
+        };
+        if let Some(y) = pushed {
+            uzor_framework::widgets::kit::dom_scroll_to(cx, sb::VIEWPORT, y, false);
+        }
+        let scroll = pushed.unwrap_or_else(|| uzor_framework::widgets::kit::dom_scroll_top(cx, sb::VIEWPORT));
+        let w = sb::Watchlist {
+            rect: o,
+            theme: &theme,
+            state: &self.chart.sidebar_state,
+            columns: &data.columns,
+            flags: &data.flags,
+            hovered: self.sidebar_hover.as_deref(),
+        };
+        let tree = {
+            let render = &mut *cx.render;
+            let mut measure = |font: &str, s: &str| {
+                render.set_font(font);
+                let w = render.measure_text(s);
+                ctx::measured(font, s, w)
+            };
+            sb::tree(&w, &mut measure)
+        };
+        let (content_h, view_h) = (w.content_h(), w.view_h());
+        let state = &self.chart.sidebar_state;
+        let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+            use mlc_app_sidebar_content::render::draw_price_sparkline;
+            let fr = f.rect;
+            let spark = |ctx: &mut dyn uzor::render::RenderContext, data: &[f64], up: bool| {
+                let color = if up { &theme.success } else { &theme.danger };
+                let mut c = ctx::ChartCtx::new(ctx);
+                draw_price_sparkline(&mut c, fr.x, fr.y, fr.width, fr.height, data, color);
+            };
+            if f.key == sb::BLUR {
+                // In the app's own coordinate space, as it made the call.
+                let (dx, dy) = (r.x, r.y + chrome::CHROME_HEIGHT);
+                ctx.save();
+                ctx.translate(dx, dy);
+                ctx.draw_blur_background(o.x - dx, o.y - dy, o.width, o.height);
+                ctx.restore();
+            } else if f.key == sb::TICKER_SPARK {
+                if let Some(t) = &state.ticker_section {
+                    spark(ctx, &t.spark, t.change_pct >= 0.0);
+                }
+            } else if let Some(i) = f.key.strip_prefix(sb::SPARK).and_then(|i| i.parse::<usize>().ok()) {
+                if let Some(item) = state.watchlist_items.get(i) {
+                    spark(ctx, &item.spark, item.change_percent >= 0.0);
+                }
+            } else if f.key == sb::SCROLLBAR {
+                use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
+                let track = uzor::types::Rect::new(fr.x, fr.y + 4.0, fr.width, view_h.min(content_h) - 8.0);
+                let mut c = ctx::ChartCtx::new(ctx);
+                let wt = mlc_app_layout::ui::widgets::WidgetTheme::default();
+                let st = if dragging { ScrollbarState::Dragging } else { ScrollbarState::Active };
+                draw_scrollbar(&mut c, &ScrollbarConfig::new(content_h, view_h, scroll), st, track, &wt, None);
+            }
+        };
+        let resp = uzor_framework::widgets::kit::dom(sb::frame(o), &sheet, tree).paint_slots(&mut painter).dom_scroll().build(cx);
+        let y = match resp.scrolls.iter().find(|(k, _)| pushed.is_none() && k == sb::VIEWPORT) {
+            Some((_, y)) => *y,
+            None => scroll,
+        };
+        let s = self.chart.sidebar_state.current_right_scroll_mut();
+        if (s.offset - y).abs() >= 0.01 && !s.is_dragging {
+            s.offset = y;
+            s.target = y;
+        }
+        self.sidebar_scroll = Some(self.chart.sidebar_state.current_right_scroll().offset);
+        self.sidebar_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
+        let pressed = self.sidebar_hits.iter().find(|(id, _)| cx.view.is_pressed(&uzor::WidgetId::from(id.as_str()))).map(|(id, _)| id.clone());
+        self.sidebar_hover = resp.hovered.clone();
+        let f = self.sidebar_press.step(pressed, resp.clicked.as_deref());
+        self.forward(&f);
     }
 
     /// The chrome strip on DOM, when it covers the state; `false` = the app paints it.
@@ -670,6 +829,9 @@ impl App for HostedApp {
         cx.render.restore();
         mlc_app_layout::ui::toolbar_core::capture::set_enabled(false);
         self.toolbar_layer(cx);
+        // After the toolbars: the app paints the sidebar over the top toolbar's rule
+        // (its backdrop smears onto it).
+        self.sidebar_layer(cx);
         if !self.chrome_layer(cx) {
             // A state the DOM strip does not cover: the app paints it.
             cx.render.save();

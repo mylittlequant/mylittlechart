@@ -59,6 +59,10 @@ pub struct DomHosted {
     /// `ChartPanelApp::chart_settings_on_dom`); any other state falls back to the
     /// app's own drawing.
     pub chart_settings: bool,
+    /// The right sidebar, in the panels and states the DOM version covers (see
+    /// `ChartApp::sidebar_on_dom`); the app still lays it out and registers its
+    /// hit zones, and paints it in any other state.
+    pub sidebar: bool,
 }
 
 pub struct ChartPanelApp {
