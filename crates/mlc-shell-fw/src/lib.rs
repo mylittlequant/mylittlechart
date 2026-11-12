@@ -78,32 +78,82 @@ pub enum PlatformCmd {
     Maximize(bool),
     /// Write text to the clipboard.
     Clipboard(String),
+    /// The app's cursor over content (`None` = the widget under the pointer decides).
+    Cursor(Option<uzor::CursorIcon>),
+    /// Show or hide the cursor.
+    CursorVisible(bool),
+    /// Start an OS window move (a press on the app's own caption or tab strip).
+    DragMove,
+    /// Start an OS window resize from the app's own edge.
+    DragResize(uzor::ResizeDirection),
 }
 
-/// mlc's `Platform` over the framework: window operations become commands; what the
-/// framework has no app-side command for yet (cursor shape, window drag from app
-/// chrome, clipboard read) is recorded in `unsupported` (uzor gap G15).
+/// mlc's cursor as the framework's (`Default` hands the cursor back).
+fn cursor_icon(c: mlc_core::CursorStyle) -> Option<uzor::CursorIcon> {
+    use mlc_core::CursorStyle as S;
+    use uzor::CursorIcon as I;
+    Some(match c {
+        S::Default => return None,
+        S::Pointer => I::PointingHand,
+        S::Grab => I::Grab,
+        S::Grabbing => I::Grabbing,
+        S::Move => I::Move,
+        S::NsResize => I::ResizeVertical,
+        S::EwResize => I::ResizeHorizontal,
+        S::NeswResize => I::ResizeNeSw,
+        S::NwseResize => I::ResizeNwSe,
+        S::Crosshair => I::Crosshair,
+        S::NotAllowed => I::NotAllowed,
+        S::None => I::None,
+    })
+}
+
+fn resize_dir(d: mlc_app_input_shell::ResizeDir) -> uzor::ResizeDirection {
+    use mlc_app_input_shell::ResizeDir as D;
+    use uzor::ResizeDirection as R;
+    match d {
+        D::North => R::North,
+        D::South => R::South,
+        D::East => R::East,
+        D::West => R::West,
+        D::NorthEast => R::NorthEast,
+        D::NorthWest => R::NorthWest,
+        D::SouthEast => R::SouthEast,
+        D::SouthWest => R::SouthWest,
+    }
+}
+
+/// mlc's `Platform` over the framework: window operations, the cursor and window
+/// drags from the app's own chrome (uzor 1.5.37 `WindowCmd::{SetCursor,
+/// SetCursorVisible, DragMove, DragResize}`) become commands; what has no
+/// cross-platform app-side command (a synchronous clipboard read) is recorded in
+/// `unsupported`.
 #[derive(Default)]
 pub struct FwPlatform {
     size: std::cell::Cell<(u32, u32)>,
     maximized: std::cell::Cell<bool>,
     cmds: RefCell<Vec<PlatformCmd>>,
+    /// The cursor last asked for (repeats are not sent again).
+    cursor: std::cell::Cell<Option<Option<uzor::CursorIcon>>>,
     /// Calls the framework cannot carry out yet, by name (for tests and logs).
     pub unsupported: RefCell<Vec<&'static str>>,
 }
 
 impl mlc_app_input_shell::Platform for FwPlatform {
-    fn set_cursor(&self, _style: mlc_core::CursorStyle) {
-        self.unsupported.borrow_mut().push("set_cursor");
+    fn set_cursor(&self, style: mlc_core::CursorStyle) {
+        let icon = cursor_icon(style);
+        if self.cursor.replace(Some(icon)) != Some(icon) {
+            self.cmds.borrow_mut().push(PlatformCmd::Cursor(icon));
+        }
     }
-    fn set_cursor_visible(&self, _visible: bool) {
-        self.unsupported.borrow_mut().push("set_cursor_visible");
+    fn set_cursor_visible(&self, visible: bool) {
+        self.cmds.borrow_mut().push(PlatformCmd::CursorVisible(visible));
     }
     fn drag_window(&self) {
-        self.unsupported.borrow_mut().push("drag_window");
+        self.cmds.borrow_mut().push(PlatformCmd::DragMove);
     }
-    fn drag_resize_window(&self, _dir: mlc_app_input_shell::ResizeDir) {
-        self.unsupported.borrow_mut().push("drag_resize_window");
+    fn drag_resize_window(&self, dir: mlc_app_input_shell::ResizeDir) {
+        self.cmds.borrow_mut().push(PlatformCmd::DragResize(resize_dir(dir)));
     }
     fn set_minimized(&self, v: bool) {
         self.cmds.borrow_mut().push(PlatformCmd::Minimize(v));
@@ -487,6 +537,10 @@ impl HostedApp {
                 PlatformCmd::Minimize(m) => AppCommand::Window(WindowCmd::Minimize { win, minimized: m }),
                 PlatformCmd::Maximize(m) => AppCommand::Window(WindowCmd::Maximize { win, maximized: m }),
                 PlatformCmd::Clipboard(t) => AppCommand::Clipboard(ClipboardCmd::Write(t)),
+                PlatformCmd::Cursor(icon) => AppCommand::Window(WindowCmd::SetCursor { win, icon }),
+                PlatformCmd::CursorVisible(visible) => AppCommand::Window(WindowCmd::SetCursorVisible { win, visible }),
+                PlatformCmd::DragMove => AppCommand::Window(WindowCmd::DragMove(win)),
+                PlatformCmd::DragResize(dir) => AppCommand::Window(WindowCmd::DragResize { win, dir }),
             })
             .collect();
         if std::mem::take(&mut self.out.close_requested) || std::mem::take(&mut self.out.close_window_requested) {

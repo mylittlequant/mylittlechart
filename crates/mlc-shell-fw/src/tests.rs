@@ -303,7 +303,7 @@ mod hosted {
         assert_eq!(h.runtime().app().chrome.hovered, mlc_app_input_shell::chrome::ChromeHit::Tab(0));
         assert!(h.runtime().app().chrome_hits.iter().any(|(k, _)| k == "chrome:tab_close:0"), "the hovered tab shows its ×");
         // A press on the empty strip has no DOM cell: the app's own hit test makes it
-        // a window drag (recorded until the framework carries app-side drags).
+        // a window drag, sent to the host as an OS window move.
         let pos = uzor_framework::Point { x: 600.0, y: 16.0 };
         let b = uzor::input::MouseButton::Left;
         move_to(&mut h, win, pos.x, pos.y);
@@ -311,7 +311,8 @@ mod hosted {
         h.advance(0.017);
         h.input(win, InputEvent::Pointer(PointerInput::Up { pos, button: b, mods: Default::default() }));
         h.advance(0.017);
-        assert!(h.runtime().app().platform.unsupported.borrow().contains(&"drag_window"));
+        assert!(h.command_log().iter().any(|(w, c)| *w == win && matches!(c, uzor_framework::WindowCommand::DragWindow)), "{:?}", h.command_log());
+        assert!(h.runtime().app().platform.unsupported.borrow().is_empty());
     }
 
     /// The strip rows of one frame, painted with the DOM strip on or off.
