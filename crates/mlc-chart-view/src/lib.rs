@@ -26,10 +26,11 @@ mod shots;
 
 use uzor::input::Sense;
 use uzor::layout::docking::DockPanel;
-use uzor::render::{RenderContext, TickRate};
+use uzor::render::TickRate;
+use uzor::ui::dom::SlotRegistry;
 use uzor::tokens::{BuiltinSet, Tokens};
 use uzor::{Rect, WidgetId};
-use uzor_framework::widgets::kit::{self, SlotFrame};
+use uzor_framework::widgets::kit;
 use uzor_framework::{
     App, AppCommand, ChromeModel, DockTarget, InitCx, Intent, IntentCx, LayoutCmd, OverlayCx, OverlayModel, PanelCx, PanelHome, RuntimeConfig, SizePx, Spec, WindowId,
     WindowIntent, WindowSpec,
@@ -37,7 +38,6 @@ use uzor_framework::{
 
 #[cfg(feature = "dev-control")]
 use crate::demo::TIMEFRAMES;
-use crate::input::Mouse;
 use crate::source::{DemoSource, Source};
 
 /// The canvas element id the web shell draws into.
@@ -82,8 +82,9 @@ impl Spec for ChartSpec {
 
 /// The chart app.
 pub struct ChartViewApp {
-    /// The chart: source, view, input, painter.
-    pub chart: ChartSlot,
+    /// The chart ([`ChartSlot`], under [`screen::CHART_SLOT`]): the tree's slot
+    /// painters.
+    pub slots: SlotRegistry,
     sheet: Option<(u64, uzor::ui::style::Sheet)>,
     win: Option<WindowId>,
     waker_win: std::sync::Arc<std::sync::Mutex<Option<WindowId>>>,
@@ -99,7 +100,9 @@ impl ChartViewApp {
 
     /// Bars from `source`; `live` says it is a network source (demo fallback on timeout).
     pub fn with_source(source: Box<dyn Source>, live: bool, demo_end: i64) -> Self {
-        Self { chart: ChartSlot::new(source, live, demo_end), sheet: None, win: None, waker_win: Default::default(), last_hits: Vec::new() }
+        let mut slots = SlotRegistry::new();
+        slots.register(screen::CHART_SLOT, ChartSlot::new(source, live, demo_end));
+        Self { slots, sheet: None, win: None, waker_win: Default::default(), last_hits: Vec::new() }
     }
 
     /// Live Binance BTC/USDT (feature `live`), demo bars if it does not answer.
@@ -116,9 +119,19 @@ impl ChartViewApp {
         RuntimeConfig { windows: vec![spec], tokens: Tokens::builtin(BuiltinSet::Dark), dark: true, tick: TickRate::Dirty, ..RuntimeConfig::default() }
     }
 
+    /// The chart: source, view, input, painter.
+    pub fn chart(&self) -> &ChartSlot {
+        self.slots.get(screen::CHART_SLOT).expect("the chart is registered")
+    }
+
+    /// The chart, mutable.
+    pub fn chart_mut(&mut self) -> &mut ChartSlot {
+        self.slots.get_mut(screen::CHART_SLOT).expect("the chart is registered")
+    }
+
     /// The chart's content box on the last frame.
     pub fn last_chart(&self) -> Option<Rect> {
-        self.chart.last_rect
+        self.chart().last_rect
     }
 
     fn sheet(&mut self) -> &uzor::ui::style::Sheet {
@@ -133,36 +146,32 @@ impl ChartViewApp {
     /// Lay out, paint and wire one frame into `cx.rect`.
     fn frame(&mut self, cx: &mut PanelCx<'_, ChartSpec>) {
         let now = cx.time.now.0;
-        self.chart.pump(now);
+        let coarse = cx.view.coarse_pointer();
+        let chart = self.chart_mut();
+        chart.pump(now);
+        chart.coarse = coarse;
         let tree = {
-            let src = self.chart.source();
-            let header = screen::Header { symbol: src.symbol(), venue: src.venue(), live: self.chart.shown == Shown::Live };
-            screen::tree(&header, self.chart.tf).css(format!("height: {}px", cx.rect.height))
+            let chart = self.chart();
+            let src = chart.source();
+            let header = screen::Header { symbol: src.symbol(), venue: src.venue(), live: chart.shown == Shown::Live };
+            screen::tree(&header, chart.tf).css(format!("height: {}px", cx.rect.height))
         };
         let rect = cx.rect;
         let sheet = self.sheet().clone();
         let id = WidgetId::from(screen::CHART_SLOT);
-        // The mouse is read from the view before the tree is built (it reports the
-        // last frame's targets); fingers come with the slot frame.
-        let mouse = Mouse::read(cx.view, &id);
-        let chart = &mut self.chart;
-        let mut painter = |ctx: &mut dyn RenderContext, f: &SlotFrame<'_>| {
-            if f.key == screen::CHART_SLOT {
-                chart.paint(ctx, f, &mouse, now);
-            }
-        };
-        let resp = kit::dom(rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        // The chart paints itself in its slot and takes the slot's input there.
+        let resp = kit::dom(rect, &sheet, tree).slot_registry(&mut self.slots).build(cx);
         match resp.clicked.as_deref() {
-            Some(screen::RESET_ID) => self.chart.model.reset(),
+            Some(screen::RESET_ID) => self.chart_mut().model.reset(),
             Some(id) => {
                 if let Some(tf) = screen::picked_tf(id) {
-                    self.chart.set_tf(tf, now);
+                    self.chart_mut().set_tf(tf, now);
                 }
             }
             None => {}
         }
         self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
-        if let Some(r) = self.chart.last_rect {
+        if let Some(r) = self.chart_mut().last_rect {
             // The DOM registers the slot for clicks, hover and its fingers; the chart
             // also takes the mouse drag and the wheel.
             cx.widgets.coord.register(id, r, Sense::CLICK_AND_DRAG.union(Sense::SCROLL).with_touch().with_gesture());
@@ -170,7 +179,7 @@ impl ChartViewApp {
         // A requested series arrives on a later frame (demo: the next one; live: the
         // waker, or the timeout while loading); a click changed what this frame's tree
         // showed.
-        if resp.clicked.is_some() || self.chart.wants_frame() {
+        if resp.clicked.is_some() || self.chart_mut().wants_frame() {
             cx.out.request_frame();
         }
     }
@@ -182,7 +191,7 @@ impl App for ChartViewApp {
     fn init(&mut self, cx: &mut InitCx<'_, ChartSpec>) {
         let h = cx.handle();
         let win = self.waker_win.clone();
-        self.chart.set_waker(std::sync::Arc::new(move || {
+        self.chart_mut().set_waker(std::sync::Arc::new(move || {
             if let Some(w) = *win.lock().unwrap_or_else(|e| e.into_inner()) {
                 let _ = h.request_repaint(w);
             }
@@ -218,13 +227,13 @@ impl App for ChartViewApp {
     fn automation_state(&self) -> Option<String> {
         Some(
             serde_json::json!({
-                "tf": TIMEFRAMES[self.chart.tf].0,
-                "shown": format!("{:?}", self.chart.shown),
-                "bars": self.chart.model.bars.len(),
-                "count": self.chart.model.count,
-                "right": self.chart.model.right,
-                "crosshair": self.chart.model.crosshair,
-                "follow": self.chart.model.follow,
+                "tf": TIMEFRAMES[self.chart().tf].0,
+                "shown": format!("{:?}", self.chart().shown),
+                "bars": self.chart().model.bars.len(),
+                "count": self.chart().model.count,
+                "right": self.chart().model.right,
+                "crosshair": self.chart().model.crosshair,
+                "follow": self.chart().model.follow,
             })
             .to_string(),
         )

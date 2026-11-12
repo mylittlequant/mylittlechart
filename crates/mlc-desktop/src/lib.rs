@@ -19,16 +19,16 @@ use std::sync::{Arc, Mutex};
 
 use uzor::input::Sense;
 use uzor::layout::docking::DockPanel;
-use uzor::render::{RenderContext, TickRate};
+use uzor::render::TickRate;
+use uzor::ui::dom::SlotRegistry;
 use uzor::tokens::{BuiltinSet, Tokens};
 use uzor::{Rect, WidgetId};
-use uzor_framework::widgets::kit::{self, SlotFrame};
+use uzor_framework::widgets::kit;
 use uzor_framework::{
     App, AppCommand, ChromeModel, DockTarget, InitCx, Intent, IntentCx, LayoutCmd, OverlayCx, OverlayModel, PanelCx, PanelHome, RuntimeConfig, SizePx, Spec, WindowId,
     WindowIntent, WindowSpec,
 };
 
-use mlc_chart_view::input::Mouse;
 use mlc_chart_view::source::{DemoSource, Source};
 use mlc_chart_view::{ChartSlot, Shown};
 
@@ -83,7 +83,9 @@ pub fn demo_sources() -> SourceFactory {
 
 /// The desktop app.
 pub struct DesktopApp {
-    pub chart: ChartSlot,
+    /// The chart ([`ChartSlot`], under [`screen::CHART_SLOT`]): the tree's slot
+    /// painters.
+    pub slots: SlotRegistry,
     pub watch: Watchlist,
     sources: SourceFactory,
     demo_end: i64,
@@ -104,8 +106,10 @@ impl DesktopApp {
     pub fn new(symbols: Vec<Sym>, sources: SourceFactory, demo_end: i64) -> Self {
         let first = symbols.first().cloned().unwrap_or(Sym { symbol: "BTC/USDT".into(), venue: "Binance".into() });
         let (src, live) = sources(&first, demo_end);
+        let mut slots = SlotRegistry::new();
+        slots.register(screen::CHART_SLOT, ChartSlot::new(src, live, demo_end));
         Self {
-            chart: ChartSlot::new(src, live, demo_end),
+            slots,
             watch: Watchlist::new(symbols),
             sources,
             demo_end,
@@ -134,12 +138,12 @@ impl DesktopApp {
             return;
         }
         let (src, live) = (self.sources)(&sym, self.demo_end);
-        self.chart.set_source(src, live, now);
+        self.chart_mut().set_source(src, live, now);
         self.watch.current = Some(i);
     }
 
     fn status(&self) -> &'static str {
-        match self.chart.shown {
+        match self.chart().shown {
             Shown::Loading => t(K::Loading),
             Shown::Demo => t(K::Demo),
             Shown::Offline => t(K::Offline),
@@ -156,42 +160,50 @@ impl DesktopApp {
         self.sheet.as_ref().expect("sheet").1.clone()
     }
 
+    /// The chart: source, view, input, painter.
+    pub fn chart(&self) -> &ChartSlot {
+        self.slots.get(screen::CHART_SLOT).expect("the chart is registered")
+    }
+
+    /// The chart, mutable.
+    pub fn chart_mut(&mut self) -> &mut ChartSlot {
+        self.slots.get_mut(screen::CHART_SLOT).expect("the chart is registered")
+    }
+
     /// Lay out, paint and wire one frame into `cx.rect`.
     fn frame(&mut self, cx: &mut PanelCx<'_, DesktopSpec>) {
         let now = cx.time.now.0;
-        self.chart.pump(now);
+        let coarse = cx.view.coarse_pointer();
+        let chart = self.chart_mut();
+        chart.pump(now);
+        chart.coarse = coarse;
         let id = WidgetId::from(screen::CHART_SLOT);
-        // The mouse over the chart and the wheel over the list, read from the view
-        // before the tree is built (the view reports the last frame's targets).
-        let mouse = Mouse::read(cx.view, &id);
+        // The wheel over the list, read from the view before the tree is built (the
+        // view reports the last frame's targets).
         let scroll0 = self.watch.scroll;
         self.watch.wheel(cx.view.raw_pointer(), cx.view.scroll());
         let status = self.status();
         let sheet = self.sheet();
         let tree = {
-            let src = self.chart.source();
-            let header = screen::Header { symbol: src.symbol(), venue: src.venue(), status, live: self.chart.shown == Shown::Live };
+            let chart = self.chart();
+            let src = chart.source();
+            let header = screen::Header { symbol: src.symbol(), venue: src.venue(), status, live: chart.shown == Shown::Live };
             let (shown, selected) = self.watch.shown();
             let side = screen::Side { query: &self.watch.query, shown: &shown, all: &self.watch.all, selected, scroll: self.watch.scroll };
-            screen::tree(&header, self.chart.tf, &side).css(format!("height: {}px", cx.rect.height))
+            screen::tree(&header, chart.tf, &side).css(format!("height: {}px", cx.rect.height))
         };
-        let chart = &mut self.chart;
-        let mut painter = |ctx: &mut dyn RenderContext, f: &SlotFrame<'_>| {
-            if f.key == screen::CHART_SLOT {
-                chart.paint(ctx, f, &mouse, now);
-            }
-        };
-        let resp = kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        // The chart paints itself in its slot and takes the slot's input there.
+        let resp = kit::dom(cx.rect, &sheet, tree).slot_registry(&mut self.slots).build(cx);
         for (fid, value) in &resp.edited {
             if fid == screen::SEARCH_ID {
                 self.watch.set_query(value);
             }
         }
         match resp.clicked.as_deref() {
-            Some(screen::RESET_ID) => self.chart.model.reset(),
+            Some(screen::RESET_ID) => self.chart_mut().model.reset(),
             Some(hit) => {
                 if let Some(tf) = screen::picked_tf(hit) {
-                    self.chart.set_tf(tf, now);
+                    self.chart_mut().set_tf(tf, now);
                 } else if let Some(row) = screen::picked_row(hit) {
                     if let Some(i) = self.watch.shown().0.get(row).copied() {
                         self.open_symbol(i, now);
@@ -203,7 +215,7 @@ impl DesktopApp {
         // The list's viewport is its scroll box, not its (taller) content.
         self.watch.list_rect = resp.dom.rect(screen::LIST_BOX);
         self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
-        if let Some(r) = self.chart.last_rect {
+        if let Some(r) = self.chart_mut().last_rect {
             // uzor 1.5.36 registers a DOM paint slot for clicks, hover and fingers only;
             // the desktop chart also takes the mouse drag and the wheel (uzor branch
             // fix/paint-slot-mouse puts both into the slot frame).
@@ -212,7 +224,7 @@ impl DesktopApp {
         // The tree of this frame was built before the clicks, edits and the wheel
         // changed the state: show the change on the next one.
         let changed = resp.clicked.is_some() || !resp.edited.is_empty() || self.watch.scroll != scroll0;
-        if changed || self.chart.wants_frame() {
+        if changed || self.chart_mut().wants_frame() {
             cx.out.request_frame();
         }
     }
@@ -224,7 +236,7 @@ impl App for DesktopApp {
     fn init(&mut self, cx: &mut InitCx<'_, DesktopSpec>) {
         let h = cx.handle();
         let win = self.waker_win.clone();
-        self.chart.set_waker(Arc::new(move || {
+        self.chart_mut().set_waker(Arc::new(move || {
             if let Some(w) = *win.lock().unwrap_or_else(|e| e.into_inner()) {
                 let _ = h.request_repaint(w);
             }
@@ -257,17 +269,17 @@ impl App for DesktopApp {
 
     #[cfg(feature = "dev-control")]
     fn automation_state(&self) -> Option<String> {
-        let src = self.chart.source();
+        let src = self.chart().source();
         Some(
             serde_json::json!({
                 "symbol": src.symbol(),
                 "venue": src.venue(),
-                "tf": mlc_chart_view::demo::TIMEFRAMES[self.chart.tf].0,
-                "shown": format!("{:?}", self.chart.shown),
-                "bars": self.chart.model.bars.len(),
-                "count": self.chart.model.count,
-                "right": self.chart.model.right,
-                "crosshair": self.chart.model.crosshair,
+                "tf": mlc_chart_view::demo::TIMEFRAMES[self.chart().tf].0,
+                "shown": format!("{:?}", self.chart().shown),
+                "bars": self.chart().model.bars.len(),
+                "count": self.chart().model.count,
+                "right": self.chart().model.right,
+                "crosshair": self.chart().model.crosshair,
                 "query": self.watch.query,
                 "watchlist": self.watch.shown().0.len(),
             })

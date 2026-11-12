@@ -10,8 +10,8 @@ description = "InstancedChartRenderContext, a chart-aware instanced renderer."
 name = "mlc_app_render_context_instanced"
 
 [dependencies]
-uzor = "=1.5.38"
-uzor-render-wgpu-instanced = "=1.5.38"
+uzor = "=1.5.39"
+uzor-render-wgpu-instanced = "=1.5.39"
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]

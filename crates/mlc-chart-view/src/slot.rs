@@ -1,18 +1,20 @@
 //! The chart as one reusable paint slot: where its bars come from ([`Source`]), its
 //! view state ([`ChartModel`]), fingers and mouse ([`ChartInput`]) and its painter.
-//! The phone app ([`crate::ChartViewApp`]) and the desktop app (`mlc-desktop`) both
-//! put a [`ChartSlot`] into a DOM `El::paint_slot` and call [`ChartSlot::paint`] from
-//! `DomBuilder::paint_slots`.
+//! It is a uzor [`SlotPainter`]: register it in a [`uzor::ui::dom::SlotRegistry`] under
+//! the key of a DOM `El::paint_slot` and hand the registry to the tree
+//! (`DomBuilder::slot_registry`); it paints there and takes the slot's input as
+//! [`SlotEvent`]s. The phone app ([`crate::ChartViewApp`]) and the desktop app
+//! (`mlc-desktop`) both do.
 
 use std::sync::Arc;
 
 use uzor::render::RenderContext;
+use uzor::ui::dom::{SlotAction, SlotEvent, SlotPaint, SlotPainter};
 use uzor::Rect;
-use uzor_framework::widgets::kit::SlotFrame;
 
 use crate::demo::{self, TIMEFRAMES};
 use crate::i18n::{t, K};
-use crate::input::{ChartInput, ChartOp, Mouse};
+use crate::input::{ChartInput, ChartOp};
 use crate::model::ChartModel;
 use crate::paint;
 use crate::source::{Feed, Source};
@@ -51,6 +53,11 @@ pub struct ChartSlot {
     waker: Option<Arc<dyn Fn() + Send + Sync>>,
     /// The slot's content box on the last frame (tests, dev control).
     pub last_rect: Option<Rect>,
+    /// The pointer is a finger or a pen (set by the host each frame): no hover
+    /// crosshair, no wheel zoom.
+    pub coarse: bool,
+    /// The time of the last [`ChartSlot::pump`] (double clicks are timed with it).
+    now: f64,
 }
 
 /// Apply one chart op to `model` for a plot `width` px wide.
@@ -78,6 +85,8 @@ impl ChartSlot {
             demo_end,
             waker: None,
             last_rect: None,
+            coarse: false,
+            now: 0.0,
         };
         s.source.request(TIMEFRAMES[DEFAULT_TF].0);
         s
@@ -123,6 +132,7 @@ impl ChartSlot {
 
     /// Apply what the source delivered; fall back to demo on timeout.
     pub fn pump(&mut self, now: f64) {
+        self.now = now;
         for f in self.source.poll() {
             match f {
                 Feed::Bars { tf, bars, live } => {
@@ -174,15 +184,35 @@ impl ChartSlot {
         self.requested_at.is_some() || self.shown == Shown::Loading
     }
 
-    /// One frame of the slot `f`: its fingers and clicks, the `mouse` read from the
-    /// view, then the painter. Call from `DomBuilder::paint_slots`.
-    pub fn paint(&mut self, ctx: &mut dyn RenderContext, f: &SlotFrame<'_>, mouse: &Mouse, now: f64) {
-        let plot = paint::areas(f.rect).plot;
-        for op in self.input.ops(&f.gestures, f.pointer, f.clicked, mouse, plot, now) {
-            apply_op(&mut self.model, op, plot.width);
-        }
+    fn title(&self) -> String {
+        format!("{} · {} · {}", self.source.symbol(), self.source.venue(), TIMEFRAMES[self.tf].0)
+    }
+}
+
+impl SlotPainter for ChartSlot {
+    fn paint(&mut self, ctx: &mut dyn RenderContext, f: &SlotPaint<'_>) {
         paint::chart(ctx, f.rect, &self.model, self.plot_label());
         self.last_rect = Some(f.rect);
+    }
+
+    fn event(&mut self, ev: &SlotEvent, f: &SlotPaint<'_>) -> Option<SlotAction> {
+        let plot = paint::areas(f.rect).plot;
+        for op in self.input.event(ev, f.rect, plot, self.now, self.coarse) {
+            apply_op(&mut self.model, op, plot.width);
+        }
+        None
+    }
+
+    fn role(&self) -> &'static str {
+        "figure"
+    }
+
+    fn name(&self) -> Option<String> {
+        Some(self.title())
+    }
+
+    fn wants_frame(&self) -> bool {
+        ChartSlot::wants_frame(self)
     }
 }
 

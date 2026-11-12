@@ -11,8 +11,8 @@ name = "mlc_chart_view"
 
 [dependencies]
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
-uzor = { version = "=1.5.38", default-features = false, features = ["flow-flex", "flow-grid"] }
-uzor-framework = { version = "=1.5.38", default-features = false }
+uzor = { version = "=1.5.39", default-features = false, features = ["flow-flex", "flow-grid"] }
+uzor-framework = { version = "=1.5.39", default-features = false }
 serde_json = { version = "1", optional = true }
 # Live data (feature `live`): one exchange through mlc's data bridge.
 mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge", optional = true }
@@ -26,8 +26,8 @@ tokio = { version = "1", default-features = false, features = ["sync", "macros"]
 wasm-bindgen-futures = { version = "0.4", optional = true }
 
 [dev-dependencies]
-uzor = { version = "=1.5.38", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
-uzor-render-tiny-skia = "=1.5.38"
+uzor = { version = "=1.5.39", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
+uzor-render-tiny-skia = "=1.5.39"
 
 [features]
 default = []

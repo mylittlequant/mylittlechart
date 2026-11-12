@@ -31,7 +31,7 @@ fn shots() {
             save(&mut s, sw, 1024, 640, &dir, "06-desktop-1024x640-en");
             continue;
         }
-        let c = h.runtime().app().chart.last_rect.unwrap();
+        let c = h.runtime().app().chart().last_rect.unwrap();
         wheel(&mut h, win, c.x + c.width * 0.6, c.y + c.height * 0.4, 3.0);
         save(&mut h, win, 1280, 800, &dir, "02-wheel-zoom-crosshair");
         // A screenshot lays the tree out with real glyph widths, the headless frames

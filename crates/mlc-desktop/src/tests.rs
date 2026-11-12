@@ -140,14 +140,14 @@ fn the_window_fits_in_both_languages_and_two_sizes() {
 #[test]
 fn mouse_wheel_zooms_and_drag_pans_the_chart() {
     let (mut h, win) = desktop();
-    let c = app(&h).chart.last_rect.unwrap();
+    let c = app(&h).chart().last_rect.unwrap();
     let (x, y) = (c.x + c.width / 2.0, c.y + c.height / 2.0);
-    let n0 = app(&h).chart.model.count;
+    let n0 = app(&h).chart().model.count;
     wheel(&mut h, win, x, y, 2.0);
-    let n1 = app(&h).chart.model.count;
+    let n1 = app(&h).chart().model.count;
     assert!(n1 < n0 * 0.9, "wheel up zooms in: {n0} -> {n1}");
-    assert!(app(&h).chart.model.crosshair.is_some(), "hover shows the crosshair");
-    let r0 = app(&h).chart.model.right;
+    assert!(app(&h).chart().model.crosshair.is_some(), "hover shows the crosshair");
+    let r0 = app(&h).chart().model.right;
     h.input(win, InputEvent::Pointer(PointerInput::Down { pos: Point::new(x, y), button: MouseButton::Left, mods: mods() }));
     h.advance(0.017);
     for i in 1..=10 {
@@ -155,34 +155,34 @@ fn mouse_wheel_zooms_and_drag_pans_the_chart() {
     }
     h.input(win, InputEvent::Pointer(PointerInput::Up { pos: Point::new(x + 200.0, y), button: MouseButton::Left, mods: mods() }));
     h.advance(0.017);
-    let r1 = app(&h).chart.model.right;
+    let r1 = app(&h).chart().model.right;
     assert!(r1 < r0 - 5.0, "dragging right brings older bars in: {r0} -> {r1}");
-    assert!(!app(&h).chart.model.follow);
+    assert!(!app(&h).chart().model.follow);
     // Out of the chart: no crosshair; the wheel over the toolbar does not zoom.
     let reset = hit(&h, screen::RESET_ID);
-    let n2 = app(&h).chart.model.count;
+    let n2 = app(&h).chart().model.count;
     wheel(&mut h, win, reset.x - 300.0, reset.y + 4.0, 3.0);
-    assert_eq!(app(&h).chart.model.count, n2);
-    assert!(app(&h).chart.model.crosshair.is_none());
+    assert_eq!(app(&h).chart().model.count, n2);
+    assert!(app(&h).chart().model.crosshair.is_none());
 }
 
 #[test]
 fn timeframe_and_reset_buttons() {
     let (mut h, win) = desktop();
     click_id(&mut h, win, "tf:0");
-    assert_eq!(app(&h).chart.tf, 0);
-    let b = &app(&h).chart.model.bars;
+    assert_eq!(app(&h).chart().tf, 0);
+    let b = &app(&h).chart().model.bars;
     assert_eq!(b[1].timestamp - b[0].timestamp, 60);
-    h.runtime_mut().app_mut().chart.model.zoom(3.0, 100.0, 300.0);
+    h.runtime_mut().app_mut().chart_mut().model.zoom(3.0, 100.0, 300.0);
     h.advance(0.1);
     click_id(&mut h, win, screen::RESET_ID);
-    assert_eq!(app(&h).chart.model.count, mlc_chart_view::model::DEFAULT_BARS);
+    assert_eq!(app(&h).chart().model.count, mlc_chart_view::model::DEFAULT_BARS);
 }
 
 #[test]
 fn watchlist_search_scroll_and_open() {
     let (mut h, win) = desktop();
-    assert_eq!(app(&h).chart.source().symbol(), "BTC/USDT");
+    assert_eq!(app(&h).chart().source().symbol(), "BTC/USDT");
     // The list scrolls under the wheel.
     let lb = hit(&h, screen::LIST_BOX);
     wheel(&mut h, win, lb.x + 40.0, lb.y + 40.0, -3.0);
@@ -197,11 +197,11 @@ fn watchlist_search_scroll_and_open() {
     assert_eq!(app(&h).watch.scroll, 0.0, "a new search starts at the top");
     assert_eq!(app(&h).watch.shown().0.len(), 3);
     click_id(&mut h, win, "wl:row:1");
-    let src = app(&h).chart.source();
+    let src = app(&h).chart().source();
     assert_eq!(src.symbol(), "ETH/USDT");
     assert_ne!(src.venue(), "Binance", "row 1 of the ETH hits is the second venue");
-    assert_eq!(app(&h).chart.shown, Shown::Demo);
-    assert!(app(&h).chart.model.bars.last().unwrap().close < 10_000.0);
+    assert_eq!(app(&h).chart().shown, Shown::Demo);
+    assert!(app(&h).chart().model.bars.last().unwrap().close < 10_000.0);
     // Nothing matches: the list says so.
     click_id(&mut h, win, screen::SEARCH_ID);
     paste(&mut h, win, "zz");

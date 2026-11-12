@@ -5,12 +5,14 @@
 //! view, a tap hides the crosshair. Mouse: drag pans, the wheel zooms at the
 //! pointer, hover moves the crosshair, a double click resets.
 //!
-//! The chart is a DOM paint slot (`El::paint_slot`): it captures its fingers, so the
-//! gestures arrive with its [`SlotFrame`](uzor_framework::widgets::kit::SlotFrame)
-//! (or `VisualView::captured_gestures`) and two fingers never scroll anything else;
-//! the long-pressed finger drags the crosshair and double taps come from uzor's
-//! recogniser. The mouse (press, wheel) is read from the view ([`Mouse::read`]).
+//! The chart is a DOM paint slot (`El::paint_slot`) with a uzor `SlotPainter`
+//! ([`crate::ChartSlot`]): it captures its fingers, so the gestures and the mouse
+//! arrive as its `SlotEvent`s ([`ChartInput::event`]) and two fingers never scroll
+//! anything else; the long-pressed finger drags the crosshair and double taps come
+//! from uzor's recogniser. Without a DOM, [`ChartInput::update`] reads the same from
+//! the view (the mouse with [`Mouse::read`]).
 
+use uzor::ui::dom::SlotEvent;
 use uzor::{Rect, WidgetId};
 use uzor_framework::types::gesture::Gesture;
 use uzor_framework::{Spec, VisualView};
@@ -105,6 +107,62 @@ impl Touch {
         out
     }
 
+    /// One touch event of the chart's slot ([`SlotEvent`], slot-local; the slot's
+    /// content box is `rect`), over `plot` (window coordinates).
+    pub fn event(&mut self, ev: &SlotEvent, rect: Rect, plot: Rect) -> Vec<ChartOp> {
+        let win = |x: f64, y: f64| (rect.x + x, rect.y + y);
+        let local = |(x, y): (f64, f64)| (x - plot.x, y - plot.y);
+        let mut out = Vec::new();
+        match *ev {
+            // A pan's first step starts it (the slot gets no separate start).
+            SlotEvent::Pan { x, y, dx, .. } if self.pinch_scale.is_none() => {
+                let p = win(x, y);
+                if self.held {
+                    out.push(ChartOp::Crosshair(Some(local(p))));
+                } else if self.panning || inside(plot, p.0 - dx, p.1) {
+                    self.panning = true;
+                    out.push(ChartOp::Pan(dx));
+                }
+            }
+            SlotEvent::PanEnd { .. } => {
+                self.panning = false;
+                self.held = false;
+            }
+            SlotEvent::Pinch { x, y, scale } => {
+                let c = win(x, y);
+                if self.pinch_scale.is_some() || inside(plot, c.0, c.1) {
+                    self.panning = false;
+                    self.held = false;
+                    let prev = self.pinch_scale.replace(scale).unwrap_or(1.0);
+                    if prev > 0.0 && scale > 0.0 && (scale / prev - 1.0).abs() > 1e-6 {
+                        out.push(ChartOp::Zoom { factor: scale / prev, anchor: c.0 - plot.x });
+                    }
+                }
+            }
+            SlotEvent::PinchEnd { .. } => self.pinch_scale = None,
+            SlotEvent::PinchPan { dx, .. } if self.pinch_scale.is_some() => out.push(ChartOp::Pan(dx)),
+            SlotEvent::LongPress { x, y } => {
+                let p = win(x, y);
+                if inside(plot, p.0, p.1) {
+                    self.held = true;
+                    self.panning = false;
+                    self.crosshair = true;
+                    out.push(ChartOp::Crosshair(Some(local(p))));
+                }
+            }
+            SlotEvent::DoubleTap { x, y } => {
+                let p = win(x, y);
+                if inside(plot, p.0, p.1) {
+                    self.held = false;
+                    self.crosshair = false;
+                    out.push(ChartOp::Reset);
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
     /// The crosshair is shown by a long press (a tap hides it).
     pub fn crosshair_shown(&self) -> bool {
         self.crosshair
@@ -167,6 +225,26 @@ impl ChartInput {
             }
         }
         out
+    }
+
+    /// The ops of one event of the chart's slot ([`SlotEvent`], slot-local; content
+    /// box `rect`) over `plot` (window coordinates) at time `now`; `coarse`: the
+    /// pointer is a finger or a pen (no hover crosshair, no wheel).
+    pub fn event(&mut self, ev: &SlotEvent, rect: Rect, plot: Rect, now: f64, coarse: bool) -> Vec<ChartOp> {
+        let win = |x: f64, y: f64| (rect.x + x, rect.y + y);
+        match *ev {
+            SlotEvent::Enter { x, y } | SlotEvent::Move { x, y } if !coarse => {
+                let p = win(x, y);
+                vec![ChartOp::Crosshair(inside(plot, p.0, p.1).then(|| (p.0 - plot.x, p.1 - plot.y)))]
+            }
+            SlotEvent::Leave if !coarse => vec![ChartOp::Crosshair(None)],
+            // Mouse drag pans (fingers pan through `Pan`).
+            SlotEvent::Drag { dx, .. } if dx != 0.0 => vec![ChartOp::Pan(dx)],
+            SlotEvent::Click { x, y } => self.click(win(x, y), now, coarse).into_iter().collect(),
+            // Wheel zoom at the pointer (a finger's scroll is not a wheel).
+            SlotEvent::Wheel { x, dy, .. } if !coarse && dy != 0.0 => vec![ChartOp::Zoom { factor: 1.12f64.powf(dy), anchor: rect.x + x - plot.x }],
+            _ => self.touch.event(ev, rect, plot),
+        }
     }
 
     /// All ops of this frame for widget `id` drawn over `plot`, everything read from
