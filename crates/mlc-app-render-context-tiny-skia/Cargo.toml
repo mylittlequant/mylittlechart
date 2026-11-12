@@ -10,8 +10,8 @@ description = "TinySkiaChartRenderContext, a chart-aware wrapper over tiny-skia.
 name = "mlc_app_render_context_tiny_skia"
 
 [dependencies]
-uzor = "=1.5.37"
-uzor-render-tiny-skia = "=1.5.37"
+uzor = "=1.5.38"
+uzor-render-tiny-skia = "=1.5.38"
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]

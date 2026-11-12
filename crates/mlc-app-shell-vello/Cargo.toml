@@ -39,7 +39,7 @@ zeroize = "1"
 # `nemo/.cargo/config.toml`. Vendored OpenSSL stays off.
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
 hex.workspace = true
-uzor = "=1.5.37"
+uzor = "=1.5.38"
 vello = "0.9"
 winit = "0.30"
 pollster = "0.4"
@@ -59,10 +59,10 @@ mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indic
 mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittlechart-backend" }
 sysinfo = "0.34"
 mlc-app-render-context-instanced = { version = "0.1.0", path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
-uzor-render-wgpu-instanced = "=1.5.37"
+uzor-render-wgpu-instanced = "=1.5.38"
 mlc-app-render-context-vello-cpu = { version = "0.1.0", path = "../mlc-app-render-context-vello-cpu", package = "mylittlechart-app-render-context-vello-cpu" }
 mlc-app-render-context-vello-hybrid = { version = "0.1.0", path = "../mlc-app-render-context-vello-hybrid", package = "mylittlechart-app-render-context-vello-hybrid" }
-uzor-render-vello-hybrid = "=1.5.37"
+uzor-render-vello-hybrid = "=1.5.38"
 vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
 mlc-app-render-context-tiny-skia = { version = "0.5.656", path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 keyring = "3"

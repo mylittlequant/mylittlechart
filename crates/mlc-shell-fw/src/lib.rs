@@ -430,10 +430,14 @@ impl HostedApp {
         let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
         let app_scroll = st.scroll.animated_offset();
         let tree = cs::tree(st, &data.instrument, at);
-        // The body scrolls itself; it starts where the app's own offset is.
-        // (Seeded after its first frame: `dom_scroll_to` before the container knows its
-        // extent would leave it following the end.)
+        // The body scrolls itself; it opens where the app's own offset is.
         let seed = (!self.cs_scroll_seeded).then_some(app_scroll);
+        if let Some(y) = seed {
+            self.cs_scroll_seeded = true;
+            if y > 0.0 {
+                uzor_framework::widgets::kit::dom_scroll_to(cx, cs::VIEWPORT, y, false);
+            }
+        }
         let scroll = match seed {
             Some(y) => y,
             None => uzor_framework::widgets::kit::dom_scroll_top(cx, cs::VIEWPORT),
@@ -449,12 +453,7 @@ impl HostedApp {
             }
         };
         let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).dom_scroll().build(cx);
-        if let Some(y) = seed {
-            self.cs_scroll_seeded = true;
-            if y > 0.0 {
-                uzor_framework::widgets::kit::dom_scroll_to(cx, cs::VIEWPORT, y, false);
-            }
-        } else if let Some((_, y)) = resp.scrolls.iter().find(|(k, _)| k == cs::VIEWPORT) {
+        if let Some((_, y)) = resp.scrolls.iter().find(|(k, _)| seed.is_none() && k == cs::VIEWPORT) {
             let s = &mut self.chart.panel_app.chart_settings_state.scroll;
             s.offset = *y;
             s.target = *y;
