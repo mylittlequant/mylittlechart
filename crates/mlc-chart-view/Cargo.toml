@@ -1,0 +1,44 @@
+[package]
+name = "mlc-chart-view"
+description = "One mylittlechart chart as a uzor-framework App: phone screen, chart painted through RenderContext, pan / pinch / long-press crosshair / double-tap reset. Host-agnostic (web and mobile shells)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "mlc_chart_view"
+
+[dependencies]
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+uzor = { version = "=1.5.35", default-features = false, features = ["flow-flex", "flow-grid"] }
+uzor-framework = { version = "=1.5.35", default-features = false }
+serde_json = { version = "1", optional = true }
+# Live data (feature `live`): one exchange through mlc's data bridge.
+mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge", optional = true }
+digdigdig3 = { version = "=0.3.32", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread"], optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync", "macros"], optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+
+[dev-dependencies]
+uzor = { version = "=1.5.35", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
+uzor-render-tiny-skia = "=1.5.35"
+
+[features]
+default = []
+# Live bars from Binance through mlc-backend-data-bridge (falls back to labelled demo data).
+live = ["dep:mlc-backend-data-bridge", "dep:digdigdig3", "dep:tokio", "dep:wasm-bindgen-futures"]
+# Dev control: the app reports its chart state to the automation port (dev builds only).
+dev-control = ["uzor-framework/dev-control", "dep:serde_json"]
+# Gestures from uzor's touch-capture branch (captured_gestures, DoubleTap,
+# LongPressDrag, PinchPan). Needs a local [patch] to that uzor until it is
+# released; off in every committed build.
+uzor-next = []
+
+[lints]
+workspace = true

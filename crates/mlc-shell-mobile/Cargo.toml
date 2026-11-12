@@ -1,0 +1,27 @@
+[package]
+name = "mlc-shell-mobile"
+description = "mylittlechart phone shell: Android `android_main` (GameActivity) and the iOS `mlc_mobile_run` entry through uzor-window-mobile, running mlc-chart-view."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# cdylib: the Android activity loads libmlc_shell_mobile.so; staticlib: the Swift host links it.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+default = ["live"]
+# Live Binance bars through the data bridge, demo candles when offline.
+live = ["mlc-chart-view/live"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mlc-chart-view = { version = "0.5.656", path = "../mlc-chart-view" }
+uzor-framework = { version = "=1.5.35", default-features = false }
+uzor-window-mobile = { version = "=1.5.35" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+uzor-window-mobile = { version = "=1.5.35", features = ["android-game-activity"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#121212">
+<title>mylittlechart</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #121212; overflow: hidden; overscroll-behavior: none; }
+  #mlc-canvas { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
+</style>
+</head>
+<body>
+<canvas id="mlc-canvas"></canvas>
+<script type="module">
+  import init from './pkg/mlc_shell_web2.js';
+  init();
+</script>
+</body>
+</html>

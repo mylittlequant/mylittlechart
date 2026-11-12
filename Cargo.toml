@@ -33,6 +33,9 @@ members = [
     "crates/mlc-app-shell-web",
     "crates/mlc-ui-lab",
     "crates/mlc-messenger-model",
+    "crates/mlc-chart-view",
+    "crates/mlc-shell-web2",
+    "crates/mlc-shell-mobile",
 ]
 resolver = "2"
 
@@ -73,6 +76,16 @@ opt-level = "s"
 lto = true
 debug = "line-tables-only"
 strip = "none"
+
+# Browser build of mlc-shell-web2 (build-web.sh): smallest wasm.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+debug = false
 
 # Optimize indicators in dev mode to prevent stack overflow
 # (large enum with 480 variants needs optimization)
