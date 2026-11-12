@@ -216,6 +216,10 @@ pub struct HostedApp {
     toolbar_was_pressed: bool,
     /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
     pub chrome_hits: Vec<(String, uzor::types::Rect)>,
+    /// The strip element the DOM reported under the pointer last frame.
+    chrome_hover: Option<String>,
+    chrome_tab_down: bool,
+    chrome_tab_forwarded: bool,
     chart_settings_shown: bool,
     /// The chart settings body's DOM scroll was seeded from the app's offset.
     cs_scroll_seeded: bool,
@@ -260,6 +264,9 @@ impl HostedApp {
             toolbar_sheets: Vec::new(),
             last_hits: Vec::new(),
             chrome_hits: Vec::new(),
+            chrome_hover: None,
+            chrome_tab_down: false,
+            chrome_tab_forwarded: false,
             toolbar_slots: Vec::new(),
             toolbar_hover: None,
             toolbar_pressed: None,
@@ -382,17 +389,48 @@ impl HostedApp {
         let r = cx.rect;
         let skeleton = self.chart.panel_app.user_settings_state.profile_manager_mandatory;
         if !(self.chrome_on_dom && dom::chrome::covers(&self.chrome, r.width, skeleton)) {
+            // (The last DOM boxes stay: the next DOM frame resolves its hover on them.)
+            self.chrome_tab_down = false;
             return false;
         }
         let sheet = cached_sheet(&mut self.chrome_sheet, dom::chrome::css(&self.chrome));
         cx.render.set_font("12px sans-serif");
         let text_w: Vec<f64> = self.chrome.tabs.iter().map(|t| ctx::measured("12px sans-serif", &t.name, cx.render.measure_text(&t.name))).collect();
-        let tree = dom::chrome::tree(&self.chrome, r.width, &text_w);
+        // Under the pointer now, against the boxes laid out last frame (the
+        // innermost: a tab's × over the tab), as the app's own hit test resolves it.
+        if let Some((px, py)) = cx.view.raw_pointer() {
+            self.chrome_hover = self.chrome_hits.iter().rev().find(|(_, b)| px >= b.x && px < b.x + b.width && py >= b.y && py < b.y + b.height).map(|(k, _)| k.clone());
+        }
+        let hov = dom::chrome::hovered(self.chrome_hover.as_deref());
+        let tree = dom::chrome::tree(&self.chrome, hov, r.width, &text_w);
         let strip = uzor::types::Rect::new(r.x, r.y, r.width, chrome::CHROME_HEIGHT);
         let resp = uzor_framework::widgets::kit::dom(strip, &sheet, tree).build(cx);
         self.chrome_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
+        if cx.view.raw_pointer().is_none() {
+            self.chrome_hover = None;
+        }
+        let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
+        // A tab: its press goes to the app raw, as before (it arms the drag, renames
+        // on a double press, switches the preset); the release follows from the
+        // pointer poll.
+        let tab_down = self.chrome_hits.iter().any(|(k, _)| dom::chrome::tab_index(k).is_some() && cx.view.is_pressed(&uzor::WidgetId::from(k.as_str())));
+        if tab_down && !self.chrome_tab_down {
+            use mlc_app_input_shell::{MouseBtn, ShellEvent};
+            self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+            self.pointer.held = Some(MouseBtn::Left);
+            self.chrome_tab_forwarded = true;
+        }
+        self.chrome_tab_down = tab_down;
+        if let Some(id) = resp.clicked.as_deref().filter(|id| dom::chrome::tab_index(id).is_some()) {
+            // Down and up between two frames: the whole press, once.
+            if !std::mem::take(&mut self.chrome_tab_forwarded) {
+                use mlc_app_input_shell::{MouseBtn, ShellEvent};
+                let _ = id;
+                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: false, x, y });
+            }
+        }
         if let Some(hit) = resp.clicked.as_deref().and_then(dom::chrome::hit_of) {
-            let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
             mlc_app_input_shell::press_chrome_hit(hit, x, y, &mut self.input, &mut self.chrome, &mut self.dirty, &mut self.chart, &self.platform, &mut self.out);
             for c in self.platform_cmds() {
                 cx.out.command(c);
@@ -632,7 +670,6 @@ impl App for HostedApp {
         cx.render.restore();
         mlc_app_layout::ui::toolbar_core::capture::set_enabled(false);
         self.toolbar_layer(cx);
-        self.chrome_hits.clear();
         if !self.chrome_layer(cx) {
             // A state the DOM strip does not cover: the app paints it.
             cx.render.save();

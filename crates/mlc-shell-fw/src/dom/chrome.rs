@@ -2,14 +2,18 @@
 //!
 //! Was: `mlc-app-input-shell` `chrome::render`, every cell placed by hand from
 //! `ButtonPositions`. Now: a DOM tree over the same [`chrome::ChromeState`]: the tabs
-//! are a flex row (the widths stay the app's own `tab_widths`, fitted to the text by
-//! `chrome::update_tab_widths`), the right cluster is a flex row of cells pinned to the right edge,
-//! and the hover look is the app's own `hovered` (the app still hit-tests moves).
+//! are a flex row of boxes sized by their name and paddings (`chrome::render`'s
+//! `padding + text + close + padding`; a tab the app squeezed to fit keeps its
+//! width), the "+" follows the last tab in that row, the right cluster is a flex row
+//! of cells pinned to the right edge, and the hover look is the DOM's own hover
+//! ([`hovered`]).
 //!
-//! Clicks: the cells with ids call the app's existing press actions through
+//! Presses: the cells call the app's existing press actions through
 //! [`mlc_app_input_shell::press_chrome_hit`] with the element they stand for
-//! ([`hit_of`]). The tab bodies and the caption carry no id, so a press there goes
-//! on to the app as before (tab drag, double-click rename, window drag).
+//! ([`hit_of`]). A press on a tab goes to the app as its raw press (the host
+//! forwards it, see `tab_index`): the drag, the double-click rename and the preset
+//! switch stay the app's. The caption carries no id: a press there goes on to the
+//! app as before (window drag, double-click maximize).
 //!
 //! Covered: the states [`covers`] accepts. Any other (Web flavor, skeleton mode, a
 //! tab being renamed or dragged, an overflowing strip, a signed-in account button)
@@ -28,6 +32,8 @@ const NEW_TAB_W: f64 = 28.0;
 const TAB_LEFT: f64 = 4.0;
 const TAB_GAP: f64 = 4.0;
 const TAB_CLOSE: f64 = 16.0;
+/// `chrome::render`'s `TAB_PADDING_H`.
+const TAB_PAD: f64 = 6.0;
 /// Separators: 60 % of the strip, centred.
 const SEP_H: f64 = H * 0.6;
 const SEP_Y: f64 = (H - SEP_H) / 2.0;
@@ -41,6 +47,8 @@ pub fn covers(state: &ChromeState, width: f64, skeleton: bool) -> bool {
         && state.account_label.is_none()
         && chrome::max_tab_scroll(state, width) <= 0.5
         && state.tab_widths.len() == state.tabs.len()
+        // "+" right after the tabs, not pinned short of the controls.
+        && TAB_LEFT + state.tab_widths.iter().sum::<f64>() + TAB_GAP * (state.tab_widths.len() as f64 - 1.0).max(0.0) <= chrome::tabs_right_limit(width, state) - NEW_TAB_W
 }
 
 /// The strip's colours, as CSS.
@@ -48,8 +56,11 @@ pub fn css(state: &ChromeState) -> String {
     let c = &state.colors;
     format!(
         "div.c-strip {{ position: relative; height: {H}px; background: {bg}; color: {ink}; font-size: 12px; font-family: sans-serif }}
-div.c-tabs {{ display: flex; position: absolute; left: 0px; top: 0px; height: {H}px; padding-left: {TAB_LEFT}px; gap: {TAB_GAP}px; align-items: stretch }}
-div.c-tab {{ position: relative; height: {H}px; flex-shrink: 0 }}
+div.c-tabs {{ display: flex; position: absolute; left: 0px; top: 0px; height: {H}px; padding-left: {TAB_LEFT}px; align-items: stretch }}
+div.c-tab {{ position: relative; display: flex; height: {H}px; flex-shrink: 0; padding-left: {pad_idle}px; padding-right: {pad_idle}px }}
+div.c-tab.open {{ padding-left: {TAB_PAD}px; padding-right: {pad_open}px }}
+div.c-tab.fixed {{ padding-left: 0px; padding-right: 0px }}
+div.c-lab {{ display: flex; align-items: center; height: {H}px; padding-top: 4px; white-space: nowrap; flex-shrink: 0 }}
 div.c-name {{ position: absolute; left: 0px; top: 0px; height: {H}px; overflow: hidden; display: flex; align-items: center; padding-top: 4px }}
 div.c-mark {{ position: absolute; left: 0px; top: {mark_y}px; height: 2px; background: {accent} }}
 div.c-mark.hov {{ background: {hover} }}
@@ -57,8 +68,10 @@ div.c-tclose {{ position: absolute; top: 3px; width: {tcw}px; height: {tch}px; b
 div.c-tclose.hov {{ background: {hover}; color: {danger} }}
 div.c-tclose > div {{ width: 14px; height: 14px }}
 div.c-sep {{ position: absolute; top: {SEP_Y}px; width: 1px; height: {SEP_H}px; background: {sep} }}
-div.c-new {{ position: absolute; top: 0px; height: {H}px; width: {nw}px }}
-div.c-new.hov {{ background: {hover} }}
+div.c-new {{ position: relative; height: {H}px; width: {NEW_TAB_W}px; flex-shrink: 0 }}
+div.c-patch {{ position: absolute; left: 1px; top: 0px; height: {H}px; width: {nw}px }}
+div.c-new.hov > div.c-patch {{ background: {hover} }}
+div.c-new > div.c-sep {{ left: 0px }}
 div.c-bar {{ position: absolute; background: {ink} }}
 div.c-right {{ display: flex; position: absolute; right: 0px; top: 0px; width: {rw}px; height: {H}px }}
 div.c-cell {{ position: relative; height: {H}px; width: {SMALL_W}px; flex-shrink: 0 }}
@@ -90,6 +103,8 @@ div.c-bottom {{ position: absolute; left: 0px; top: {bot}px; height: 1px; backgr
         nw = NEW_TAB_W - 1.0,
         bot = H - 1.0,
         rw = 3.0 * SMALL_W + 3.0 * BUTTON_W,
+        pad_idle = TAB_PAD + TAB_CLOSE / 2.0,
+        pad_open = TAB_PAD + TAB_CLOSE,
     )
 }
 
@@ -106,6 +121,19 @@ pub fn hit_of(id: &str) -> Option<ChromeHit> {
         "close" => ChromeHit::CloseButton,
         _ => ChromeHit::TabClose(rest.strip_prefix("tab_close:")?.parse().ok()?),
     })
+}
+
+/// The tab a tab body id stands for (its press goes to the app raw).
+pub fn tab_index(id: &str) -> Option<usize> {
+    id.strip_prefix(ID)?.strip_prefix(":tab:")?.parse().ok()
+}
+
+/// The element the DOM reports under the pointer, as the app names it.
+pub fn hovered(id: Option<&str>) -> ChromeHit {
+    match id {
+        Some(id) => tab_index(id).map(ChromeHit::Tab).or_else(|| hit_of(id)).unwrap_or(ChromeHit::None),
+        None => ChromeHit::None,
+    }
 }
 
 fn id(name: &str) -> String {
@@ -144,27 +172,39 @@ fn icon(name: &str) -> El {
     }
 }
 
-/// The strip `width` wide, for `state` (which [`covers`] accepted). `text_w`: each
-/// tab name's width at 12px, as the app measures it: the name starts where the old
-/// drawing put it, to the fraction of a pixel.
-pub fn tree(state: &ChromeState, width: f64, text_w: &[f64]) -> El {
-    let hov = state.hovered;
+/// The strip `width` wide, for `state` (which [`covers`] accepted). `hov`: the
+/// element under the pointer ([`hovered`]). `text_w`: each tab name's width at
+/// 12px, as the app measures it (the name box keeps it on the passes that measure
+/// nothing).
+pub fn tree(state: &ChromeState, hov: ChromeHit, width: f64, text_w: &[f64]) -> El {
     let mut tabs = El::new("div.c-tabs");
+    let n = state.tabs.len();
     for (i, tab) in state.tabs.iter().enumerate() {
         let tw = state.tab_widths[i];
+        let text = text_w.get(i).copied().unwrap_or(0.0);
         let shows_close = matches!(hov, ChromeHit::Tab(j) | ChromeHit::TabClose(j) | ChromeHit::TabRename(j) if j == i);
-        let name_w = if shows_close { (tw - TAB_CLOSE).max(0.0) } else { tw };
-        let mut t = El::new("div.c-tab").css(format!("width: {tw}px"));
+        // The app's own width, unless it squeezed the tab to fit: then the old
+        // placement (fixed box, name centred in it and clipped).
+        let natural = (tw - (2.0 * TAB_PAD + TAB_CLOSE + text)).abs() < 0.01;
+        let spec = match (natural, shows_close) {
+            (false, _) => "div.c-tab.fixed",
+            (true, true) => "div.c-tab.open",
+            (true, false) => "div.c-tab",
+        };
+        let gap = if i + 1 < n { format!("margin-right: {TAB_GAP}px") } else { String::new() };
+        let mut t = El::new(spec).id(id(&format!("tab:{i}"))).css(if natural { gap } else { format!("width: {tw}px; {gap}") });
         if tab.active {
             t = t.child(El::new("div.c-mark").css(format!("width: {tw}px")));
         } else if hov == ChromeHit::Tab(i) {
             t = t.child(El::new("div.c-mark.hov").css(format!("width: {tw}px")));
         }
-        t = t.child(
-            El::new("div.c-name")
-                .css(format!("width: {name_w}px"))
-                .child(El::new("span").css(format!("margin-left: {}px", (name_w - text_w.get(i).copied().unwrap_or(0.0)).max(0.0) / 2.0)).text(tab.name.clone())),
-        );
+        let name = El::new("span").text(tab.name.clone());
+        t = if natural {
+            t.child(El::new("div.c-lab").css(format!("width: {text}px")).child(name))
+        } else {
+            let name_w = if shows_close { (tw - TAB_CLOSE).max(0.0) } else { tw };
+            t.child(El::new("div.c-name").css(format!("width: {name_w}px")).child(name.css(format!("margin-left: {}px", (name_w - text).max(0.0) / 2.0))))
+        };
         if shows_close {
             let spec = if hov == ChromeHit::TabClose(i) { "div.c-tclose.hov" } else { "div.c-tclose" };
             let mut x = El::new("div");
@@ -176,18 +216,21 @@ pub fn tree(state: &ChromeState, width: f64, text_w: &[f64]) -> El {
         tabs = tabs.child(t);
     }
 
-    // Where `chrome::render` puts "+": right after the last tab (no trailing gap),
-    // pinned short of the right cluster. (`chrome::new_tab_button_x`, which the hit
-    // test reads, counts one gap more; the drawing is what is matched here.)
-    let n = state.tab_widths.len() as f64;
-    let natural = state.tab_widths.iter().sum::<f64>() + TAB_GAP * (n - 1.0).max(0.0);
-    let nx = (TAB_LEFT - state.tab_scroll + natural).min(chrome::tabs_right_limit(width, state) - NEW_TAB_W);
-    let plus_cx = (nx + NEW_TAB_W / 2.0).floor() + 0.5;
+    // "+" right after the last tab (no trailing gap): its separator, its hover
+    // patch and the cross `chrome::render` snapped to the pixel grid — the one
+    // place the strip needs its own x (where the row puts the button).
+    let natural = state.tab_widths.iter().sum::<f64>() + TAB_GAP * (n as f64 - 1.0).max(0.0);
+    let nx = TAB_LEFT + natural;
+    let plus_cx = (nx + NEW_TAB_W / 2.0).floor() + 0.5 - nx;
     let plus_cy = (H / 2.0).floor() + 0.5;
+    let bar = |l: f64, t: f64, w: f64, h: f64| El::new("div.c-bar").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
     let new_tab = El::new(if hov == ChromeHit::NewTabButton { "div.c-new.hov" } else { "div.c-new" })
         .id(id("new_tab"))
-        .css(format!("left: {}px", nx + 1.0));
-    let bar = |l: f64, t: f64, w: f64, h: f64| El::new("div.c-bar").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
+        .child(El::new("div.c-sep"))
+        .child(El::new("div.c-patch"))
+        .child(bar(plus_cx - 5.0, plus_cy - 0.75, 10.0, 1.5))
+        .child(bar(plus_cx - 0.75, plus_cy - 5.0, 1.5, 10.0));
+    tabs = tabs.child(new_tab);
 
     let is_max = state.is_maximized;
     let maximize = {
@@ -214,10 +257,6 @@ pub fn tree(state: &ChromeState, width: f64, text_w: &[f64]) -> El {
     El::new("div.c-strip")
         .css(format!("width: {width}px"))
         .child(tabs)
-        .child(El::new("div.c-sep").css(format!("left: {nx}px")))
-        .child(new_tab)
-        .child(bar(plus_cx - 5.0, plus_cy - 0.75, 10.0, 1.5))
-        .child(bar(plus_cx - 0.75, plus_cy - 5.0, 1.5, 10.0))
         .child(right)
         .child(El::new("div.c-bottom").css(format!("width: {width}px")))
 }

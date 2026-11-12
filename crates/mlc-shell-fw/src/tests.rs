@@ -297,11 +297,20 @@ mod hosted {
 
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
-    fn chrome_hover_is_the_apps_and_the_caption_still_goes_to_the_app() {
+    fn chrome_hover_is_the_doms_and_tab_and_caption_presses_still_go_to_the_app() {
+        use mlc_app_input_shell::chrome::ChromeHit;
         let (mut h, win) = host();
+        strip_pixels(&mut h, win, true);
         move_to(&mut h, win, 20.0, 16.0);
-        assert_eq!(h.runtime().app().chrome.hovered, mlc_app_input_shell::chrome::ChromeHit::Tab(0));
+        assert_eq!(crate::dom::chrome::hovered(h.runtime().app().chrome_hover.as_deref()), ChromeHit::Tab(0), "the DOM's hover");
+        assert_eq!(h.runtime().app().chrome.hovered, ChromeHit::Tab(0), "and the app's agree");
         assert!(h.runtime().app().chrome_hits.iter().any(|(k, _)| k == "chrome:tab_close:0"), "the hovered tab shows its ×");
+        // A double press on a tab: the DOM tab hands both presses to the app, which
+        // starts renaming it (and paints the strip itself while it does).
+        press_at(&mut h, win, 30.0, 16.0);
+        press_at(&mut h, win, 30.0, 16.0);
+        assert_eq!(h.runtime().app().chrome.renaming_tab, Some(0), "a double press renames the tab");
+        h.runtime_mut().app_mut().chrome.renaming_tab = None;
         // A press on the empty strip has no DOM cell: the app's own hit test makes it
         // a window drag, sent to the host as an OS window move.
         let pos = uzor_framework::Point { x: 600.0, y: 16.0 };
@@ -342,15 +351,27 @@ mod hosted {
             (1210.0, 16.0, ChromeHit::MaximizeButton),
             (1260.0, 16.0, ChromeHit::CloseButton),
         ];
+        strip_pixels(&mut h, win, true);
         for maximized in [false, true] {
             for (x, y, want) in spots {
                 move_to(&mut h, win, x, y);
                 h.runtime_mut().app_mut().chrome.is_maximized = maximized;
                 assert_eq!(h.runtime().app().chrome.hovered, want, "hover at {x},{y}");
+                assert_eq!(crate::dom::chrome::hovered(h.runtime().app().chrome_hover.as_deref()), want, "DOM hover at {x},{y}");
                 let old = strip_pixels(&mut h, win, false);
                 let new = strip_pixels(&mut h, win, true);
                 assert!(!h.runtime().app().chrome_hits.is_empty(), "the DOM strip drew {want:?}");
                 let off = old.chunks_exact(4).zip(new.chunks_exact(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8)).count();
+                if let Some(dir) = std::env::var_os("MLC_TB_DUMP") {
+                    for (n, px) in [("old", &old), ("new", &new)] {
+                        let path = std::path::Path::new(&dir).join(format!("strip-{n}-{x}-{maximized}.png"));
+                        let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                        let mut enc = png::Encoder::new(f, 1280, 32);
+                        enc.set_color(png::ColorType::Rgba);
+                        enc.set_depth(png::BitDepth::Eight);
+                        enc.write_header().unwrap().write_image_data(px).unwrap();
+                    }
+                }
                 if off > 4 {
                     let xs: Vec<usize> = old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate().filter(|(_, (a, b))| a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8)).map(|(i, _)| i).collect();
                     let (x0, x1) = (xs.iter().map(|i| i % 1280).min().unwrap(), xs.iter().map(|i| i % 1280).max().unwrap());
