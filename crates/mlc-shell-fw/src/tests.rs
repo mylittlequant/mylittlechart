@@ -226,6 +226,29 @@ mod hosted {
 
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_body_reopens_where_the_app_left_it() {
+        let (mut h, win) = host();
+        open_chart_settings(&mut h);
+        let r = hit(&h, crate::dom::chart_settings::VIEWPORT);
+        let pos = uzor_framework::Point { x: r.x + r.width / 2.0, y: r.y + r.height / 2.0 };
+        h.input(win, InputEvent::Wheel(uzor_framework::WheelInput { pos, delta: uzor_framework::WheelDelta::Lines { x: 0.0, y: -2.0 }, mods: Default::default() }));
+        for _ in 0..30 {
+            h.advance(0.017);
+        }
+        let off = cs_state(&h).scroll.target;
+        assert!(off > 0.0);
+        let row = |h: &Host| hit(h, "cs:item:instrument:body_enabled");
+        let shifted = row(&h).y;
+        click(&mut h, win, "cs:foot:0");
+        assert!(!cs_shown(&h));
+        open_chart_settings(&mut h);
+        assert!(cs_shown(&h));
+        assert_eq!(cs_state(&h).scroll.target, off, "the app keeps the offset");
+        assert_eq!(row(&h).y, shifted, "the DOM body starts there again");
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
     fn moves_and_releases_reach_the_app_not_only_presses() {
         let (mut h, win) = host();
         let at = |x: f64, y: f64| uzor_framework::Point { x, y };

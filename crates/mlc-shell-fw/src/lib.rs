@@ -162,15 +162,17 @@ pub struct HostedApp {
     /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
     pub chrome_hits: Vec<(String, uzor::types::Rect)>,
     chart_settings_shown: bool,
+    /// The chart settings body's DOM scroll was seeded from the app's offset.
+    cs_scroll_seeded: bool,
     /// The pointer stream the app needs beyond presses (see [`Self::poll_pointer`]).
     pointer: PointerPoll,
 }
 
-/// What the framework (1.5.36) does not report to an app as unhandled input: pointer
-/// moves, releases and leaves (only presses come as `UnhandledInput::Pointer`). The
-/// host reads them off each frame's input view instead. Goes when the framework's
-/// opt-in `WindowCmd::UnhandledPointer { all: true }` (uzor `feat/app-window-cmds`)
-/// is released.
+/// The pointer stream mlc needs beyond presses: moves, releases and leaves anywhere
+/// in the window, read off each frame's input view. uzor 1.5.37's opt-in
+/// `WindowCmd::UnhandledPointer { all: true }` reports only events no widget took,
+/// so moves over the DOM chrome cells (whose hover is the app's) and a release over
+/// a DOM element after a press the app took would be missing; the poll stays.
 #[derive(Default)]
 struct PointerPoll {
     /// Last position seen, window coordinates.
@@ -205,6 +207,7 @@ impl HostedApp {
             chrome_hits: Vec::new(),
             toolbar_slots: Vec::new(),
             chart_settings_shown: false,
+            cs_scroll_seeded: false,
             pointer: PointerPoll::default(),
         }
     }
@@ -330,8 +333,16 @@ impl HostedApp {
         let sheet = self.sheet(look.css());
         let st = &self.chart.panel_app.chart_settings_state;
         let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
-        let scroll = st.scroll.animated_offset();
-        let tree = cs::tree(st, &data.instrument, at, scroll);
+        let app_scroll = st.scroll.animated_offset();
+        let tree = cs::tree(st, &data.instrument, at);
+        // The body scrolls itself; it starts where the app's own offset is.
+        // (Seeded after its first frame: `dom_scroll_to` before the container knows its
+        // extent would leave it following the end.)
+        let seed = (!self.cs_scroll_seeded).then_some(app_scroll);
+        let scroll = match seed {
+            Some(y) => y,
+            None => uzor_framework::widgets::kit::dom_scroll_top(cx, cs::VIEWPORT),
+        };
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
             if f.key == cs::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
@@ -342,7 +353,17 @@ impl HostedApp {
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(cs::content_height(), cs::VIEW_H, scroll), ScrollbarState::Active, track, &theme, None);
             }
         };
-        let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).dom_scroll().build(cx);
+        if let Some(y) = seed {
+            self.cs_scroll_seeded = true;
+            if y > 0.0 {
+                uzor_framework::widgets::kit::dom_scroll_to(cx, cs::VIEWPORT, y, false);
+            }
+        } else if let Some((_, y)) = resp.scrolls.iter().find(|(k, _)| k == cs::VIEWPORT) {
+            let s = &mut self.chart.panel_app.chart_settings_state.scroll;
+            s.offset = *y;
+            s.target = *y;
+        }
         self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
         if let Some(r) = resp.dom.rect(cs::VIEWPORT) {
             self.last_hits.push((cs::VIEWPORT.to_string(), r));
@@ -355,11 +376,14 @@ impl HostedApp {
     /// The DOM pieces over the app's own frame.
     fn dom_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
         use dom::preset_name as pn;
-        self.chart_settings_shown = false;
+        let was_shown = std::mem::replace(&mut self.chart_settings_shown, false);
         if !self.preset_name_open() {
             self.preset_name = None;
             self.last_hits.clear();
             if let Some(data) = self.chart_settings_dom() {
+                if !was_shown {
+                    self.cs_scroll_seeded = false;
+                }
                 self.chart_settings_shown = true;
                 self.chart_settings_layer(cx, &data);
             }
@@ -440,15 +464,9 @@ impl HostedApp {
         }
     }
 
-    /// A wheel step while a DOM piece is up: over the chart settings body it
-    /// scrolls it; anywhere else it is swallowed (the modal is on top).
-    fn dom_wheel(&mut self, u: &uzor_framework::UnhandledInput, dy: f64) {
-        let uzor_framework::UnhandledInput::Wheel { wheel, .. } = u else { return };
-        let over = self.last_hits.iter().any(|(k, r)| k == dom::chart_settings::VIEWPORT && r.contains(wheel.pos.x, wheel.pos.y));
-        if self.chart_settings_shown && over {
-            self.chart.chart_settings_wheel(dy, dom::chart_settings::content_height(), dom::chart_settings::VIEW_H);
-        }
-    }
+    /// A wheel step while a DOM piece is up and no DOM scroll container took it: it
+    /// is swallowed (the modal is on top; the chart settings body scrolls itself).
+    fn dom_wheel(&mut self, _u: &uzor_framework::UnhandledInput, _dy: f64) {}
 
     fn flush_platform(&mut self, cx: &mut IntentCx<'_, HostSpec>) {
         for c in self.platform_cmds() {

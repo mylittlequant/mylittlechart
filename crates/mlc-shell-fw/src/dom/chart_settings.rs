@@ -11,11 +11,11 @@
 //! template menu, a resized frame) is still drawn by the app, frame for frame, so
 //! the switch is invisible as long as both paint the same pixels.
 //!
-//! Scrolling: the body's offset is the app's own `ChartSettingsState::scroll`
-//! (the wheel reaches it through [`HostedApp`](crate::HostedApp)), applied as a
-//! negative top margin inside an `overflow: hidden` viewport, and the scrollbar is
-//! the app's `draw_scrollbar` in a paint slot. Both go when framework-owned DOM
-//! scroll (uzor `feat/dom-scroll`) is released.
+//! Scrolling: the body is a framework-owned DOM scroll container (uzor 1.5.37
+//! `DomBuilder::dom_scroll`, `overflow: auto`); the host copies its offset into the
+//! app's own `ChartSettingsState::scroll` each frame (and seeds it from there when
+//! the modal opens), and the scrollbar is the app's `draw_scrollbar` in a paint
+//! slot beside the container.
 
 use mlc_app_layout::layout::modals::chart_settings::InstrumentSettings;
 use mlc_app_layout::ui::modal_settings::{ChartSettingsState, ChartSettingsTab};
@@ -103,7 +103,8 @@ button.m-tab {{ width: 47px; height: 44px; padding: 13px 14px 13px 15px; color: 
 button.m-tab.on {{ background: {on}; border-left: 3px solid {accent}; padding-left: 12px; color: {on_text} }}
 div.m-content {{ flex-grow: 1; padding: 12px 12px 0 12px; display: flex; flex-direction: column }}
 div.m-title {{ height: 16px; flex-shrink: 0; margin: -3px 0 17px 0; font-size: 14px; font-weight: 700 }}
-div.m-view {{ flex-shrink: 0; width: {VIEW_W}px; height: {VIEW_H}px; overflow: hidden; position: relative }}
+div.m-viewbox {{ flex-shrink: 0; width: {VIEW_W}px; height: {VIEW_H}px; position: relative }}
+div.m-view {{ width: {VIEW_W}px; height: {VIEW_H}px; overflow: auto; scrollbar-width: none }}
 div.m-rows {{ width: {CONTENT_W}px; display: flex; flex-direction: column }}
 div.m-sec {{ height: 32px; padding-top: 2px; display: flex; align-items: center; font-size: 11px; color: {muted} }}
 div.m-row {{ height: 32px; display: flex; align-items: center; font-size: 12px; color: {text} }}
@@ -220,15 +221,18 @@ fn tab_icon(tab: ChartSettingsTab) -> &'static str {
     }
 }
 
-/// The whole tree. `scroll` is the body's current offset.
-pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect, scroll: f64) -> El {
+/// The whole tree. The body is a framework-owned scroll container (build it with
+/// `dom_scroll()`); its scrollbar is the app's, in a paint slot beside it.
+pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El {
     let rail = El::new("div.m-rail").children(ChartSettingsTab::all().iter().map(|t| {
         let cls = if *t == state.active_tab { "button.m-tab.on" } else { "button.m-tab" };
         El::new(cls).id(format!("{ID}:tab:{}", t.id())).tab().name(t.label()).svg(tab_icon(*t))
     }));
     let active = state.active_tab;
-    let rows = El::new("div.m-rows").css(format!("margin-top: {}px", -scroll)).children(instrument_rows(s));
-    let view = El::new("div.m-view").id(VIEWPORT).child(rows).child_if(content_height() > VIEW_H, || El::new("div.m-scroll").paint_slot(SCROLLBAR));
+    let rows = El::new("div.m-rows").children(instrument_rows(s));
+    let view = El::new("div.m-viewbox")
+        .child(El::new("div.m-view").id(VIEWPORT).child(rows))
+        .child_if(content_height() > VIEW_H, || El::new("div.m-scroll").paint_slot(SCROLLBAR));
     let content = El::new("div.m-content").child(El::new("div.m-title").text(active.label())).child(view);
     let body = El::new("div.m-body-row").css("display: flex; flex-direction: row; flex-grow: 1").child(rail).child(content);
     let ok = "OK";
