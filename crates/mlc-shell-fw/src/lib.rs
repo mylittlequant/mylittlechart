@@ -152,8 +152,13 @@ pub struct HostedApp {
     chrome_sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
     /// The chrome strip is drawn as uzor DOM ([`dom::chrome`]) where it covers the state.
     pub chrome_on_dom: bool,
+    /// The toolbars are drawn as uzor DOM ([`dom::toolbar`]) where they can be.
+    pub toolbars_on_dom: bool,
+    toolbar_sheets: Vec<(&'static str, Option<(u64, String, uzor::ui::style::Sheet)>)>,
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
+    /// The toolbars painted on DOM in the last frame, by slot ("top", "left", "right").
+    pub toolbar_slots: Vec<&'static str>,
     /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
     pub chrome_hits: Vec<(String, uzor::types::Rect)>,
     chart_settings_shown: bool,
@@ -194,8 +199,11 @@ impl HostedApp {
             sheet: None,
             chrome_sheet: None,
             chrome_on_dom: false,
+            toolbars_on_dom: false,
+            toolbar_sheets: Vec::new(),
             last_hits: Vec::new(),
             chrome_hits: Vec::new(),
+            toolbar_slots: Vec::new(),
             chart_settings_shown: false,
             pointer: PointerPoll::default(),
         }
@@ -207,11 +215,68 @@ impl HostedApp {
         chart.panel_app.dom_hosted.chart_settings = true;
         let mut host = Self::new(chart);
         host.chrome_on_dom = true;
+        host.toolbars_on_dom = true;
         host
     }
 
     fn sheet(&mut self, css: String) -> uzor::ui::style::Sheet {
         cached_sheet(&mut self.sheet, css)
+    }
+
+    /// The toolbars the app laid out but left for the host to paint, on DOM.
+    fn toolbar_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        use mlc_app_layout::ui::toolbar_core::{capture, render_icon, IconId};
+        let taken = capture::take();
+        self.toolbar_slots.clear();
+        let mut edges = Vec::new();
+        for t in &taken {
+            let r = cx.rect;
+            let o = uzor::types::Rect::new(r.x + t.rect.x, r.y + t.rect.y + chrome::CHROME_HEIGHT, t.rect.width, t.rect.height);
+            let css = dom::toolbar::css(t);
+            let slot = match self.toolbar_sheets.iter().position(|(k, _)| *k == t.slot) {
+                Some(i) => i,
+                None => {
+                    self.toolbar_sheets.push((t.slot, None));
+                    self.toolbar_sheets.len() - 1
+                }
+            };
+            let sheet = cached_sheet(&mut self.toolbar_sheets[slot].1, css);
+            let (tree, own) = {
+                let render = &mut *cx.render;
+                let mut measure = |s: &str| {
+                    render.set_font("13px sans-serif");
+                    render.measure_text(s)
+                };
+                dom::toolbar::tree(t, o, &mut measure)
+            };
+            let anim = t.config.mascot_anim;
+            let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+                if let Some(rest) = f.key.strip_prefix(dom::toolbar::BLUR) {
+                    // The bar always (as `draw_toolbar_with_icons` began); a lit item
+                    // only on a context that blurs.
+                    // In the app's own coordinate space, as it made the call: the
+                    // blur reads the pixels under the device rect it resolves.
+                    if rest.ends_with(":bar") || ctx.has_blur_background() {
+                        let (dx, dy) = (r.x, r.y + chrome::CHROME_HEIGHT);
+                        ctx.save();
+                        ctx.translate(dx, dy);
+                        ctx.draw_blur_background(f.rect.x - dx, f.rect.y - dy, f.rect.width, f.rect.height);
+                        ctx.restore();
+                    }
+                } else if let Some((_, icon, color)) = own.iter().find(|(k, _, _)| k == f.key) {
+                    let ir = f.rect;
+                    render_icon(ctx, &IconId::new(icon), mlc_app_layout::ui::toolbar_core::WidgetRect::new(ir.x, ir.y, ir.width, ir.height), color, anim);
+                }
+            };
+            uzor_framework::widgets::kit::dom(o, &sheet, tree).paint_slots(&mut painter).build(cx);
+            self.toolbar_slots.push(t.slot);
+            if let Some(e) = dom::toolbar::edge(t, o) {
+                edges.push((e, sheet));
+            }
+        }
+        for (e, sheet) in edges {
+            uzor_framework::widgets::kit::dom(e, &sheet, dom::toolbar::edge_tree(e)).build(cx);
+        }
     }
 
     /// The chrome strip on DOM, when it covers the state; `false` = the app paints it.
@@ -441,19 +506,23 @@ impl App for HostedApp {
         cx.render.save();
         cx.render.translate(r.x, r.y);
         let skeleton = self.chart.panel_app.user_settings_state.profile_manager_mandatory;
-        // Whether the DOM strip takes this frame is decided on the widths fitted last
-        // frame; `paint_under` refits them before the strip is built.
-        let dom_strip = self.chrome_on_dom && dom::chrome::covers(&self.chrome, r.width, skeleton);
+        mlc_app_layout::ui::toolbar_core::capture::set_enabled(self.toolbars_on_dom);
         {
+            // The strip is painted below, after the toolbars, as the desktop shell
+            // paints it after the whole app frame.
             let mut ctx = ctx::ChartCtx::new(&mut *cx.render);
-            frame::paint_under(&mut self.chart, &mut self.chrome, &mut ctx, r.width, r.height, wall, frame::Layers::All, !dom_strip);
+            frame::paint_under(&mut self.chart, &mut self.chrome, &mut ctx, r.width, r.height, wall, frame::Layers::All, false);
         }
         cx.render.restore();
+        mlc_app_layout::ui::toolbar_core::capture::set_enabled(false);
+        self.toolbar_layer(cx);
         self.chrome_hits.clear();
-        if dom_strip && !self.chrome_layer(cx) {
-            // The refit changed the verdict (a tab got too wide): the app paints it.
+        if !self.chrome_layer(cx) {
+            // A state the DOM strip does not cover: the app paints it.
             cx.render.save();
             cx.render.translate(r.x, r.y);
+            cx.render.set_fill_color(&self.chrome.colors.background);
+            cx.render.fill_rect(0.0, 0.0, r.width, chrome::CHROME_HEIGHT);
             let mut ctx = ctx::ChartCtx::new(&mut *cx.render);
             chrome::render(&mut ctx, &self.chrome, r.width, skeleton, &self.chart.input_coordinator);
             drop(ctx);

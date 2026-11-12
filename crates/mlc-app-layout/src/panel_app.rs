@@ -604,6 +604,7 @@ pub fn chart_toolbar_render_toolbars(
                 layout.left_toolbar_rect.height,
             );
 
+            let _host_paints = crate::ui::toolbar_core::capture::as_slot("left");
             draw_toolbar_with_icons(
                 ctx,
                 &drawing_config,
@@ -969,6 +970,7 @@ pub fn chart_toolbar_render_toolbars(
             // drawn by a later pass, outside this clip.
             ctx.save();
             ctx.clip_rect(control_rect.x, control_rect.y, control_rect.width, control_rect.height);
+            let _host_paints = crate::ui::toolbar_core::capture::as_slot("top");
             let clipped_result = draw_toolbar_with_icons(
                 ctx,
                 &control_config,
@@ -1036,6 +1038,7 @@ pub fn chart_toolbar_render_toolbars(
                 layout.right_toolbar_rect.height,
             );
 
+            let _host_paints = crate::ui::toolbar_core::capture::as_slot("right");
             draw_toolbar_with_icons(
                 ctx,
                 &right_config,

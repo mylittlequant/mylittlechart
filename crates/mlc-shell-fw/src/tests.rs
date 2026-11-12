@@ -337,4 +337,101 @@ mod hosted {
             }
         }
     }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_toolbars_are_dom() {
+        let (mut h, _win) = host();
+        h.advance(0.017);
+        let slots = h.runtime().app().toolbar_slots.clone();
+        for s in ["top", "left", "right"] {
+            assert!(slots.contains(&s), "{s} in {slots:?}");
+        }
+    }
+
+    /// The window painted with the DOM toolbars on or off.
+    fn window_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
+        use uzor::render::{Painter, ShapeHelpers};
+        h.runtime_mut().app_mut().toolbars_on_dom = dom;
+        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx.set_fill_color("#131722");
+        ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx).expect("window");
+        ctx.pixmap().data().to_vec()
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_dom_toolbars_paint_what_the_old_ones_painted_under_the_pointer() {
+        let (mut h, win) = host();
+        // Top: symbol dropdown, timeframe button, an icon button; left: the active
+        // crosshair, a split tool, a plain tool; right: two rail buttons, the mascot.
+        let spots = [(60.0, 52.0), (150.0, 52.0), (310.0, 52.0), (24.0, 96.0), (24.0, 142.0), (24.0, 420.0), (1254.0, 96.0), (1254.0, 140.0), (1254.0, 325.0)];
+        let in_toolbars = |x: usize, y: usize| (32..72).contains(&y) || (y >= 72 && (x < 48 || x >= 1228));
+        for (x, y) in spots {
+            move_to(&mut h, win, x, y);
+            let old = window_pixels(&mut h, win, false);
+            let new = window_pixels(&mut h, win, true);
+            assert_eq!(h.runtime().app().toolbar_slots.len(), 3, "all three on DOM at {x},{y}");
+            let off: Vec<usize> = old
+                .chunks_exact(4)
+                .zip(new.chunks_exact(4))
+                .enumerate()
+                .filter(|(i, (a, b))| in_toolbars(i % 1280, i / 1280) && a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8))
+                .map(|(i, _)| i)
+                .collect();
+            if let Some(dir) = std::env::var_os("MLC_TB_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("tb-{n}-{x}-{y}.png"));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            if off.len() > 40 {
+                let (x0, x1) = (off.iter().map(|i| i % 1280).min().unwrap(), off.iter().map(|i| i % 1280).max().unwrap());
+                let (y0, y1) = (off.iter().map(|i| i / 1280).min().unwrap(), off.iter().map(|i| i / 1280).max().unwrap());
+                panic!("hover at {x},{y}: {} pixels differ in x {x0}..={x1}, y {y0}..={y1}", off.len());
+            }
+        }
+    }
+
+    fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {
+        let pos = uzor_framework::Point { x, y };
+        let b = uzor::input::MouseButton::Left;
+        move_to(h, win, x, y);
+        h.input(win, InputEvent::Pointer(PointerInput::Down { pos, button: b, mods: Default::default() }));
+        h.advance(0.017);
+        h.input(win, InputEvent::Pointer(PointerInput::Up { pos, button: b, mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn toolbar_presses_reach_the_app_as_before() {
+        // The DOM toolbar boxes take no presses: the app's own hit test gets them.
+        // The same presses with the app's own toolbars must leave the same state.
+        let (mut dom, wd) = host();
+        let (mut old, wo) = host();
+        old.runtime_mut().app_mut().toolbars_on_dom = false;
+        let mut opened = 0;
+        for (x, y) in [(150.0, 52.0), (60.0, 52.0), (1254.0, 96.0)] {
+            press_at(&mut dom, wd, x, y);
+            press_at(&mut old, wo, x, y);
+            let a = dom.runtime().app().chart.panel_app.toolbar_state.open_dropdown_id.clone();
+            let b = old.runtime().app().chart.panel_app.toolbar_state.open_dropdown_id.clone();
+            assert_eq!(a, b, "press at {x},{y}");
+            let ra = dom.runtime().app().chart.panel_app.toolbar_state.active_right_toolbar_id.clone();
+            let rb = old.runtime().app().chart.panel_app.toolbar_state.active_right_toolbar_id.clone();
+            assert_eq!(ra, rb, "press at {x},{y}");
+            opened += usize::from(a.is_some()) + usize::from(ra.is_some());
+            press_at(&mut dom, wd, 700.0, 400.0);
+            press_at(&mut old, wo, 700.0, 400.0);
+        }
+        assert!(opened > 0, "some press opened something");
+        assert_eq!(dom.runtime().app().toolbar_slots.len(), 3);
+    }
 }

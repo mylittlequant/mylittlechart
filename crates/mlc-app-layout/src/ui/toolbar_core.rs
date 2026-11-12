@@ -795,6 +795,8 @@ pub struct ToolbarResult {
     pub left_chevron_rect: Option<WidgetRect>,
     /// Hit rect for the right/down scroll chevron (present only when overflowing and scroll_offset < max_scroll).
     pub right_chevron_rect: Option<WidgetRect>,
+    /// Every separator drawn, in draw order (for a host that paints the toolbar itself).
+    pub separator_rects: Vec<WidgetRect>,
 }
 
 /// Toolbar theme
@@ -853,7 +855,7 @@ fn draw_hat_mirrored(ctx: &mut dyn RenderContext, mx: f64, my: f64, size: f64) {
 /// for the "Bot" agents-panel button — `None` or lapsed draws the
 /// (mirrored) hat at rest, exactly as every other icon draws today.
 /// Ignored for every other `icon_id`.
-fn render_icon(
+pub fn render_icon(
     ctx: &mut dyn RenderContext,
     icon_id: &IconId,
     rect: WidgetRect,
@@ -941,7 +943,7 @@ const REFERENCE_ICON_STROKE_SIZE: f64 = 30.0;
 /// size) byte-identical to before this fix, and is also why this can
 /// never "thicken" an icon shared with the side rails there: at the
 /// reference size the compensation factor is exactly 1.0, a no-op.
-fn stroke_compensated_icon(svg: &'static str, draw_size: f64) -> Cow<'static, str> {
+pub fn stroke_compensated_icon(svg: &'static str, draw_size: f64) -> Cow<'static, str> {
     if draw_size <= 0.0 || draw_size >= REFERENCE_ICON_STROKE_SIZE {
         return Cow::Borrowed(svg);
     }
@@ -1111,6 +1113,32 @@ pub fn draw_toolbar_with_icons(
     theme: &ToolbarTheme,
     hovered_id: Option<&str>,
 ) -> ToolbarResult {
+    if let Some(slot) = capture::slot() {
+        // A host that paints toolbars itself takes this one if it can: the layout
+        // runs here as always (hit rects, hover, scroll limits), nothing is drawn.
+        let result = draw_toolbar_inner(&mut capture::LayoutOnly(&mut *ctx), config, rect, theme, hovered_id);
+        if !ctx.use_convex_glass_buttons() && capture::host_can_paint(config, &result) {
+            capture::push(capture::CapturedToolbar {
+                slot,
+                config: config.clone(),
+                rect,
+                theme: theme.clone(),
+                hovered: hovered_id.map(str::to_string),
+                result: result.clone(),
+            });
+            return result;
+        }
+    }
+    draw_toolbar_inner(ctx, config, rect, theme, hovered_id)
+}
+
+fn draw_toolbar_inner(
+    ctx: &mut dyn RenderContext,
+    config: &ToolbarConfig,
+    rect: WidgetRect,
+    theme: &ToolbarTheme,
+    hovered_id: Option<&str>,
+) -> ToolbarResult {
     let mut result = ToolbarResult::default();
 
     // Blur background (FrostedGlass/LiquidGlass) - draws before solid background
@@ -1242,10 +1270,12 @@ pub fn draw_toolbar_with_icons(
                         let sep_height = rect.height * 0.5;
                         let sep_y = rect.y + (rect.height - sep_height) / 2.0;
                         ctx.fill_rect(pos, sep_y, config.separator_size, sep_height);
+                        result.separator_rects.push(WidgetRect::new(pos, sep_y, config.separator_size, sep_height));
                     } else {
                         let sep_width = rect.width * 0.7;
                         let sep_x = rect.x + (rect.width - sep_width) / 2.0;
                         ctx.fill_rect(sep_x, pos, sep_width, config.separator_size);
+                        result.separator_rects.push(WidgetRect::new(sep_x, pos, sep_width, config.separator_size));
                     }
                 }
                 advance
@@ -1885,10 +1915,12 @@ pub fn draw_toolbar_with_icons(
                         let sep_height = rect.height * 0.5;
                         let sep_y = rect.y + (rect.height - sep_height) / 2.0;
                         ctx.fill_rect(pos, sep_y, config.separator_size, sep_height);
+                        result.separator_rects.push(WidgetRect::new(pos, sep_y, config.separator_size, sep_height));
                     } else {
                         let sep_width = rect.width * 0.7;
                         let sep_x = rect.x + (rect.width - sep_width) / 2.0;
                         ctx.fill_rect(sep_x, pos, sep_width, config.separator_size);
+                        result.separator_rects.push(WidgetRect::new(sep_x, pos, sep_width, config.separator_size));
                     }
                 }
                 pos += config.separator_size + config.spacing * 2.0;
@@ -1920,11 +1952,13 @@ pub fn draw_toolbar_with_icons(
                     let sep_height = rect.height * 0.5;
                     let sep_y = rect.y + (rect.height - sep_height) / 2.0;
                     ctx.fill_rect(pos, sep_y, config.separator_size, sep_height);
+                    result.separator_rects.push(WidgetRect::new(pos, sep_y, config.separator_size, sep_height));
                     pos += config.separator_size + config.spacing * 2.0;
                 } else {
                     let sep_width = rect.width * 0.7;
                     let sep_x = rect.x + (rect.width - sep_width) / 2.0;
                     ctx.fill_rect(sep_x, pos, sep_width, config.separator_size);
+                    result.separator_rects.push(WidgetRect::new(sep_x, pos, sep_width, config.separator_size));
                     pos += config.separator_size + config.spacing * 2.0;
                 }
             }
@@ -2004,6 +2038,149 @@ pub fn draw_toolbar_with_icons(
     }
 
     result
+}
+
+/// Toolbars painted by a host instead of here (the uzor DOM toolbars of the
+/// uzor-framework host). Off unless a host turns it on for its thread; then the
+/// toolbars drawn inside a [`capture::as_slot`] scope whose items it can paint are
+/// laid out here and handed over ([`capture::take`]) instead of drawn.
+pub mod capture {
+    use super::{ToolbarConfig, ToolbarItem, ToolbarResult, ToolbarTheme, WidgetRect};
+    use std::cell::{Cell, RefCell};
+    use uzor::render::{
+        BatchPainter, Effects, GradientPainter, Masking, Painter, RenderContext, ShapeHelpers, TextAlign, TextBaseline,
+        TextBounds, TextMetrics, TextRenderer, UiEffectHelpers,
+    };
+
+    /// One toolbar a host paints: what it shows and where, as laid out here.
+    #[derive(Clone, Debug)]
+    pub struct CapturedToolbar {
+        /// Which toolbar ("top", "left", "right").
+        pub slot: &'static str,
+        pub config: ToolbarConfig,
+        /// Its rect, in the coordinates the app draws in.
+        pub rect: WidgetRect,
+        pub theme: ToolbarTheme,
+        pub hovered: Option<String>,
+        /// The layout: item rects, separators.
+        pub result: ToolbarResult,
+    }
+
+    thread_local! {
+        static ON: Cell<bool> = const { Cell::new(false) };
+        static SLOT: Cell<Option<&'static str>> = const { Cell::new(None) };
+        static TAKEN: RefCell<Vec<CapturedToolbar>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// Turn capturing on or off for this thread.
+    pub fn set_enabled(on: bool) {
+        ON.with(|c| c.set(on));
+    }
+
+    /// The toolbars captured since the last call.
+    pub fn take() -> Vec<CapturedToolbar> {
+        TAKEN.with(|t| std::mem::take(&mut *t.borrow_mut()))
+    }
+
+    /// While the guard lives, toolbars drawn are captured as `slot` (when enabled).
+    pub fn as_slot(slot: &'static str) -> SlotGuard {
+        SlotGuard(SLOT.with(|s| s.replace(Some(slot))))
+    }
+
+    /// Restores the previous slot.
+    pub struct SlotGuard(Option<&'static str>);
+    impl Drop for SlotGuard {
+        fn drop(&mut self) {
+            SLOT.with(|s| s.set(self.0));
+        }
+    }
+
+    pub(super) fn slot() -> Option<&'static str> {
+        if ON.with(Cell::get) { SLOT.with(Cell::get) } else { None }
+    }
+
+    pub(super) fn push(t: CapturedToolbar) {
+        TAKEN.with(|v| v.borrow_mut().push(t));
+    }
+
+    /// Whether the host paints every item of this toolbar: no scroll chevrons, and
+    /// only the item kinds it knows.
+    pub fn host_can_paint(config: &ToolbarConfig, result: &ToolbarResult) -> bool {
+        !result.overflows
+            && config.sections.iter().flat_map(|s| &s.items).all(|i| {
+                matches!(
+                    i,
+                    ToolbarItem::Separator
+                        | ToolbarItem::Spacer
+                        | ToolbarItem::IconButton { .. }
+                        | ToolbarItem::Button { .. }
+                        | ToolbarItem::Dropdown { .. }
+                        | ToolbarItem::SplitIconButton { .. }
+                )
+            })
+    }
+
+    /// Measures through the real context, draws nothing.
+    pub(super) struct LayoutOnly<'a>(pub(super) &'a mut dyn RenderContext);
+
+    impl Painter for LayoutOnly<'_> {
+        fn save(&mut self) {}
+        fn restore(&mut self) {}
+        fn translate(&mut self, _x: f64, _y: f64) {}
+        fn rotate(&mut self, _a: f64) {}
+        fn scale(&mut self, _x: f64, _y: f64) {}
+        fn set_fill_color(&mut self, _c: &str) {}
+        fn set_global_alpha(&mut self, _a: f64) {}
+        fn set_stroke_color(&mut self, _c: &str) {}
+        fn set_stroke_width(&mut self, _w: f64) {}
+        fn set_line_dash(&mut self, _p: &[f64]) {}
+        fn set_line_cap(&mut self, _c: &str) {}
+        fn set_line_join(&mut self, _j: &str) {}
+        fn begin_path(&mut self) {}
+        fn move_to(&mut self, _x: f64, _y: f64) {}
+        fn line_to(&mut self, _x: f64, _y: f64) {}
+        fn close_path(&mut self) {}
+        fn rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+        fn arc(&mut self, _cx: f64, _cy: f64, _r: f64, _s: f64, _e: f64) {}
+        fn ellipse(&mut self, _cx: f64, _cy: f64, _rx: f64, _ry: f64, _rot: f64, _s: f64, _e: f64) {}
+        fn quadratic_curve_to(&mut self, _a: f64, _b: f64, _x: f64, _y: f64) {}
+        fn bezier_curve_to(&mut self, _a: f64, _b: f64, _c: f64, _d: f64, _x: f64, _y: f64) {}
+        fn stroke(&mut self) {}
+        fn fill(&mut self) {}
+    }
+    impl TextRenderer for LayoutOnly<'_> {
+        fn set_font(&mut self, font: &str) {
+            self.0.set_font(font);
+        }
+        fn set_text_align(&mut self, _a: TextAlign) {}
+        fn set_text_baseline(&mut self, _b: TextBaseline) {}
+        fn fill_text(&mut self, _t: &str, _x: f64, _y: f64) {}
+        fn stroke_text(&mut self, _t: &str, _x: f64, _y: f64) {}
+    }
+    impl TextMetrics for LayoutOnly<'_> {
+        fn measure_text(&self, text: &str) -> f64 {
+            self.0.measure_text(text)
+        }
+        fn text_bounds(&self, text: &str, font: &str) -> TextBounds {
+            self.0.text_bounds(text, font)
+        }
+    }
+    impl Masking for LayoutOnly<'_> {
+        fn clip(&mut self) {}
+    }
+    impl Effects for LayoutOnly<'_> {}
+    impl ShapeHelpers for LayoutOnly<'_> {
+        fn stroke_rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+        fn fill_rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+    }
+    impl GradientPainter for LayoutOnly<'_> {}
+    impl UiEffectHelpers for LayoutOnly<'_> {}
+    impl BatchPainter for LayoutOnly<'_> {}
+    impl RenderContext for LayoutOnly<'_> {
+        fn dpr(&self) -> f64 {
+            self.0.dpr()
+        }
+    }
 }
 
 #[cfg(test)]
