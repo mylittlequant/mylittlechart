@@ -207,8 +207,11 @@ pub struct HostedApp {
     toolbar_sheets: Vec<(&'static str, Option<(u64, String, uzor::ui::style::Sheet)>)>,
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
-    /// The toolbars painted on DOM in the last frame, by slot ("top", "left", "right").
+    /// The toolbars painted on DOM in the last frame, by slot ("top", "left",
+    /// "right", "bottom").
     pub toolbar_slots: Vec<&'static str>,
+    /// The DOM toolbars' item hit rects of the last frame, by DOM id.
+    pub toolbar_hits: Vec<(String, uzor::types::Rect)>,
     /// The toolbar item the DOM reported under the pointer last frame (its DOM id).
     pub toolbar_hover: Option<String>,
     toolbar_press: PressForward,
@@ -314,6 +317,7 @@ impl HostedApp {
             chrome_tab_down: false,
             chrome_tab_forwarded: false,
             toolbar_slots: Vec::new(),
+            toolbar_hits: Vec::new(),
             toolbar_hover: None,
             toolbar_press: PressForward::default(),
             sidebar_hits: Vec::new(),
@@ -348,6 +352,7 @@ impl HostedApp {
         use mlc_app_layout::ui::toolbar_core::{capture, render_icon, IconId};
         let taken = capture::take();
         self.toolbar_slots.clear();
+        self.toolbar_hits.clear();
         if taken.is_empty() {
             return;
         }
@@ -369,10 +374,10 @@ impl HostedApp {
                 let render = &mut *cx.render;
                 // The passes that only lay out and hit-test reuse the widths the
                 // painting pass measured: the boxes they hit-test are the ones painted.
-                let mut measure = |s: &str| {
-                    render.set_font("13px sans-serif");
+                let mut measure = |font: &str, s: &str| {
+                    render.set_font(font);
                     let w = render.measure_text(s);
-                    ctx::measured("13px sans-serif", s, w)
+                    ctx::measured(font, s, w)
                 };
                 dom::toolbar::tree(t, o.width, o.height, self.toolbar_hover.as_deref(), &mut measure)
             };
@@ -390,6 +395,30 @@ impl HostedApp {
                         ctx.draw_blur_background(f.rect.x - dx, f.rect.y - dy, f.rect.width, f.rect.height);
                         ctx.restore();
                     }
+                } else if f.key.starts_with(dom::toolbar::CLOCK) {
+                    // The app's own hover effect, in its coordinates (the pointer
+                    // and the animation clock are the ones it laid the bar out with).
+                    let c = &t.config;
+                    let time = c.sections.iter().flat_map(|s| &s.items).find_map(|i| match i {
+                        mlc_app_layout::ui::toolbar_core::ToolbarItem::Clock { time, .. } => Some(time.as_str()),
+                        _ => None,
+                    });
+                    if let (Some(time), Some(pointer)) = (time, c.cursor) {
+                        let (dx, dy) = (r.x, r.y + chrome::CHROME_HEIGHT);
+                        let ir = f.rect;
+                        ctx.save();
+                        ctx.translate(dx, dy);
+                        mlc_app_layout::ui::toolbar_core::draw_clock_glitch(
+                            ctx,
+                            time,
+                            mlc_app_layout::ui::toolbar_core::WidgetRect::new(ir.x - dx, ir.y - dy, ir.width, ir.height),
+                            &t.theme.item_text,
+                            pointer,
+                            c.anim_time_s,
+                            c.anim_frame,
+                        );
+                        ctx.restore();
+                    }
                 } else if let Some((_, icon, color)) = own.iter().find(|(k, _, _)| k == f.key) {
                     let ir = f.rect;
                     render_icon(ctx, &IconId::new(icon), mlc_app_layout::ui::toolbar_core::WidgetRect::new(ir.x, ir.y, ir.width, ir.height), color, anim);
@@ -398,7 +427,8 @@ impl HostedApp {
             let resp = uzor_framework::widgets::kit::dom(o, &sheet, tree).paint_slots(&mut painter).build(cx);
             hover = hover.or(resp.hovered.clone());
             clicked = clicked.or(resp.clicked);
-            for (id, _) in resp.dom.hits() {
+            for (id, hr) in resp.dom.hits() {
+                self.toolbar_hits.push((id.to_string(), hr));
                 if cx.view.is_pressed(&uzor::WidgetId::from(id)) {
                     pressed = Some(id.to_string());
                 }

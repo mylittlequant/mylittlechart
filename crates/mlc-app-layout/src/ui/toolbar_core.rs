@@ -968,6 +968,20 @@ pub fn stroke_compensated_icon(svg: &'static str, draw_size: f64) -> Cow<'static
 /// font it renders with, plus 8px padding per side. The text draws
 /// right-aligned, so any width overestimate would surface as dead space
 /// on the LEFT — between the expand button and the `[UTC…]` label.
+/// The clock's hover effect as `Clock` draws it (uzor-text's ASCII cell shader over
+/// `time`, following `pointer`), for a host that paints the toolbar itself.
+pub fn draw_clock_glitch(
+    ctx: &mut dyn RenderContext,
+    time: &str,
+    item_rect: WidgetRect,
+    color_hex: &str,
+    pointer: (f64, f64),
+    anim_time_s: f64,
+    anim_frame: u64,
+) {
+    super::clock_glitch::draw_clock_glitch(ctx, time, item_rect, color_hex, pointer, anim_time_s, anim_frame);
+}
+
 fn clock_width(ctx: &mut dyn RenderContext, time: &str) -> f64 {
     ctx.set_font("13px monospace");
     (ctx.measure_text(time) + 16.0).max(40.0)
@@ -2055,7 +2069,7 @@ pub mod capture {
     /// One toolbar a host paints: what it shows and where, as laid out here.
     #[derive(Clone, Debug)]
     pub struct CapturedToolbar {
-        /// Which toolbar ("top", "left", "right").
+        /// Which toolbar ("top", "left", "right", "bottom").
         pub slot: &'static str,
         pub config: ToolbarConfig,
         /// Its rect, in the coordinates the app draws in.
@@ -2116,6 +2130,7 @@ pub mod capture {
                         | ToolbarItem::Button { .. }
                         | ToolbarItem::Dropdown { .. }
                         | ToolbarItem::SplitIconButton { .. }
+                        | ToolbarItem::Clock { .. }
                 )
             })
     }

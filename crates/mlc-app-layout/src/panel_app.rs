@@ -1166,6 +1166,7 @@ pub fn chart_toolbar_render_toolbars(
                 layout.bottom_toolbar_rect.height,
             );
 
+            let _host_paints = crate::ui::toolbar_core::capture::as_slot("bottom");
             draw_toolbar_with_icons(
                 ctx,
                 &bottom_config,

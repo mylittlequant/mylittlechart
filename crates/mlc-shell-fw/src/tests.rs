@@ -389,7 +389,7 @@ mod hosted {
         let (mut h, _win) = host();
         h.advance(0.017);
         let slots = h.runtime().app().toolbar_slots.clone();
-        for s in ["top", "left", "right"] {
+        for s in ["top", "left", "right", "bottom"] {
             assert!(slots.contains(&s), "{s} in {slots:?}");
         }
     }
@@ -420,7 +420,7 @@ mod hosted {
             move_to(&mut h, win, x, y);
             let old = window_pixels(&mut h, win, false);
             let new = window_pixels(&mut h, win, true);
-            assert_eq!(h.runtime().app().toolbar_slots.len(), 3, "all three on DOM at {x},{y}");
+            assert_eq!(h.runtime().app().toolbar_slots.len(), 4, "all four on DOM at {x},{y}");
             let off: Vec<usize> = old
                 .chunks_exact(4)
                 .zip(new.chunks_exact(4))
@@ -444,6 +444,51 @@ mod hosted {
                 panic!("hover at {x},{y}: {} pixels differ in x {x0}..={x1}, y {y0}..={y1}", off.len());
             }
         }
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_bottom_bar_and_its_clock_paint_what_the_app_painted() {
+        // The clock pinned, so the two renders show the same time and the hover
+        // effect the same frame.
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
+        let (mut h, win) = host();
+        window_pixels(&mut h, win, true);
+        let clock = h.runtime().app().toolbar_hits.iter().find(|(k, _)| k == "btb:clock").map(|(_, r)| *r).expect("the clock on DOM");
+        let bar_top = clock.y as usize;
+        let mut worst = Vec::new();
+        // Away from it; on it with the glitch effect (the default); on it without.
+        for (spot, glitch) in [((700.0, 400.0), true), ((clock.x + clock.width - 12.0, clock.y + clock.height / 2.0), true), ((clock.x + 10.0, clock.y + clock.height / 2.0), false)] {
+            h.runtime_mut().app_mut().chart.core.user_mut().profile_mut().ui.clock_glitch_enabled = glitch;
+            move_to(&mut h, win, spot.0, spot.1);
+            let old = window_pixels(&mut h, win, false);
+            let new = window_pixels(&mut h, win, true);
+            assert!(h.runtime().app().toolbar_slots.contains(&"bottom"), "bottom bar on DOM at {spot:?}");
+            let (mut over, mut exact) = (0, 0);
+            for (i, (a, b)) in old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate() {
+                let (x, y) = (i % 1280, i / 1280);
+                if y < bar_top || x >= 1228 {
+                    continue;
+                }
+                let d = a.iter().zip(b.iter()).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+                exact += usize::from(d > 0);
+                over += usize::from(d > 8);
+            }
+            eprintln!("bottom bar at {spot:?} glitch {glitch}: {over} px over 8, {exact} differ");
+            if let Some(dir) = std::env::var_os("MLC_TB_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("bb-{n}-{}-{glitch}.png", spot.0 as i64));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            worst.push(over);
+        }
+        mlc_app::set_fixed_clock(None);
+        assert!(worst.iter().all(|&o| o == 0), "{worst:?}");
     }
 
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {
@@ -486,7 +531,7 @@ mod hosted {
             press_at(&mut old, wo, 700.0, 400.0);
         }
         assert!(opened > 0, "some press opened something");
-        assert_eq!(dom.runtime().app().toolbar_slots.len(), 3);
+        assert_eq!(dom.runtime().app().toolbar_slots.len(), 4);
     }
 
     fn open_watchlist(h: &mut Host, rows: usize) {

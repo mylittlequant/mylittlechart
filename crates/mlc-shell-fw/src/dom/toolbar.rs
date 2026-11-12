@@ -1,5 +1,5 @@
-//! The app's toolbars (top control strip, left drawing rail, right sidebar rail) as
-//! uzor DOM.
+//! The app's toolbars (top control strip, left drawing rail, right sidebar rail,
+//! bottom bar with the expand button and the clock) as uzor DOM.
 //!
 //! Was: `mlc-app-layout` `toolbar_core::draw_toolbar_with_icons`, which lays out,
 //! draws and hit-tests every item by hand. Now the DOM does all three from the app's
@@ -16,7 +16,9 @@
 //! anchor to its own item rects, and a toolbar it would scroll (overflow) or with item
 //! kinds not handled here is drawn by the app as before. The animated mascot ("Bot")
 //! is the app's own drawing in a paint slot, and the backdrop blur is the context's
-//! own call in a slot (see [`BLUR`]).
+//! own call in a slot (see [`BLUR`]). The clock is a DOM label (the app's 13px
+//! monospace, on the app's baseline); under the pointer it gets the DOM highlight and
+//! its "matrix" glitch effect is the app's own drawing in a paint slot ([`CLOCK`]).
 
 use mlc_app_layout::ui::toolbar_core::capture::CapturedToolbar;
 use mlc_app_layout::ui::toolbar_core::{stroke_compensated_icon, SectionAlign, ToolbarItem, ToolbarOrientation};
@@ -29,16 +31,25 @@ pub const SLOT: &str = "tb:own:";
 /// `draw_blur_background`, a no-op unless the theme blurs), where the old drawing
 /// called it: under the bar, and under a lit item when the context blurs.
 pub const BLUR: &str = "tb:blur:";
+/// Paint-slot key prefix of the clock while the pointer is on it: the app's
+/// "matrix" hover effect (`toolbar_core::draw_clock_glitch`, uzor-text's ASCII cell
+/// shader), which animates per frame and follows the pointer.
+pub const CLOCK: &str = "tb:clock:";
+/// The toolbar labels' font.
+const SANS: &str = "13px sans-serif";
+/// The clock's font.
+pub const CLOCK_FONT: &str = "13px monospace";
 
 /// The rule between toolbar `t` (at window rect `o`) and the chart, in window
 /// coordinates: the drawing rail's right edge, the control strip's bottom edge, the
-/// right rail's left edge. `chart_toolbar_render_toolbars` draws these after all the
+/// right rail's left edge, the bottom bar's top edge. `chart_toolbar_render_toolbars` draws these after all the
 /// toolbars, so the host paints them after its toolbars too ([`edge_tree`]).
 pub fn edge(t: &CapturedToolbar, o: Rect) -> Option<Rect> {
     match t.slot {
         "left" => Some(Rect::new(o.x + o.width - 1.0, o.y, 1.0, o.height)),
         "top" => Some(Rect::new(o.x, o.y + o.height - 1.0, o.width, 1.0)),
         "right" => Some(Rect::new(o.x, o.y, 1.0, o.height)),
+        "bottom" => Some(Rect::new(o.x, o.y, o.width, 1.0)),
         _ => None,
     }
 }
@@ -72,7 +83,9 @@ div.t-icon {{ position: absolute }}
 div.t-glyph {{ position: absolute; shape-rendering: geometricPrecision }}
 div.t-strike {{ position: absolute; height: 1px; background: currentColor }}
 div.t-sep {{ background: {sep} }}
-div.t-rule {{ background: {sep} }}",
+div.t-rule {{ background: {sep} }}
+div.t-clock {{ position: absolute; border-radius: 4px; background: {hover} }}
+div.s-at {{ position: absolute; white-space: nowrap; height: 40px }}",
         bg = th.background,
         ink = th.item_text,
         hover = th.item_bg_hover,
@@ -91,6 +104,7 @@ pub fn dom_id(slot: &str, id: &str) -> String {
         "left" => "dtb",
         "top" => "csb",
         "right" => "rtb",
+        "bottom" => "btb",
         _ => "tb",
     };
     format!("{p}:{id}")
@@ -142,10 +156,12 @@ fn state_class(active: bool, hovered: bool) -> &'static str {
 }
 
 /// The toolbar `t`, `w`×`h`, from its model. `hovered`: the DOM id under the
-/// pointer last frame. `measure` measures a 13px label (the DOM's own font) for the
-/// one case the old drawing sized from it: a fixed-width dropdown's highlight.
-/// Returns the tree and the paint slots it asks for: `(key, icon, color)`.
-pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure: &mut dyn FnMut(&str) -> f64) -> (El, Vec<(String, String, String)>) {
+/// pointer last frame. `measure(font, text)` measures a label in a canvas font: the
+/// 13px labels (the DOM's own font) for the case the old drawing sized from them (a
+/// fixed-width dropdown's highlight), the clock's 13px monospace for its box.
+/// Returns the tree and the paint slots it asks for: `(key, icon, color)`; a clock
+/// under the pointer asks for [`CLOCK`] (its glitch effect, the app's drawing).
+pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure: &mut dyn FnMut(&str, &str) -> f64) -> (El, Vec<(String, String, String)>) {
     let cfg = &t.config;
     let th = &t.theme;
     let horizontal = matches!(cfg.orientation, ToolbarOrientation::Horizontal);
@@ -210,14 +226,14 @@ pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure:
             ToolbarItem::Button { icon, text: label, active, disabled, min_width, strikethrough, .. } => {
                 let spec = if *disabled { "div.t-item" } else { state_class(*active, hov) };
                 let left = if icon.is_some() { cfg.icon_size + 4.0 } else { 8.0 };
-                let bw = if !horizontal || label.is_none() { is } else if *min_width > 0.0 { *min_width } else { left + label.as_deref().map(&mut *measure).unwrap_or(0.0) + 8.0 };
+                let bw = if !horizontal || label.is_none() { is } else if *min_width > 0.0 { *min_width } else { left + label.as_deref().map(|l| measure(SANS, l)).unwrap_or(0.0) + 8.0 };
                 let mut b = El::new(spec).id(did.clone()).css(format!("width: {bw}px; height: {is}px; {}", gap(sp)));
                 b = face(b, &did, bw, is, spec != "div.t-item", false);
                 if let Some(ic) = icon {
                     b = b.child(icon_el(ic.name(), bw / 2.0 - cfg.icon_size / 2.0, is / 2.0 - cfg.icon_size / 2.0, cfg.icon_size));
                 }
                 if let Some(label) = label {
-                    let tw = measure(label);
+                    let tw = measure(SANS, label);
                     let x = if icon.is_some() { left } else { bw / 2.0 - tw / 2.0 };
                     b = b.child(El::new("div.t-abs").css(format!("left: {x}px; height: {is}px")).child(El::new("span").text(label.clone())));
                     if *strikethrough {
@@ -233,7 +249,7 @@ pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure:
                 // A natural box hugs its label (the DOM sizes it); a fixed one keeps its
                 // width and its highlight still covers the label, as before.
                 let natural = horizontal && *min_width <= 0.0 && label.is_some();
-                let tw = label.as_deref().map(&mut *measure).unwrap_or(0.0);
+                let tw = label.as_deref().map(|l| measure(SANS, l)).unwrap_or(0.0);
                 let bw = if !horizontal || (label.is_none() && *min_width <= 0.0) { is } else if natural { left + tw + right } else { *min_width };
                 let hw = bw.max(left + tw + right);
                 let mut b = El::new(spec).id(did.clone()).css(format!("width: {bw}px; height: {is}px; {}", gap(sp)));
@@ -268,6 +284,25 @@ pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure:
                         .css(format!("position: absolute; left: {is}px; top: 0px; width: 10px; height: {is}px"))
                         .child(chevron(2.5, false, 1.2, |cw, ch| format!("position: absolute; left: {}px; top: {}px", 5.0 - cw / 2.0, is / 2.0 - ch / 2.0))),
                 )
+            }
+            ToolbarItem::Clock { time, .. } => {
+                // `toolbar_core` `Clock`: the bar's full height, the label's width
+                // + 16 (40 at least); hovered: the rounded highlight inset 2 px top and
+                // bottom, and the glitch effect instead of the label.
+                let bw = (measure(CLOCK_FONT, time) + 16.0).max(40.0);
+                let bh = if horizontal { h } else { is };
+                let mut b = El::new("div.t-item").id(did.clone()).css(format!("width: {bw}px; height: {bh}px; {}", gap(sp)));
+                if hov {
+                    b = b.child(El::new("div.t-clock").css(format!("left: 0px; top: 2px; width: {bw}px; height: {}px", bh - 4.0)));
+                }
+                if hov && cfg.cursor.is_some() && cfg.clock_glitch_enabled {
+                    let key = format!("{CLOCK}{}:{id}", t.slot);
+                    slots.push((key.clone(), String::new(), th.item_text.clone()));
+                    b = b.child(El::new("div.t-icon").slot(key).css(format!("left: 0px; top: 0px; width: {bw}px; height: {bh}px")));
+                } else {
+                    b = b.child(super::sidebar_panels::mid_text(time, bw - 8.0, bh / 2.0, super::sidebar_panels::At::R, CLOCK_FONT, &th.item_text, measure));
+                }
+                b
             }
             _ => return None,
         })

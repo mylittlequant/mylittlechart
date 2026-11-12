@@ -1793,6 +1793,41 @@ pub enum TemplateAction {
     RemoveIndicatorSet { id: String },
 }
 
+/// A fixed time for the bottom bar's clock (seconds since the epoch), for
+/// reference screenshots that compare two renders taken at different moments.
+/// `i64::MIN`: none, the clock shows the system time.
+static FIXED_CLOCK_SECS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(i64::MIN);
+
+/// Pins the bottom bar's clock to `secs` (seconds since the epoch), or back to the
+/// system time with `None`. For reference screenshots and tests: while pinned, the
+/// toolbar animations (the clock's hover effect, the mascot) stand still too — their
+/// time is `secs` and their frame counter does not advance.
+pub fn set_fixed_clock(secs: Option<i64>) {
+    FIXED_CLOCK_SECS.store(secs.unwrap_or(i64::MIN), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn clock_is_fixed() -> bool {
+    FIXED_CLOCK_SECS.load(std::sync::atomic::Ordering::Relaxed) != i64::MIN
+}
+
+/// The toolbar animations' time: `live`, or the pinned clock.
+fn clock_anim_secs(live: f64) -> f64 {
+    let fixed = FIXED_CLOCK_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if fixed != i64::MIN { fixed as f64 } else { live }
+}
+
+/// The clock's "now", in seconds since the epoch.
+fn clock_now_secs() -> i64 {
+    let fixed = FIXED_CLOCK_SECS.load(std::sync::atomic::Ordering::Relaxed);
+    if fixed != i64::MIN {
+        return fixed;
+    }
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
 impl ChartApp {
     /// Apply everything the UI queued onto the shared template store and empty
     /// the queue. Returns whether anything was applied, which is the only part
@@ -7148,7 +7183,9 @@ impl ChartApp {
         let _rt0 = web_time::Instant::now();
         // One step per rendered frame — this is the cadence the clock's
         // hover animation runs at.
-        self.anim_frame = self.anim_frame.wrapping_add(1);
+        if !clock_is_fixed() {
+            self.anim_frame = self.anim_frame.wrapping_add(1);
+        }
         self.sync_input_prefs_to_settings_ui();
         let w = self.width as f64;
         let h = self.height as f64;
@@ -8473,10 +8510,7 @@ impl ChartApp {
 
         // Generate clock time from active window's timezone settings
         let clock_time = {
-            let utc_secs = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let utc_secs = clock_now_secs();
 
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let time_fmt = &window.scale_settings.time_format;
@@ -8782,7 +8816,7 @@ impl ChartApp {
                 Some(active_at_str.as_str()),
                 suppress_chart_controls,
                 Some(self.last_mouse_pos),
-                current_time_ms as f64 / 1000.0,
+                clock_anim_secs(current_time_ms as f64 / 1000.0),
                 self.anim_frame,
                 clock_glitch_enabled,
                 is_capturing_screenshot,
@@ -9922,10 +9956,7 @@ impl ChartApp {
         };
 
         let clock_time = {
-            let utc_secs = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
+            let utc_secs = clock_now_secs();
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let time_fmt = &window.scale_settings.time_format;
                 let time = time_fmt.format_clock_time(utc_secs);
@@ -10029,10 +10060,12 @@ impl ChartApp {
         // idiom this method already uses a few lines above
         // (`allowed_tfs`'s own `now_ms`), is precise enough for the clock
         // hover-glitch shimmer cadence.
-        let toolbar_anim_time_s = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
+        let toolbar_anim_time_s = clock_anim_secs(
+            web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
+        );
         let is_capturing_screenshot = self.is_capturing_screenshot();
         // See the twin reset in `render_to_scene` for the rationale — same
         // "a freshly opened dropdown starts scrolled to its own top" rule,
@@ -10080,7 +10113,9 @@ impl ChartApp {
             // no threaded frame number; bump the same counter here so the
             // animation keeps advancing when only the toolbar is redrawn.
             {
-                self.anim_frame = self.anim_frame.wrapping_add(1);
+                if !clock_is_fixed() {
+                    self.anim_frame = self.anim_frame.wrapping_add(1);
+                }
                 self.anim_frame
             },
             clock_glitch_enabled,
