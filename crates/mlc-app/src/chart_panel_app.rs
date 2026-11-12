@@ -48,6 +48,15 @@ use mlc_app_layout::panel_app::{
 
 use crate::user_manager::load_user_state_from_disk;
 
+/// Which hand-drawn pieces a uzor-framework host has taken over (see
+/// `ChartPanelApp::dom_hosted`). All off: the app draws everything, as before.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DomHosted {
+    /// The preset-name modal (save as, rename, new chart; not the indicator-set mode,
+    /// which sits over the indicator search).
+    pub preset_name: bool,
+}
+
 pub struct ChartPanelApp {
     pub toolbar_state: ChartToolbarState,
     title: String,
@@ -140,6 +149,10 @@ pub struct ChartPanelApp {
     pub open_tabs: Vec<String>,
     /// Preset name input modal state (Save As / Rename).
     pub preset_name_input: PresetNameInputState,
+    /// Pieces a host draws and wires itself with uzor widgets / DOM (the in-place
+    /// move to uzor-framework). The app keeps the state and the actions; it only
+    /// stops painting and hit-testing its own version of these.
+    pub dom_hosted: DomHosted,
     /// "Open shared chart…" overlay state (native-share-viewer arc,
     /// 2026-09-06). Not `cfg(feature = "cloud")` — reading a share is
     /// public, so signed-out sessions open it too.
@@ -199,6 +212,7 @@ impl ChartPanelApp {
             active_preset_id: "__default__".to_string(),
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
+            dom_hosted: DomHosted::default(),
             share_open_state: ShareOpenState::default(),
             share_settings_state: ShareSettingsState::default(),
             checkout_state: mlc_app_layout::ui::checkout::CheckoutState::default(),
@@ -860,6 +874,7 @@ impl ChartPanelApp {
         // it will be rendered AFTER the search overlay in lib.rs so it
         // appears visually on top.
         if self.preset_name_input.is_open
+            && !self.dom_hosted.preset_name
             && self.preset_name_input.mode != mlc_app_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
         {
             use mlc_app_layout::layout::modals::preset_name_input::render_preset_name_input;

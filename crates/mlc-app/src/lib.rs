@@ -6217,6 +6217,41 @@ impl ChartApp {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenPresetSaveAs);
     }
 
+    /// The preset-name modal's primary action with `name` (trimmed; an empty name
+    /// only closes): save as, rename, new chart or create the indicator set, by the
+    /// modal's mode. Then the modal closes.
+    pub fn commit_preset_name(&mut self, name: &str) {
+        let name = name.trim().to_string();
+        if !name.is_empty() {
+            use mlc_app_layout::ui::modal_settings::PresetNameInputMode;
+            match self.panel_app.preset_name_input.mode {
+                PresetNameInputMode::SaveAs => {
+                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::SavePreset { name });
+                }
+                PresetNameInputMode::Rename => {
+                    let id = self.panel_app.preset_name_input.rename_preset_id.clone().unwrap_or_default();
+                    self.process_chart_out_event(mlc_core::events::ChartOutEvent::RenamePreset { id, new_name: name });
+                }
+                PresetNameInputMode::NewChart => self.execute_new_chart_with_name(name),
+                PresetNameInputMode::CreateIndicatorSet => self.execute_create_indicator_set(name),
+            }
+        }
+        self.close_preset_name_input();
+    }
+
+    /// Close the preset-name modal without acting.
+    pub fn close_preset_name_input(&mut self) {
+        self.panel_app.preset_name_input.close();
+        self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+    }
+
+    /// The text the preset-name modal opened with (the app's own field store).
+    pub fn preset_name_text(&self) -> String {
+        let id = uzor::WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
+        self.input_coordinator.borrow().text_fields().text(&id).to_string()
+    }
+
     /// Rename a preset by its id (no modal, no activation needed).
     ///
     /// Fires `RenamePreset`, which targets the preset id directly — the

@@ -13,6 +13,7 @@
 //! uzor widgets / DOM inside this same app.
 
 pub mod ctx;
+pub mod dom;
 pub mod frame;
 mod input;
 
@@ -145,6 +146,11 @@ pub struct HostedApp {
     win: Option<WindowId>,
     /// Frames painted (tests wait on it).
     pub frames: u64,
+    /// The preset-name dialog's field while it is open.
+    pub preset_name: Option<String>,
+    sheet: Option<(u64, String, uzor::ui::style::Sheet)>,
+    /// The DOM tree's hit rects of the last frame, by id (tests click them).
+    pub last_hits: Vec<(String, uzor::types::Rect)>,
 }
 
 impl HostedApp {
@@ -163,6 +169,65 @@ impl HostedApp {
             size: (0, 0),
             win: None,
             frames: 0,
+            preset_name: None,
+            sheet: None,
+            last_hits: Vec::new(),
+        }
+    }
+
+    /// Host `chart` with the pieces already ported to uzor DOM taken over from it.
+    pub fn with_dom(mut chart: mlc_app::ChartApp) -> Self {
+        chart.panel_app.dom_hosted.preset_name = true;
+        Self::new(chart)
+    }
+
+    fn sheet(&mut self, css: String) -> uzor::ui::style::Sheet {
+        let gen = uzor::ui::media::generation();
+        if self.sheet.as_ref().is_none_or(|(g, c, _)| *g != gen || *c != css) {
+            let s = uzor::ui::domkit::sheet_with(&css).expect("dom css parses");
+            self.sheet = Some((gen, css, s));
+        }
+        self.sheet.as_ref().expect("sheet").2.clone()
+    }
+
+    fn preset_name_open(&self) -> bool {
+        let p = &self.chart.panel_app;
+        p.dom_hosted.preset_name && p.preset_name_input.is_open && p.preset_name_input.mode != mlc_app_layout::ui::modal_settings::PresetNameInputMode::CreateIndicatorSet
+    }
+
+    /// The DOM pieces over the app's own frame.
+    fn dom_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        use dom::preset_name as pn;
+        if !self.preset_name_open() {
+            self.preset_name = None;
+            self.last_hits.clear();
+            return;
+        }
+        if self.preset_name.is_none() {
+            self.preset_name = Some(self.chart.preset_name_text());
+            if let Some(win) = self.win {
+                cx.out.command(AppCommand::Focus(uzor_framework::FocusCmd::Focus { win, id: uzor::WidgetId::from(pn::FIELD) }));
+            }
+        }
+        let look = pn::Look::of(&self.chart);
+        let sheet = self.sheet(look.css());
+        let st = &self.chart.panel_app.preset_name_input;
+        let at = pn::frame(cx.rect, chrome::CHROME_HEIGHT, st.position);
+        let name = self.preset_name.clone().unwrap_or_default();
+        let tree = pn::tree(st.mode, &name, at);
+        let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).build(cx);
+        let mut name = name;
+        for (id, v) in &resp.edited {
+            if id == pn::FIELD {
+                name = v.clone();
+            }
+        }
+        self.preset_name = Some(name.clone());
+        self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
+        match pn::outcome(resp.clicked.as_deref(), &name) {
+            Some(pn::Outcome::Commit(n)) => self.chart.commit_preset_name(&n),
+            Some(pn::Outcome::Close) => self.chart.close_preset_name_input(),
+            None => {}
         }
     }
 
@@ -239,6 +304,7 @@ impl App for HostedApp {
             frame::paint_window(&mut self.chart, &mut self.chrome, &mut ctx, r.width, r.height, wall, frame::Layers::All);
         }
         cx.render.restore();
+        self.dom_layer(cx);
         self.frames += 1;
         // The app animates (live bars, spinners, the clock): it runs every frame, as the
         // winit shell's redraw loop does.
@@ -251,6 +317,12 @@ impl App for HostedApp {
                 self.win = Some(win);
                 cx.command(AppCommand::Layout(LayoutCmd::SetChrome { win, visible: false, height: 0.0 }));
                 cx.command(AppCommand::Layout(LayoutCmd::OpenPanel { win, panel: Root, at: DockTarget::Root }));
+            }
+            Intent::Text(uzor_framework::TextIntent::Submitted { field, .. }) if field.as_str() == dom::preset_name::FIELD => {
+                if self.preset_name_open() {
+                    let name = self.preset_name.clone().unwrap_or_default();
+                    self.chart.commit_preset_name(&name);
+                }
             }
             Intent::Unhandled(u) => {
                 let mods = self.input.modifiers;

@@ -5370,39 +5370,12 @@ impl ChartApp {
                 "create" => {
                     // Read text from TextFieldStore.
                     let pni_id = WidgetId::from(crate::text_input::PRESET_NAME_INPUT);
-                    let name = self.input_coordinator.borrow().text_fields().text(&pni_id).trim().to_string();
-                    if !name.is_empty() {
-                        use mlc_app_layout::ui::modal_settings::PresetNameInputMode;
-                        match self.panel_app.preset_name_input.mode {
-                            PresetNameInputMode::SaveAs => {
-                                self.process_chart_out_event(
-                                    mlc_core::events::ChartOutEvent::SavePreset { name }
-                                );
-                            }
-                            PresetNameInputMode::Rename => {
-                                let id = self.panel_app.preset_name_input.rename_preset_id
-                                    .clone().unwrap_or_default();
-                                self.process_chart_out_event(
-                                    mlc_core::events::ChartOutEvent::RenamePreset { id, new_name: name }
-                                );
-                            }
-                            PresetNameInputMode::NewChart => {
-                                self.execute_new_chart_with_name(name);
-                            }
-                            PresetNameInputMode::CreateIndicatorSet => {
-                                self.execute_create_indicator_set(name);
-                            }
-                        }
-                    }
-                    self.panel_app.preset_name_input.close();
-                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    let name = self.input_coordinator.borrow().text_fields().text(&pni_id).to_string();
+                    self.commit_preset_name(&name);
                     log::debug!("[ChartApp] preset name input committed via Save button");
                 }
                 "close" => {
-                    self.panel_app.preset_name_input.close();
-                    self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    self.close_preset_name_input();
                     log::debug!("[ChartApp] preset name input closed via X");
                 }
                 "input" => {

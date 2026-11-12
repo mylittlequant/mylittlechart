@@ -39,7 +39,7 @@ fn render(h: &mut HeadlessChartApp, state: &mut chrome::ChromeState, w: u32, hgt
 /// of the same state.
 fn render_hosted(app: mlc_app::ChartApp, w: u32, hgt: u32) -> Vec<u8> {
     use uzor::render::{Painter, ShapeHelpers};
-    let (mut host, _) = HeadlessHost::new(HostedApp::new(app), HostedApp::runtime_config(w, hgt));
+    let (mut host, _) = HeadlessHost::new(HostedApp::with_dom(app), HostedApp::runtime_config(w, hgt));
     host.advance(0.017);
     host.advance(0.017);
     let win = host.snapshot().windows[0].id;
