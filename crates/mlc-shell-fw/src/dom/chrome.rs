@@ -63,15 +63,16 @@ div.c-bar {{ position: absolute; background: {ink} }}
 div.c-right {{ display: flex; position: absolute; right: 0px; top: 0px; width: {rw}px; height: {H}px }}
 div.c-cell {{ position: relative; height: {H}px; width: {SMALL_W}px; flex-shrink: 0 }}
 div.c-cell.wide {{ width: {BUTTON_W}px }}
-div.c-cell.hov {{ background: {hover} }}
+div.c-cell.patch.hov {{ background: {hover} }}
 div.c-cell.close.hov {{ background: {danger} }}
 div.c-cell.ctl.hov {{ color: {ink_hover} }}
 div.c-icon {{ position: absolute; left: 9px; top: 7px; width: 18px; height: 18px }}
-div.c-x {{ position: absolute }}
+div.c-x {{ position: absolute; shape-rendering: geometricPrecision }}
 div.c-min {{ position: absolute; left: 18px; top: 16px; width: 10px; height: 1px; background: {ink} }}
 div.c-cell.hov > div.c-min {{ background: {ink_hover} }}
-div.c-max {{ position: absolute; left: 18px; top: 11px; width: 10px; height: 10px; border: 1px solid {ink} }}
-div.c-cell.hov > div.c-max {{ border-color: {ink_hover} }}
+div.c-max {{ position: absolute; left: 18px; top: 11px; width: 10px; height: 10px }}
+div.c-edge {{ position: absolute; background: {ink} }}
+div.c-cell.hov > div.c-max > div.c-edge {{ background: {ink_hover} }}
 div.c-max.under {{ left: 20px; top: 9px }}
 div.c-max.over {{ background: {bg} }}
 div.c-cell > div.c-sep {{ left: 0px }}
@@ -112,28 +113,22 @@ fn id(name: &str) -> String {
 }
 
 /// An × of two strokes `s` from the centre `(cx, cy)`, `w` wide, where
-/// `chrome::render` stroked them: the icon box sits on whole pixels and the strokes
-/// keep their fractional place inside it. A fractional pen is drawn as the strokes'
-/// outlines, filled (the SVG icon painter rounds pen widths to whole pixels).
+/// `chrome::render` stroked them. `shape-rendering: geometricPrecision` keeps the
+/// pen as given (the SVG icon painter otherwise rounds it to whole pixels).
 fn cross(cx: f64, cy: f64, s: f64, w: f64) -> El {
     let (x0, y0) = ((cx - s - w).floor(), (cy - s - w).floor());
     let size = (2.0 * (s + w)).ceil() + 1.0;
     let (ax, ay) = (cx - s - x0, cy - s - y0);
     let (bx, by) = (ax + 2.0 * s, ay + 2.0 * s);
-    let p = w / 2.0 / std::f64::consts::SQRT_2;
-    let quad = |x1: f64, y1: f64, x2: f64, y2: f64, nx: f64, ny: f64| {
-        format!("M{} {}L{} {}L{} {}L{} {}Z", x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny)
-    };
-    let svg = if w.fract() == 0.0 {
-        format!(r#"<svg viewBox="0 0 {size} {size}" fill="none" stroke="currentColor" stroke-width="{w}"><path d="M{ax} {ay}L{bx} {by}M{ax} {by}L{bx} {ay}"/></svg>"#)
-    } else {
-        format!(
-            r#"<svg viewBox="0 0 {size} {size}" fill="currentColor" stroke="none"><path d="{}"/><path d="{}"/></svg>"#,
-            quad(ax, ay, bx, by, p, -p),
-            quad(ax, by, bx, ay, p, p),
-        )
-    };
+    let svg = format!(r#"<svg viewBox="0 0 {size} {size}" fill="none" stroke="currentColor" stroke-width="{w}"><path d="M{ax} {ay}L{bx} {by}M{ax} {by}L{bx} {ay}"/></svg>"#);
     El::new("div.c-x").css(format!("left: {x0}px; top: {y0}px; width: {size}px; height: {size}px")).svg(svg)
+}
+
+/// A 10 px square outline of four 1 px edges, as `chrome::render`'s
+/// `draw_rect_outline` fills it (a DOM border would round its corners' coverage).
+fn outline(spec: &str) -> El {
+    let edge = |l: u8, t: u8, w: u8, h: u8| El::new("div.c-edge").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
+    El::new(spec).child(edge(0, 0, 10, 1)).child(edge(0, 9, 10, 1)).child(edge(0, 1, 1, 8)).child(edge(9, 1, 1, 8))
 }
 
 fn cell(name: &str, cls: &str, hov: bool) -> El {
@@ -198,15 +193,15 @@ pub fn tree(state: &ChromeState, width: f64, text_w: &[f64]) -> El {
     let maximize = {
         let mut c = cell("maximize", ".wide.ctl", hov == ChromeHit::MaximizeButton);
         if is_max {
-            c = c.child(El::new("div.c-max.under")).child(El::new("div.c-max.over"));
+            c = c.child(outline("div.c-max.under")).child(outline("div.c-max.over"));
         } else {
-            c = c.child(El::new("div.c-max"));
+            c = c.child(outline("div.c-max"));
         }
         c
     };
     let right = El::new("div.c-right")
-        .child(cell("new_window", "", hov == ChromeHit::NewWindowButton).child(icon("new_window")))
-        .child(cell("menu", "", hov == ChromeHit::MenuButton).child(icon("settings")))
+        .child(cell("new_window", ".patch", hov == ChromeHit::NewWindowButton).child(icon("new_window")))
+        .child(cell("menu", ".patch", hov == ChromeHit::MenuButton).child(icon("settings")))
         .child(
             cell("close_window", ".ctl", hov == ChromeHit::CloseWindowButton)
                 .child(El::new("div.c-sep"))

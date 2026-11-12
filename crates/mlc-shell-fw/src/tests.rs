@@ -290,4 +290,51 @@ mod hosted {
         h.advance(0.017);
         assert!(h.runtime().app().platform.unsupported.borrow().contains(&"drag_window"));
     }
+
+    /// The strip rows of one frame, painted with the DOM strip on or off.
+    fn strip_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
+        use uzor::render::{Painter, ShapeHelpers};
+        h.runtime_mut().app_mut().chrome_on_dom = dom;
+        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx.set_fill_color("#131722");
+        ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx).expect("window");
+        ctx.pixmap().data()[..1280 * 32 * 4].to_vec()
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_dom_strip_paints_what_the_old_strip_painted_in_every_hover_state() {
+        use mlc_app_input_shell::chrome::ChromeHit;
+        let (mut h, win) = host();
+        let spots: [(f64, f64, ChromeHit); 9] = [
+            (20.0, 16.0, ChromeHit::Tab(0)),
+            (72.0, 16.0, ChromeHit::TabClose(0)),
+            (90.0, 16.0, ChromeHit::NewTabButton),
+            (1060.0, 16.0, ChromeHit::NewWindowButton),
+            (1090.0, 16.0, ChromeHit::MenuButton),
+            (1120.0, 16.0, ChromeHit::CloseWindowButton),
+            (1160.0, 16.0, ChromeHit::MinimizeButton),
+            (1210.0, 16.0, ChromeHit::MaximizeButton),
+            (1260.0, 16.0, ChromeHit::CloseButton),
+        ];
+        for maximized in [false, true] {
+            for (x, y, want) in spots {
+                move_to(&mut h, win, x, y);
+                h.runtime_mut().app_mut().chrome.is_maximized = maximized;
+                assert_eq!(h.runtime().app().chrome.hovered, want, "hover at {x},{y}");
+                let old = strip_pixels(&mut h, win, false);
+                let new = strip_pixels(&mut h, win, true);
+                assert!(!h.runtime().app().chrome_hits.is_empty(), "the DOM strip drew {want:?}");
+                let off = old.chunks_exact(4).zip(new.chunks_exact(4)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8)).count();
+                if off > 4 {
+                    let xs: Vec<usize> = old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate().filter(|(_, (a, b))| a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8)).map(|(i, _)| i).collect();
+                    let (x0, x1) = (xs.iter().map(|i| i % 1280).min().unwrap(), xs.iter().map(|i| i % 1280).max().unwrap());
+                    let (y0, y1) = (xs.iter().map(|i| i / 1280).min().unwrap(), xs.iter().map(|i| i / 1280).max().unwrap());
+                    let i = xs[0] * 4;
+                    panic!("{want:?} (maximized {maximized}): {off} pixels differ in x {x0}..={x1}, y {y0}..={y1}; first old {:?} new {:?}", &old[i..i + 4], &new[i..i + 4]);
+                }
+            }
+        }
+    }
 }
