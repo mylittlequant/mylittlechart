@@ -39,6 +39,7 @@ members = [
     "crates/mlc-desktop",
     "crates/mlc-shell-native",
     "crates/mlc-ref-shots",
+    "crates/mlc-shell-fw",
 ]
 resolver = "2"
 

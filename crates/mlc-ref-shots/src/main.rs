@@ -21,86 +21,35 @@ use std::time::Duration;
 use mlc_app_input_shell::chrome;
 use mlc_app_render_context_tiny_skia::TinySkiaChartRenderContext;
 use mlc_app_test_harness::headless::HeadlessChartApp;
-use mlc_core::engine::render::RenderContext as MlcRenderContext;
+use mlc_shell_fw::frame::{paint_window, Layers};
+use mlc_shell_fw::HostedApp;
+use uzor_framework::HeadlessHost;
+use uzor_render_tiny_skia::TinySkiaCpuRenderContext;
 
 /// The window chrome as the shell keeps it: theme colours and the open tabs.
-fn sync_chrome(state: &mut chrome::ChromeState, app: &mlc_app::ChartApp) {
-    let theme = app.panel_app.theme_manager.current();
-    let c = &mut state.colors;
-    c.background = theme.chart.background.clone();
-    c.icon_normal = theme.colors.text_primary.clone();
-    c.icon_hover = theme.colors.accent.clone();
-    c.button_hover = theme.colors.button_bg_hover.clone();
-    c.close_hover = theme.colors.danger.clone();
-    c.separator = theme.colors.toolbar_divider.clone();
-    c.tab_accent = theme.colors.accent.clone();
-    c.cta_bg = theme.colors.accent.clone();
-    c.cta_bg_hover = theme.colors.accent_hover.clone();
-    c.tooltip_bg = theme.colors.button_bg.clone();
-    c.tooltip_text = theme.colors.text_primary.clone();
-    let active = &app.panel_app.active_preset_id;
-    let presets = app.core.presets();
-    let mut tabs: Vec<chrome::Tab> = app
-        .panel_app
-        .open_tabs
-        .iter()
-        .filter_map(|id| presets.get(id).map(|p| chrome::Tab { id: p.id.clone(), name: p.name.clone(), active: &p.id == active }))
-        .collect();
-    drop(presets);
-    for t in &mut tabs {
-        let base = t.name.clone();
-        t.name = app.tab_display_name(&t.id, &base);
-    }
-    if tabs.is_empty() {
-        tabs.push(chrome::Tab { id: "__fallback__".into(), name: "Untitled".into(), active: true });
-    } else if !tabs.iter().any(|t| t.active) {
-        tabs[0].active = true;
-    }
-    state.tabs = tabs;
-}
-
-/// One frame of the window at `w`×`h`: chrome, chart, modal layer, toasts (the
-/// tiny-skia branch of the shell's scene builder, without the startup spinner).
 fn render(h: &mut HeadlessChartApp, state: &mut chrome::ChromeState, w: u32, hgt: u32, now: u64) -> Vec<u8> {
-    sync_chrome(state, &h.app);
-    let app = h.inner_mut();
     let mut skia = TinySkiaChartRenderContext::new(w, hgt, 1.0, None, None);
-    let ctx: &mut dyn MlcRenderContext = &mut skia;
-    ctx.set_fill_color("#131722");
-    ctx.fill_rect(0.0, 0.0, w as f64, hgt as f64);
-    // The chart first: its glass effects blur what is above its top edge, so the
-    // chrome strip goes over it (the GPU shell keeps the chrome in its own layer).
-    let chrome_only = std::env::var_os("MLC_REF_CHROME_ONLY").is_some();
-    if !chrome_only {
-        ctx.save();
-        ctx.translate(0.0, chrome::CHROME_HEIGHT);
-        app.render(ctx, now, false);
-        ctx.restore();
-    }
-    ctx.set_fill_color(&state.colors.background);
-    ctx.fill_rect(0.0, 0.0, w as f64, chrome::CHROME_HEIGHT);
-    chrome::update_tab_widths(ctx, state, w as f64, &app.input_coordinator);
-    let skeleton = app.panel_app.user_settings_state.profile_manager_mandatory;
-    chrome::render(ctx, state, w as f64, skeleton, &app.input_coordinator);
-    if let Some(backdrop) = app.panel_app.dim_backdrop_color() {
-        chrome::render_backdrop_dim(ctx, w as f64, state.flavor, &backdrop);
-    }
-    if chrome_only {
-        return flatten(skia.inner().pixels(), [0x13, 0x17, 0x22]);
-    }
-    ctx.save();
-    ctx.translate(0.0, chrome::CHROME_HEIGHT);
-    app.render_modal_layer(ctx, now);
-    ctx.restore();
-    ctx.save();
-    ctx.translate(0.0, chrome::CHROME_HEIGHT);
-    app.render_toasts(ctx, now);
-    ctx.restore();
+    let layers = if std::env::var_os("MLC_REF_CHROME_ONLY").is_some() { Layers::ChromeOnly } else { Layers::All };
+    paint_window(h.inner_mut(), state, &mut skia, w as f64, hgt as f64, now, layers);
     flatten(skia.inner().pixels(), [0x13, 0x17, 0x22])
 }
 
-/// Premultiplied RGBA → opaque RGBA over `bg`, as the window's own background shows
-/// through the chrome's translucent strip.
+/// The same app, moved into the uzor-framework host (`mlc-shell-fw`) and painted by
+/// the framework's headless host onto a plain uzor tiny-skia context: the port's shot
+/// of the same state.
+fn render_hosted(app: mlc_app::ChartApp, w: u32, hgt: u32) -> Vec<u8> {
+    use uzor::render::{Painter, ShapeHelpers};
+    let (mut host, _) = HeadlessHost::new(HostedApp::new(app), HostedApp::runtime_config(w, hgt));
+    host.advance(0.017);
+    host.advance(0.017);
+    let win = host.snapshot().windows[0].id;
+    let mut ctx = TinySkiaCpuRenderContext::new(w, hgt, 1.0);
+    ctx.set_fill_color("#131722");
+    ctx.fill_rect(0.0, 0.0, w as f64, hgt as f64);
+    host.paint_window(win, 1.0, &mut ctx).expect("window");
+    flatten(ctx.pixmap().data(), [0x13, 0x17, 0x22])
+}
+
 fn flatten(px: &[u8], bg: [u8; 3]) -> Vec<u8> {
     let mut out = Vec::with_capacity(px.len());
     for p in px.chunks_exact(4) {
@@ -136,7 +85,14 @@ fn open_scene(app: &mut mlc_app::ChartApp, scene: &str) {
         "chart-settings" => app.open_settings(),
         "user-settings" => app.open_user_settings(),
         "chart-browser" => app.open_chart_browser(),
-        "preset-rename" => app.open_preset_rename(),
+        // The rename has nothing to rename on a fresh profile (only the default
+        // preset): fall back to "Save as", the same modal in its other mode.
+        "preset-rename" => {
+            app.open_preset_rename();
+            if app.panel_app.active_modal != mlc_core::modal::ChartOpenModal::PresetNameInput {
+                app.open_preset_save_as();
+            }
+        }
         _ => {}
     }
 }
@@ -179,6 +135,12 @@ fn main() {
             let path = out.join(format!("ref-{scene}-{w}x{hgt}.png"));
             save_png(&path, w, hgt, &px).expect("png");
             println!("{} bars_loaded={loaded}", path.display());
+            if std::env::var_os("MLC_REF_FW").is_some() {
+                let px = render_hosted(h.app, w, hgt);
+                let path = out.join(format!("fw-{scene}-{w}x{hgt}.png"));
+                save_png(&path, w, hgt, &px).expect("png");
+                println!("{}", path.display());
+            }
         }
     }
 }

@@ -18,5 +18,10 @@ mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia
 png = "0.17"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
+mlc-shell-fw = { path = "../mlc-shell-fw" }
+uzor = "=1.5.36"
+uzor-framework = { version = "=1.5.36", default-features = false }
+uzor-render-tiny-skia = "=1.5.36"
+
 [lints]
 workspace = true

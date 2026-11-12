@@ -1,0 +1,36 @@
+[package]
+name = "mlc-shell-fw"
+description = "The existing mylittlechart ChartApp hosted in a uzor-framework App: the framework owns the window, the event loop and the render backend; input goes to mlc's platform-neutral dispatcher and ChartApp paints itself as before. Step 1 of the in-place migration."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "mlc_shell_fw"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mylittlechart-fw"
+path = "src/main.rs"
+required-features = ["native"]
+
+[dependencies]
+mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
+uzor = "=1.5.36"
+uzor-framework = { version = "=1.5.36", default-features = false }
+web-time = "1"
+
+[dev-dependencies]
+uzor-render-tiny-skia = "=1.5.36"
+mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
+png = "0.17"
+
+[features]
+default = []
+native = ["uzor-framework/native"]
+
+[lints]
+workspace = true

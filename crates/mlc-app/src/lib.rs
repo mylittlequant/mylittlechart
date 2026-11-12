@@ -6211,6 +6211,12 @@ impl ChartApp {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenPresetRename);
     }
 
+    /// Open the preset-name input modal in "Save as" mode (the same modal the rename
+    /// uses; works on the default, unnamed preset too).
+    pub fn open_preset_save_as(&mut self) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenPresetSaveAs);
+    }
+
     /// Rename a preset by its id (no modal, no activation needed).
     ///
     /// Fires `RenamePreset`, which targets the preset id directly — the
