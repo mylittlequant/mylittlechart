@@ -4,6 +4,25 @@ Status: plan and phase 1 (branch `mobile/fw1`). Owner decision: the whole deskto
 app moves onto `uzor_framework::App`, not only the phone build. uzor gets patched
 and grows new mechanics where mlc needs them.
 
+
+> The maintained copy of this plan, the audit, the uzor gaps and the progress notes is the
+> private repo `HATCHERY-lab/mlc-docs`. The port itself lives in `HATCHERY-lab/mylittlechart-uzor`.
+
+## Pixel-perfect rule (owner, 2026-11-12)
+
+The port matches the current desktop exactly. Every screen is compared side by side with
+the old app rendered at the same size:
+
+- `mlc-ref-shots <out> [WxH ...] [scene ...]` renders the real `ChartApp` and the window
+  chrome on the tiny-skia context (scenes: main, chart-settings, user-settings,
+  chart-browser, preset-rename). Run it with `HOME` at a scratch directory, and with
+  `--config 'profile.dev.package.tiny-skia.debug-assertions=false' --config
+  'profile.dev.package.uzor-render-tiny-skia.overflow-checks=false'` in debug builds.
+- `tools/compare_shots.py <ref.png> <port.png> <out.png> --region name:x,y,w,h` writes
+  reference | port | diff and prints the share of differing pixels per region.
+
+uzor gets the mechanics first; a screen is ported only when the parts it needs exist.
+
 ## Why
 
 Today the desktop app is its own UI toolkit on top of uzor's low-level pieces:
