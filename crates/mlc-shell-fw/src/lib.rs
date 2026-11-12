@@ -152,6 +152,21 @@ pub struct HostedApp {
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
     chart_settings_shown: bool,
+    /// The pointer stream the app needs beyond presses (see [`Self::poll_pointer`]).
+    pointer: PointerPoll,
+}
+
+/// What the framework (1.5.36) does not report to an app as unhandled input: pointer
+/// moves, releases and leaves (only presses come as `UnhandledInput::Pointer`). The
+/// host reads them off each frame's input view instead. Goes when the framework's
+/// opt-in `WindowCmd::UnhandledPointer { all: true }` (uzor `feat/app-window-cmds`)
+/// is released.
+#[derive(Default)]
+struct PointerPoll {
+    /// Last position seen, window coordinates.
+    last: Option<(f64, f64)>,
+    /// The button of a press mlc took, until its release is seen.
+    held: Option<mlc_app_input_shell::MouseBtn>,
 }
 
 impl HostedApp {
@@ -174,6 +189,7 @@ impl HostedApp {
             sheet: None,
             last_hits: Vec::new(),
             chart_settings_shown: false,
+            pointer: PointerPoll::default(),
         }
     }
 
@@ -310,6 +326,26 @@ impl HostedApp {
         self.started.elapsed().as_millis() as u64
     }
 
+    /// Moves, releases and leaves from this frame's input view, as `ShellEvent`s
+    /// (window coordinates: the panel fills the window).
+    fn poll_pointer(&mut self, view: &uzor_framework::VisualView<HostSpec>) {
+        use mlc_app_input_shell::ShellEvent;
+        let now = view.raw_pointer();
+        if now != self.pointer.last {
+            match now {
+                Some((x, y)) => self.dispatch(ShellEvent::CursorMoved { x, y }),
+                None => self.dispatch(ShellEvent::CursorLeft),
+            }
+            self.pointer.last = now;
+        }
+        if !view.button_down() {
+            if let Some(button) = self.pointer.held.take() {
+                let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
+                self.dispatch(ShellEvent::MouseInput { button, pressed: false, x, y });
+            }
+        }
+    }
+
     /// A wheel step while a DOM piece is up: over the chart settings body it
     /// scrolls it; anywhere else it is swallowed (the modal is on top).
     fn dom_wheel(&mut self, u: &uzor_framework::UnhandledInput, dy: f64) {
@@ -356,6 +392,7 @@ impl App for HostedApp {
             self.platform.size.set(size);
             self.dispatch(mlc_app_input_shell::ShellEvent::Resized { w: size.0, h: size.1 });
         }
+        self.poll_pointer(cx.view);
         let now = self.now_ms();
         frame::pump(&mut self.chart, now, r.width, (r.height - chrome::CHROME_HEIGHT).max(1.0));
         let wall = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
@@ -389,6 +426,14 @@ impl App for HostedApp {
             Intent::Unhandled(u) => {
                 let mods = self.input.modifiers;
                 for ev in input::shell_events(&u, mods) {
+                    match ev {
+                        mlc_app_input_shell::ShellEvent::MouseInput { button, pressed: true, x, y } => {
+                            self.pointer.held = Some(button);
+                            self.pointer.last = Some((x, y));
+                        }
+                        mlc_app_input_shell::ShellEvent::MouseInput { pressed: false, .. } => self.pointer.held = None,
+                        _ => {}
+                    }
                     if let mlc_app_input_shell::ShellEvent::Scroll { dy, .. } = ev {
                         if self.dom_modal_open() {
                             self.dom_wheel(&u, dy);

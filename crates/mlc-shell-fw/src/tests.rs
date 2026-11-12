@@ -222,4 +222,28 @@ mod hosted {
         }
         assert_eq!(cs_state(&h).scroll.target, off);
     }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn moves_and_releases_reach_the_app_not_only_presses() {
+        let (mut h, win) = host();
+        let at = |x: f64, y: f64| uzor_framework::Point { x, y };
+        let b = uzor::input::MouseButton::Left;
+        h.input(win, InputEvent::Pointer(PointerInput::Moved { pos: at(600.0, 400.0), mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert_eq!(h.runtime().app().input.last_mouse_pos, (600.0, 400.0), "a move over the chart reaches mlc");
+        h.input(win, InputEvent::Pointer(PointerInput::Down { pos: at(600.0, 400.0), button: b, mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert!(h.runtime().app().input.mouse_pressed, "the press reached mlc");
+        h.input(win, InputEvent::Pointer(PointerInput::Moved { pos: at(560.0, 410.0), mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert_eq!(h.runtime().app().input.last_mouse_pos, (560.0, 410.0), "the drag moves reach mlc");
+        h.input(win, InputEvent::Pointer(PointerInput::Up { pos: at(560.0, 410.0), button: b, mods: Default::default() }));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert!(!h.runtime().app().input.mouse_pressed, "the release reached mlc");
+    }
 }
