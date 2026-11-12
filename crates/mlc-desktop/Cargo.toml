@@ -11,13 +11,13 @@ name = "mlc_desktop"
 
 [dependencies]
 mlc-chart-view = { path = "../mlc-chart-view" }
-uzor = { version = "=1.5.39", default-features = false, features = ["flow-flex", "flow-grid"] }
-uzor-framework = { version = "=1.5.39", default-features = false }
+uzor = { version = "=1.5.41", default-features = false, features = ["flow-flex", "flow-grid"] }
+uzor-framework = { version = "=1.5.41", default-features = false }
 serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
-uzor = { version = "=1.5.39", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
-uzor-render-tiny-skia = "=1.5.39"
+uzor = { version = "=1.5.41", default-features = false, features = ["flow-flex", "flow-grid", "testing"] }
+uzor-render-tiny-skia = "=1.5.41"
 
 [features]
 default = []

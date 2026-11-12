@@ -10,8 +10,8 @@ description = "VelloCpuChartRenderContext, a chart-aware wrapper over the Vello 
 name = "mlc_app_render_context_vello_cpu"
 
 [dependencies]
-uzor = "=1.5.39"
-uzor-render-vello-cpu = "=1.5.39"
+uzor = "=1.5.41"
+uzor-render-vello-cpu = "=1.5.41"
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]

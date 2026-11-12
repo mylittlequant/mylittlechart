@@ -19,9 +19,9 @@ png = "0.17"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
 mlc-shell-fw = { path = "../mlc-shell-fw" }
-uzor = "=1.5.39"
-uzor-framework = { version = "=1.5.39", default-features = false }
-uzor-render-tiny-skia = "=1.5.39"
+uzor = "=1.5.41"
+uzor-framework = { version = "=1.5.41", default-features = false }
+uzor-render-tiny-skia = "=1.5.41"
 
 [lints]
 workspace = true

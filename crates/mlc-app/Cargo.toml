@@ -15,7 +15,7 @@ mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittl
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
-uzor = "=1.5.39"
+uzor = "=1.5.41"
 mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content", default-features = false }
 mlc-app-panels = { version = "0.5.656", path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
 mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
