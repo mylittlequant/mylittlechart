@@ -857,7 +857,7 @@ impl AppModalsState {
             toolbar_theme,
         );
         let layer = LayerId::new("app_ind_overlay");
-        coord.push_layer(layer.clone(), 2, false);
+        coord.push_layer_ex(layer.clone(), 2, false, false);
         if self.indicator_overlay.is_open {
             if let Some(r) = result.close_button_rect {
                 coord.register_on_layer("ind_overlay:close", r, Sense::CLICK, &layer);
@@ -865,7 +865,6 @@ impl AppModalsState {
         } else {
             coord.register_on_layer("ind_overlay:open", result.button_rect, Sense::CLICK, &layer);
         }
-        coord.pop_layer(&layer);
     }
 
     /// Route a click on the indicator-overlay toggle. Returns `true` if

@@ -1,6 +1,6 @@
 //! SidebarPanel enum — all panel types that can live in the sidebar workspace.
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
 
 use serde::{Deserialize, Serialize};

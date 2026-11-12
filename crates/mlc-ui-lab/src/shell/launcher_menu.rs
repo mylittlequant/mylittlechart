@@ -163,7 +163,7 @@ pub fn draw(
     tree_objects: &[Box<dyn Primitive>],
 ) {
     let layer = LayerId::new(REGION_ID);
-    coord.push_layer(layer.clone(), MENU_Z, false);
+    coord.push_layer_ex(layer.clone(), MENU_Z, false, false);
 
     coord.register_on_layer("bg", Rect::new(0.0, 0.0, screen_w, screen_h), Sense::CLICK, &layer);
 
@@ -222,7 +222,6 @@ pub fn draw(
         row_y += ROW_H;
     }
 
-    coord.pop_layer(&layer);
 }
 
 fn draw_section_header(ctx: &mut dyn RenderContext, x: f64, y: f64, label: &str, rt: &RuntimeTheme) -> f64 {

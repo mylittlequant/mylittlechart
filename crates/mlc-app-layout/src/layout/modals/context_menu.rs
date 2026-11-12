@@ -99,7 +99,6 @@ pub fn render_context_menu(
     }
 
     // Pop layer before returning
-    input_coordinator.pop_layer(&layer_id);
 
     ContextMenuResult {
         menu_rect: WidgetRect::new(menu_x, menu_y, menu_width, menu_h),

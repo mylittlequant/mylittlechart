@@ -8,7 +8,7 @@
 
 // On wasm32, gate4agent is absent; bring the stub into scope so bare
 // `gate4agent::X` path expressions in this file resolve correctly.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::gate4agent_stub as gate4agent;
 
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon};

@@ -12,8 +12,12 @@
 //!   and the resulting `ChartOutputAction` values are applied via `process_output_actions`.
 //! - There are no dependencies on the terminal crate; all types come from
 //!   `zengeld-chart` and `uzor-core`.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
+
+// uzor 1.5.34 moved the state-mutating coordinator calls (begin/end_frame,
+// process_*) onto this trait; ChartApp still drives its own coordinator.
+use uzor::input::driver::CoordinatorDriver;
 
 
 mod sliders;
@@ -228,7 +232,7 @@ impl ChartApp {
                 if desc.mode == gate4agent::InstanceMode::Pty {
                     // Only read on native — no PTY runtime to write to on wasm.
                     let _id = desc.instance_id;
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                     if let Some(rt) = self.core.native_rt() {
                         let _ = rt.block_on(self.agent.write_pty_instance(_id, text));
                     }

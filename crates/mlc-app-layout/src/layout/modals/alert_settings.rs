@@ -644,7 +644,6 @@ fn render_settings_dropdowns(
         }
     }
 
-    input_coordinator.pop_layer(layer_id);
 }
 
 /// A row of the settings tab that something else has to find on screen.

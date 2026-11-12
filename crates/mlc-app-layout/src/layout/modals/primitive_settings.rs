@@ -1344,7 +1344,6 @@ pub fn render_primitive_color_picker_popup(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
 
     result
 }

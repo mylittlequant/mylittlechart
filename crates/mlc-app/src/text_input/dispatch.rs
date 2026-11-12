@@ -19,9 +19,9 @@ use uzor::types::WidgetId;
 // On native, gate4agent is an external crate.
 // On wasm32 it is absent from the dep graph — use the in-tree stub re-exported
 // by lib.rs as `crate::gate4agent`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
 use gate4agent;
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
 
 impl ChartApp {
@@ -962,7 +962,7 @@ impl ChartApp {
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
                     if let Some(desc) = desc {
                         let _id = desc.instance_id;
-                        #[cfg(not(target_arch = "wasm32"))]
+                        #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                         if let Some(rt) = self.core.native_rt() {
                             match rt.block_on(self.agent.send_chat_instance(_id, &text)) {
                                 Ok(()) => {
@@ -1011,7 +1011,7 @@ impl ChartApp {
                     if desc.mode == gate4agent::InstanceMode::Pty {
                         let _text = String::from_utf8_lossy(&bytes).to_string();
                         let _id = desc.instance_id;
-                        #[cfg(not(target_arch = "wasm32"))]
+                        #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                         if let Some(rt) = self.core.native_rt() {
                             let _ = rt.block_on(self.agent.write_pty_instance(_id, &_text));
                         }

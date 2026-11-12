@@ -94,14 +94,14 @@ impl ZLayer {
     /// Push this layer onto InputCoordinator with its default name.
     pub fn push(self, coord: &mut InputCoordinator) -> LayerId {
         let id = LayerId::new(self.layer_id());
-        coord.push_layer(id.clone(), self.z_order(), self.is_modal());
+        coord.push_layer_ex(id.clone(), self.z_order(), self.is_modal(), false);
         id
     }
 
     /// Push with a custom layer name (keeps z-order and modal flag from the enum).
     pub fn push_named(self, coord: &mut InputCoordinator, name: &str) -> LayerId {
         let id = LayerId::new(name);
-        coord.push_layer(id.clone(), self.z_order(), self.is_modal());
+        coord.push_layer_ex(id.clone(), self.z_order(), self.is_modal(), false);
         id
     }
 

@@ -230,6 +230,5 @@ pub fn render_panel_settings_popup(
         }
     }
 
-    input_coordinator.pop_layer(&layer_id);
     PanelSettingsPopupResult { rect }
 }

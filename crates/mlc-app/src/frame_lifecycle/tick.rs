@@ -2,7 +2,7 @@
 //! channel (called once per frame by the host — see [`ChartApp::tick`] /
 //! [`ChartApp::react_to_events`]), then each window runs its own per-app
 //! reactions on the emitted `BubbleEvent`s.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
 
 

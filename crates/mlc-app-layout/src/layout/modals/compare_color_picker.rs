@@ -168,7 +168,6 @@ pub fn render_compare_color_picker_popup(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
 
     result
 }

@@ -1,5 +1,5 @@
 //! Profile / watchlist / template persistence: read/write user state to disk.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
 
 

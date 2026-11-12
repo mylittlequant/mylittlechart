@@ -177,7 +177,6 @@ pub fn render_toasts(
         cursor = if grows_up { y - GAP } else { y + m.h + GAP };
     }
 
-    coord.pop_layer(&layer_id);
 }
 
 #[allow(clippy::too_many_arguments)]

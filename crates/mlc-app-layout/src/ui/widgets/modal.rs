@@ -732,7 +732,6 @@ pub fn end_modal_shell(
     for (id, rect, sense) in priority_regions {
         coord.register_on_layer(*id, *rect, *sense, layer_id);
     }
-    coord.pop_layer(layer_id);
 }
 
 /// Which edge or corner a resize drag has hold of. The four that own the

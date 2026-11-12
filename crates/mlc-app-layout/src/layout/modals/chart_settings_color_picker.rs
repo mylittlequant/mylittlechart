@@ -166,7 +166,6 @@ pub fn render_chart_settings_color_picker_popup(
         );
     }
 
-    input_coordinator.pop_layer(&layer_id);
 
     result
 }

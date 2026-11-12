@@ -5,9 +5,9 @@
 //! to re-create an `AgentInstance` after a profile restore.
 
 use std::path::PathBuf;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
 use gate4agent::{AgentCli, InstanceId, InstanceMode};
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::gate4agent_stub::{AgentCli, InstanceId, InstanceMode};
 
 // =============================================================================

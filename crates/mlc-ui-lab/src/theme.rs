@@ -114,7 +114,7 @@ const LAB_BAR_Z: u32 = 100;
 
 fn lab_bar_layer(coord: &mut uzor::input::InputCoordinator) -> uzor::input::LayerId {
     let id = uzor::input::LayerId::new("lab_bar");
-    coord.push_layer(id.clone(), LAB_BAR_Z, false);
+    coord.push_layer_ex(id.clone(), LAB_BAR_Z, false, false);
     id
 }
 

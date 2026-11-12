@@ -21,8 +21,12 @@ pub mod agent;
 // On wasm32, gate4agent is absent from the dep graph. Re-alias our stub
 // module as `gate4agent` so that all `gate4agent::Foo` path references in
 // submodules resolve to the stub without touching every call site.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 pub(crate) use agent as gate4agent;
+
+// uzor 1.5.34 moved the state-mutating coordinator calls (begin/end_frame,
+// process_*) onto this trait; ChartApp still drives its own coordinator.
+use uzor::input::driver::CoordinatorDriver;
 
 pub mod chart_container;
 pub mod chart_container_leaf;
@@ -7823,7 +7827,6 @@ impl ChartApp {
                                     );
                                 }
 
-                                self.input_coordinator.borrow_mut().pop_layer(&ov_layer);
                             }
                         }
                     }
@@ -8582,7 +8585,6 @@ impl ChartApp {
                             );
                         }
 
-                        self.input_coordinator.borrow_mut().pop_layer(&ov_layer);
                     }
                 }
             }
@@ -8893,7 +8895,6 @@ impl ChartApp {
                 }
             }
 
-            self.input_coordinator.borrow_mut().pop_layer(&tb_layer);
 
             // Register dropdown hit zones (higher z-order)
             if let Some(ref dd) = toolbar_result.dropdown_result {
@@ -8938,7 +8939,6 @@ impl ChartApp {
                     );
                 }
 
-                self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
 
                 // Hover-based submenu: if draw_dropdown detected the pointer is over a
                 // submenu-trigger item, open that submenu immediately (no click required).
@@ -9258,7 +9258,6 @@ impl ChartApp {
                                     );
                                 }
                             }
-                            self.input_coordinator.borrow_mut().pop_layer(&ov_layer);
                         }
                     }
                     None => {
@@ -9389,7 +9388,6 @@ impl ChartApp {
                                 );
                             }
                         }
-                        self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
 
                         if let Some(ref dd) = th_result.dropdown_result {
                             let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
@@ -9407,7 +9405,6 @@ impl ChartApp {
                                     &dd_layer,
                                 );
                             }
-                            self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
                         }
                     }
 
@@ -9521,7 +9518,6 @@ impl ChartApp {
                                     );
                                 }
                             }
-                            self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
 
                             if let Some(ref dd) = th_result.dropdown_result {
                                 let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
@@ -9539,7 +9535,6 @@ impl ChartApp {
                                         &dd_layer,
                                     );
                                 }
-                                self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
                             }
                         }
                         out_trading_header_result = Some(th_result);
@@ -9591,7 +9586,6 @@ impl ChartApp {
                                 &tch_layer,
                             );
                         }
-                        self.input_coordinator.borrow_mut().pop_layer(&tch_layer);
                         if let Some(ref dd) = th_result.dropdown_result {
                             let dd_layer = ZLayer::Dropdown.push_named(&mut self.input_coordinator.borrow_mut(), "tch_dropdown");
                             self.input_coordinator.borrow_mut().register_on_layer(
@@ -9608,7 +9602,6 @@ impl ChartApp {
                                     &dd_layer,
                                 );
                             }
-                            self.input_coordinator.borrow_mut().pop_layer(&dd_layer);
                         }
                     }
                     out_trading_header_result = Some(th_result);
@@ -9708,7 +9701,7 @@ impl ChartApp {
                         // Only read on native — no PTY runtime to resize on wasm.
                         let _cols = ((rect.width / 7.0) as u16).max(1);
                         let _rows = ((rect.height / 19.0) as u16).max(1);
-                        #[cfg(not(target_arch = "wasm32"))]
+                        #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                         if let Some(rt) = self.core.native_rt() {
                             rt.block_on(self.agent.resize_instance(desc.instance_id, _cols, _rows));
                         }
@@ -10260,7 +10253,7 @@ impl ChartApp {
                         // Only read on native — no PTY runtime to resize on wasm.
                         let _cols = ((rect.width / 7.0) as u16).max(1);
                         let _rows = ((rect.height / 19.0) as u16).max(1);
-                        #[cfg(not(target_arch = "wasm32"))]
+                        #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                         if let Some(rt) = self.core.native_rt() {
                             rt.block_on(self.agent.resize_instance(desc.instance_id, _cols, _rows));
                         }

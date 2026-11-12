@@ -1,7 +1,7 @@
 //! Mega-router for click events: dispatches by widget_id to per-area
 //! handlers (sidebar, watchlist, overlay, profile-manager, tags-tabs,
 //! slot panels, agent leaves, etc.).
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::agent as gate4agent;
 
 
@@ -1253,7 +1253,7 @@ impl ChartApp {
                 if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                     // Only read on native — no PTY runtime to stop on wasm.
                     let _id = desc.instance_id;
-                    #[cfg(not(target_arch = "wasm32"))]
+                    #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                     if let Some(rt) = self.core.native_rt() {
                         let _ = rt.block_on(self.agent.stop_instance(_id));
                     }
@@ -1351,7 +1351,7 @@ impl ChartApp {
                     if let Some(desc) = self.sidebar_state.agent_leaves.remove(&leaf_id) {
                         // Only read on native — no PTY runtime to stop on wasm.
                         let _id = desc.instance_id;
-                        #[cfg(not(target_arch = "wasm32"))]
+                        #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                         if let Some(rt) = self.core.native_rt() {
                             let _ = rt.block_on(self.agent.stop_instance(_id));
                         }
@@ -1564,7 +1564,7 @@ impl ChartApp {
                                     working_dir: desc.workdir.clone(),
                                     ..SessionConfig::default()
                                 };
-                                #[cfg(not(target_arch = "wasm32"))]
+                                #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                                 if let Some(rt) = self.core.native_rt() {
                                     match rt.block_on(self.agent.start_pty_instance(id, _config)) {
                                         Ok(()) => {
@@ -1624,7 +1624,7 @@ impl ChartApp {
                         if !text.is_empty() {
                             // Only read on native — no PTY runtime to send to on wasm.
                             let _id = desc.instance_id;
-                            #[cfg(not(target_arch = "wasm32"))]
+                            #[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
                             if let Some(rt) = self.core.native_rt() {
                                 match rt.block_on(self.agent.send_chat_instance(_id, &text)) {
                                     Ok(()) => {

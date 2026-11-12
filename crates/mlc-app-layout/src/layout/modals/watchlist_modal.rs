@@ -1208,6 +1208,5 @@ pub fn render_wl_group_name_input(
         &layer_id,
     );
 
-    input_coordinator.pop_layer(&layer_id);
     result
 }

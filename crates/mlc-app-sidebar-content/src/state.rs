@@ -7,7 +7,7 @@ use std::collections::{HashSet, HashMap, VecDeque};
 use web_time::Instant;
 // On wasm32, gate4agent is absent; bring the stub into scope so bare
 // `gate4agent::X` path expressions in this file resolve correctly.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 use crate::gate4agent_stub as gate4agent;
 use mlc_core::state::scroll_state::ScrollState;
 use crate::types::{ObjectTreeItem, AlertItem, IndicatorsTabData, WatchlistItem, ConnectorStatusItem};
@@ -210,14 +210,14 @@ impl RightSidebarPanel {
 // =============================================================================
 
 /// Which AI CLI agent to use — re-exported from `gate4agent`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
 pub use gate4agent::AgentCli;
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 pub use crate::gate4agent_stub::AgentCli;
 /// Spawn mode (PTY terminal or Chat) — re-exported from `gate4agent`.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(feature = "agents", not(target_arch = "wasm32")))]
 pub use gate4agent::InstanceMode;
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
 pub use crate::gate4agent_stub::InstanceMode;
 
 // =============================================================================

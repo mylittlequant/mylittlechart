@@ -597,11 +597,10 @@ pub fn register_dropdown_option_patch(coord: &mut InputCoordinator, result: &Pri
         return;
     }
     let layer = LayerId::new("prim_settings_dropdown_patch");
-    coord.push_layer(layer.clone(), 4, false);
+    coord.push_layer_ex(layer.clone(), 4, false, false);
     for (id, rect) in options {
         coord.register_on_layer(format!("prim_settings:item:{id}"), *rect, Sense::CLICK | Sense::HOVER, &layer);
     }
-    coord.pop_layer(&layer);
 }
 
 // =============================================================================
