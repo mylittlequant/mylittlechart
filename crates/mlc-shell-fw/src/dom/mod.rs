@@ -6,3 +6,4 @@ pub mod chrome;
 pub mod toolbar;
 pub mod preset_name;
 pub mod sidebar;
+pub mod sidebar_panels;

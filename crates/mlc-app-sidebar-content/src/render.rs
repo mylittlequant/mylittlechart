@@ -2306,17 +2306,17 @@ pub fn format_price_compact(v: f64) -> String {
 /// Combined height of the screener's pinned filter-chip row + sortable
 /// column-header row (rendered OUTSIDE the scroll clip, same "fixed at the
 /// top" treatment as the watchlist column header).
-const SCREENER_HEADER_H: f64 = 50.0; // 28 filter row + 22 column header
-const SCREENER_FILTER_ROW_H: f64 = 28.0;
-const SCREENER_COL_HEADER_H: f64 = 22.0;
+pub const SCREENER_HEADER_H: f64 = 50.0; // 28 filter row + 22 column header
+pub const SCREENER_FILTER_ROW_H: f64 = 28.0;
+pub const SCREENER_COL_HEADER_H: f64 = 22.0;
 
-const SCREENER_COL_LABELS: [&str; 8] =
+pub const SCREENER_COL_LABELS: [&str; 8] =
     ["Symbol", "Last", "24h%", "Vol", "RSI", "ATR%", "Dist Hi", "Dist Lo"];
 
 /// Composable-AND-filtered, sorted display order over `items` — indices
 /// into `items` (not a cloned Vec) so row click handling can still address
 /// the original `ScreenerItem`.
-fn screener_visible_indices(
+pub fn screener_visible_indices(
     items: &[ScreenerItem],
     filters: &ScreenerFilters,
     sort_key: ScreenerSortKey,
@@ -2344,7 +2344,7 @@ fn screener_cmp(a: &ScreenerItem, b: &ScreenerItem, key: ScreenerSortKey) -> std
     }
 }
 
-fn screener_chip_label_change_pct(v: Option<(bool, f64)>) -> String {
+pub fn screener_chip_label_change_pct(v: Option<(bool, f64)>) -> String {
     match v {
         None => "24h%".to_string(),
         Some((true, t)) => format!("24h% \u{2265} {:.0}%", t),
@@ -2352,28 +2352,28 @@ fn screener_chip_label_change_pct(v: Option<(bool, f64)>) -> String {
     }
 }
 
-fn screener_chip_label_rsi_above(v: Option<f64>) -> String {
+pub fn screener_chip_label_rsi_above(v: Option<f64>) -> String {
     match v {
         None => "RSI \u{2265}".to_string(),
         Some(t) => format!("RSI \u{2265} {:.0}", t),
     }
 }
 
-fn screener_chip_label_rsi_below(v: Option<f64>) -> String {
+pub fn screener_chip_label_rsi_below(v: Option<f64>) -> String {
     match v {
         None => "RSI \u{2264}".to_string(),
         Some(t) => format!("RSI \u{2264} {:.0}", t),
     }
 }
 
-fn screener_chip_label_vol(v: Option<f64>) -> String {
+pub fn screener_chip_label_vol(v: Option<f64>) -> String {
     match v {
         None => "Vol \u{2265}".to_string(),
         Some(t) => format!("Vol \u{2265} {}", format_volume(t)),
     }
 }
 
-fn screener_chip_label_atr(v: Option<f64>) -> String {
+pub fn screener_chip_label_atr(v: Option<f64>) -> String {
     match v {
         None => "ATR% \u{2265}".to_string(),
         Some(t) => format!("ATR% \u{2265} {}", t),
@@ -2848,7 +2848,7 @@ fn render_alert_items(
 /// Dependency-free day-math (Howard Hinnant's `civil_from_days`) — same
 /// algorithm `mlc-app-layout`'s `missing_utc_days_label` uses, duplicated
 /// here rather than exposed cross-crate for one row label.
-fn format_event_time(at_ms: i64, now_ms: i64) -> String {
+pub fn format_event_time(at_ms: i64, now_ms: i64) -> String {
     let day_ms: i64 = 86_400_000;
     let event_day = at_ms.div_euclid(day_ms);
     let now_day = now_ms.div_euclid(day_ms);
@@ -4673,7 +4673,7 @@ fn draw_sparkline(
 /// Format a price, trimming trailing zeros.
 ///
 /// Examples: `180.10 → "180.1"`, `21323.00 → "21323"`, `0.001230 → "0.00123"`.
-fn format_price_smart(price: f64) -> String {
+pub fn format_price_smart(price: f64) -> String {
     let precision = if price >= 10_000.0 {
         2
     } else if price >= 1_000.0 {

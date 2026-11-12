@@ -1,4 +1,5 @@
-//! The right sidebar's watchlist panel as uzor DOM.
+//! The right sidebar as uzor DOM: the frame, the header and the watchlist here, the
+//! other panels' bodies in [`super::sidebar_panels`].
 //!
 //! Was: `mlc-app-sidebar-content` `render_right_sidebar` painting the frame, the
 //! header, the pinned column header, the rows and the ticker footer by hand. Now: a
@@ -11,16 +12,20 @@
 //! the toolbars): row selection and drag, the double-click, the column resize, the
 //! metrics drag, the buttons.
 //!
-//! Covered: the watchlist outside the states `ChartApp::sidebar_on_dom` refuses (the
-//! column menu, the colour picker, a row drag, the market counters, a failing row).
-//! The other panels are still painted by the app.
+//! Covered: watchlist, alerts, events, object tree, signals, monitoring (its
+//! Performance tab) and screener, outside the states `ChartApp::sidebar_on_dom`
+//! refuses (the watchlist's column menu, colour picker, row drag, market counters
+//! and failing rows; a signal group that scrolls; the Connectors tab). Agents and
+//! the slot panels are still painted by the app.
 
 use mlc_app_layout::ui::toolbar_theme::ToolbarTheme;
 use mlc_app_sidebar_content::render::{
     counters_block_h, format_price, format_price_compact, format_volume, watchlist_col_layout, watchlist_metrics_block_h, WATCHLIST_TYPE_COMPACT,
     WATCHLIST_TYPE_HEADER, WATCHLIST_TYPE_PAD,
 };
-use mlc_app_sidebar_content::state::SidebarState;
+use mlc_app_sidebar_content::state::{RightSidebarPanel, SidebarState};
+
+use super::sidebar_panels as panels;
 use mlc_app_sidebar_content::types::WatchlistColumnConfig;
 use mlc_core::state::icons::Icon;
 use uzor::types::Rect;
@@ -40,7 +45,7 @@ pub const OUT: f64 = 8.0;
 /// The scrollbar's paint slot.
 pub const SCROLLBAR: &str = "sb:scrollbar";
 
-const HEADER_H: f64 = 40.0;
+pub(crate) const HEADER_H: f64 = 40.0;
 const SCROLLBAR_W: f64 = 8.0;
 const COL_HEADER_H: f64 = 22.0;
 const ROW_H: f64 = 36.0;
@@ -52,7 +57,7 @@ const DEL_PAD: f64 = 6.0;
 const TEXT_BOX: f64 = 20.0;
 
 /// Everything the tree is built from.
-pub struct Watchlist<'a> {
+pub struct Sidebar<'a> {
     /// The sidebar, window coordinates.
     pub rect: Rect,
     pub theme: &'a ToolbarTheme,
@@ -62,9 +67,16 @@ pub struct Watchlist<'a> {
     pub flags: &'a [String],
     /// The DOM element under the pointer last frame.
     pub hovered: Option<&'a str>,
+    /// The app's scroll viewport of the panel body, window coordinates (its
+    /// `RightSidebarResult::viewport_rect`).
+    pub viewport: Rect,
+    /// The body's content height as the app laid it out.
+    pub app_content_h: f64,
+    /// Now, unix ms (event times).
+    pub now_ms: i64,
 }
 
-impl Watchlist<'_> {
+impl Sidebar<'_> {
     /// Height of the pinned metrics footer (0 when hidden).
     pub fn metrics_h(&self) -> f64 {
         watchlist_metrics_block_h(self.columns, self.state.ticker_section.as_ref(), &self.state.counter_rows, self.rect.height)
@@ -84,7 +96,7 @@ impl Watchlist<'_> {
         }
     }
 
-    fn hov(&self, id: &str) -> bool {
+    pub(crate) fn hov(&self, id: &str) -> bool {
         self.hovered == Some(id)
     }
 }
@@ -114,6 +126,9 @@ div.s-del > div.s-tint {{ position: absolute; left: 0px; top: 0px; width: {db}px
 div.s-del.hov {{ color: #ff5252 }}
 div.s-del > div.s-icon {{ left: {BTN_PAD}px; top: {BTN_PAD}px; width: {DEL}px; height: {DEL}px }}
 div.s-foot {{ position: absolute; left: 0px; background: {bg} }}
+div.s-at {{ position: absolute; white-space: nowrap; height: 40px }}
+div.s-content {{ position: relative }}
+div.s-clip {{ position: absolute; overflow: hidden }}
 div.s-scroll {{ position: absolute; top: {vt}px; width: {SCROLLBAR_W}px }}",
         bg = t.background,
         ink = t.item_text,
@@ -160,7 +175,7 @@ fn text(text: &str, l: f64, r: f64, cy: f64, align: Align, font: &str, color: &s
 }
 
 /// A canvas font string (`"bold 22px sans-serif"`) as CSS declarations.
-fn font_css(font: &str) -> String {
+pub(crate) fn font_css(font: &str) -> String {
     let mut out = Vec::new();
     let mut family = Vec::new();
     for part in font.split_whitespace() {
@@ -184,7 +199,7 @@ fn icon(icon: Icon, size: f64) -> El {
 }
 
 /// `text` cut to `max` px wide with a trailing "…", as the app's `truncate_to_width`.
-fn truncate(measure: &mut dyn FnMut(&str, &str) -> f64, font: &str, text: &str, max: f64) -> String {
+pub(crate) fn truncate(measure: &mut dyn FnMut(&str, &str) -> f64, font: &str, text: &str, max: f64) -> String {
     if measure(font, text) <= max {
         return text.to_string();
     }
@@ -286,35 +301,81 @@ fn chg_color<'t>(t: &'t ToolbarTheme, pct: f64) -> &'t str {
 
 /// The whole panel, in sidebar coordinates. `measure(font, text)`: the app's text
 /// width. Build it with `dom_scroll()`.
-pub fn tree(w: &Watchlist<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
+pub fn tree(w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
+    let t = w.theme;
+    let (rw, rh) = (w.rect.width, w.rect.height);
+    let mut root = El::new("div.s-root").css(format!("width: {rw}px; height: {rh}px"));
+
+    // Left border: the app's 1 px stroke on the edge, which lands on the pixel left of it.
+    root = root.child(fill(-1.0, 0.0, 1.0, rh, &t.separator));
+    root = header(root, w, measure);
+    root = match w.state.right_panel {
+        RightSidebarPanel::Watchlist => watchlist(root, w, measure),
+        _ => panels::body(root, w, measure),
+    };
+    framed(root, w)
+}
+
+/// The panel's title and icon, as the app names them.
+fn title(p: RightSidebarPanel) -> (&'static str, Icon) {
+    match p {
+        RightSidebarPanel::Watchlist => ("Watchlist", Icon::Watchlist),
+        RightSidebarPanel::Alerts => ("Alerts", Icon::Alert),
+        RightSidebarPanel::ObjectTree => ("Object Tree", Icon::Layers),
+        RightSidebarPanel::Signals => ("Signals", Icon::Signal),
+        RightSidebarPanel::Monitoring => ("Monitoring", Icon::Gauge),
+        RightSidebarPanel::Screener => ("Screener", Icon::Screener),
+        RightSidebarPanel::Events => ("Events", Icon::History),
+        _ => ("", Icon::Close),
+    }
+}
+
+/// The 40 px header: icon, title, the panel's buttons, × and the 2 px bar under it.
+fn header(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
+    let t = w.theme;
+    let rw = w.rect.width;
+    let (name, ic) = title(w.state.right_panel);
+    root = root.child(El::new("div.s-abs.s-muted").css(format!("left: 12px; top: {}px; width: 18px; height: 18px", (HEADER_H - 18.0) / 2.0)).svg(ic.svg()));
+    root = root.child(text(name, 36.0, rw, HEADER_H / 2.0, Align::L, "13px sans-serif", &t.item_text));
+    let close_x = rw - BTN - 2.0;
+    let by = (HEADER_H - BTN) / 2.0;
+    let mut buttons = vec![("right_sidebar_close", Icon::Close, close_x)];
+    match w.state.right_panel {
+        RightSidebarPanel::Watchlist => {
+            buttons.insert(0, ("watchlist_column_config", Icon::MoreHorizontal, close_x - (BTN + 8.0)));
+            buttons.insert(0, ("watchlist_open_modal", Icon::Grid, close_x - 2.0 * (BTN + 8.0)));
+        }
+        RightSidebarPanel::Alerts => {
+            // Drawn muted, with no hover face.
+            let x = close_x - BTN - 8.0;
+            root = root.child(El::new("div.s-abs.s-muted").id("alert_add_button").css(format!("left: {x}px; top: {by}px; width: {BTN}px; height: {BTN}px")).svg(Icon::Plus.svg()));
+        }
+        RightSidebarPanel::Events | RightSidebarPanel::Screener => {
+            let (id, label) = if w.state.right_panel == RightSidebarPanel::Events { ("events_mark_all_read", "Mark all read") } else { ("screener_scan", "Scan") };
+            let font = "11px sans-serif";
+            let bw = measure(font, label) + 14.0;
+            let (bx, bh) = (close_x - bw - 8.0, 20.0);
+            let bt = (HEADER_H - bh) / 2.0;
+            let bg = if w.hov(id) { &t.item_bg_active } else { &t.item_bg_hover };
+            root = root.child(El::new("div.s-abs").id(id).css(format!("left: {bx}px; top: {bt}px; width: {bw}px; height: {bh}px; border-radius: 4px; background: {bg}")));
+            root = root.child(panels::mid_text(label, bx + bw / 2.0, bt + bh / 2.0, panels::At::C, font, &t.item_text, measure));
+        }
+        _ => {}
+    }
+    for (id, ic, x) in buttons {
+        let spec = if w.hov(id) { "div.s-btn.hov" } else { "div.s-btn" };
+        root = root.child(El::new(spec).id(id).css(format!("left: {}px; top: {}px", x - BTN_PAD, by - BTN_PAD)).child(icon(ic, BTN)));
+    }
+    // Header bottom bar (2 px; what is pinned under it covers its lower pixel).
+    root.child(fill(0.0, HEADER_H - 1.0, rw, 2.0, &t.separator))
+}
+
+/// The watchlist below the header: the pinned column header, the rows, the footer.
+fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
     let t = w.theme;
     let s = w.state;
     let (rw, rh) = (w.rect.width, w.rect.height);
     let content_w = rw - SCROLLBAR_W;
-    let mut root = El::new("div.s-root").css(format!("width: {rw}px; height: {rh}px"));
-
-    // Left border: the app's 1 px stroke on the edge, half a pixel each side.
-    // Left border: the app's 1 px stroke on the edge, which lands on the pixel left of it.
-    root = root.child(fill(-1.0, 0.0, 1.0, rh, &t.separator));
-
-    // Header: icon, title, ⊞ / ⋯ / ×.
-    root = root.child(
-        El::new("div.s-abs.s-muted").css(format!("left: 12px; top: {}px; width: 18px; height: 18px", (HEADER_H - 18.0) / 2.0)).svg(Icon::Watchlist.svg()),
-    );
-    root = root.child(text("Watchlist", 36.0, rw, HEADER_H / 2.0, Align::L, "13px sans-serif", &t.item_text));
-    let close_x = rw - BTN - 2.0;
-    let by = (HEADER_H - BTN) / 2.0;
-    for (id, ic, x) in [
-        ("watchlist_open_modal", Icon::Grid, close_x - 2.0 * (BTN + 8.0)),
-        ("watchlist_column_config", Icon::MoreHorizontal, close_x - (BTN + 8.0)),
-        ("right_sidebar_close", Icon::Close, close_x),
-    ] {
-        let spec = if w.hov(id) { "div.s-btn.hov" } else { "div.s-btn" };
-        root = root.child(El::new(spec).id(id).css(format!("left: {}px; top: {}px", x - BTN_PAD, by - BTN_PAD)).child(icon(ic, BTN)));
-    }
-
-    // Header bottom bar (2 px; the column header covers its lower pixel).
-    root = root.child(fill(0.0, HEADER_H - 1.0, rw, 2.0, &t.separator));
 
     // Column header, pinned.
     let cols = Cols::of(w.columns, content_w, measure);
@@ -498,6 +559,13 @@ pub fn tree(w: &Watchlist<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El
         root = root.child(fill(0.0, y0, rw, if hov { 2.0 } else { 1.0 }, if hov { "#4a9eff" } else { t.separator.as_str() }));
         root = root.child(El::new("div.s-hit").id("watchlist_metrics_sep").css(format!("left: 0px; top: {}px; width: {rw}px; height: 7px", y0 - 3.0)));
     }
+    root
+}
+
+/// The root in its frame: the backdrop slot, the root, the border's outer pixel.
+fn framed(root: El, w: &Sidebar<'_>) -> El {
+    let t = w.theme;
+    let (rw, rh) = (w.rect.width, w.rect.height);
     // The left border: the app strokes 1 px on the edge, half a pixel each side at
     // half cover, over its blurred backdrop, which reaches the pixel left of the
     // edge; the tree starts a pixel early for it ([`frame`]).

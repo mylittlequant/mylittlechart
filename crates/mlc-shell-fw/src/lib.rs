@@ -444,8 +444,8 @@ impl HostedApp {
         use dom::sidebar as sb;
         let was_shown = std::mem::replace(&mut self.sidebar_shown, false);
         self.sidebar_hits.clear();
-        let rect = match (self.chart.sidebar_on_dom(), self.chart.last_sidebar_result.as_ref()) {
-            (true, Some(res)) => res.sidebar_rect,
+        let (rect, vp, app_content_h) = match (self.chart.sidebar_on_dom(), self.chart.last_sidebar_result.as_ref()) {
+            (true, Some(res)) => (res.sidebar_rect, res.viewport_rect, res.content_height),
             _ => {
                 self.sidebar_hover = None;
                 self.sidebar_scroll = None;
@@ -474,13 +474,17 @@ impl HostedApp {
             uzor_framework::widgets::kit::dom_scroll_to(cx, sb::VIEWPORT, y, false);
         }
         let scroll = pushed.unwrap_or_else(|| uzor_framework::widgets::kit::dom_scroll_top(cx, sb::VIEWPORT));
-        let w = sb::Watchlist {
+        let now_ms = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let w = sb::Sidebar {
             rect: o,
             theme: &theme,
             state: &self.chart.sidebar_state,
             columns: &data.columns,
             flags: &data.flags,
             hovered: self.sidebar_hover.as_deref(),
+            viewport: uzor::types::Rect::new(r.x + vp.x, r.y + vp.y + chrome::CHROME_HEIGHT, vp.width, vp.height),
+            app_content_h,
+            now_ms,
         };
         let tree = {
             let render = &mut *cx.render;
@@ -491,7 +495,11 @@ impl HostedApp {
             };
             sb::tree(&w, &mut measure)
         };
-        let (content_h, view_h) = (w.content_h(), w.view_h());
+        let (content_h, view_h) = if self.chart.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist {
+            (w.content_h(), w.view_h())
+        } else {
+            (app_content_h, vp.height)
+        };
         let state = &self.chart.sidebar_state;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
             use mlc_app_sidebar_content::render::draw_price_sparkline;

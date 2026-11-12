@@ -585,6 +585,120 @@ mod hosted {
         }
     }
 
+    /// Opens right panel `key` and fills it with a few rows.
+    fn open_panel(h: &mut Host, key: &str) {
+        use mlc_core::alert::{AlertCondition, AlertItem, AlertSource, AlertStatus};
+        let app = &mut h.runtime_mut().app_mut().chart;
+        app.sidebar_state.toggle_right_panel(mlc_app::ChartApp::str_to_panel(key));
+        app.sidebar_data_dirty = true;
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        let s = &mut h.runtime_mut().app_mut().chart.sidebar_state;
+        match key {
+            "alerts" => {
+                let mut a = AlertItem::new(7, AlertSource::Price { symbol: "BTCUSDT".into() }, "", 71234.5, AlertCondition::CrossingUp, AlertStatus::Active);
+                a.timeframe = "1h".into();
+                let b = AlertItem::new(8, AlertSource::Drawing { primitive_id: 3, label: "Trend line".into() }, "My line", 70000.0, AlertCondition::GreaterThan, AlertStatus::Triggered);
+                s.alert_items = vec![a, b];
+            }
+            "events" => {
+                let app = &mut h.runtime_mut().app_mut().chart;
+                let log = app.system_events_mut();
+                let first = log.push(mlc_core::SystemEventKind::Tier, "Pro", "Renewed.", false).id;
+                log.push(mlc_core::SystemEventKind::Account, "Signed in", "Welcome back. Your settings were synced from the cloud and  your layouts restored.", false);
+                log.mark_read(first);
+                app.sidebar_data_dirty = true;
+            }
+            "signals" => {
+                use mlc_app_sidebar_content::types::{IndicatorSignalGroup, IndicatorSignalRow};
+                let rows = (0..3).map(|i| IndicatorSignalRow { bar_index: 100 + i, signal_type: format!("Cross {i}"), price: 70000.0 + i as f64, strength: 1.0, direction: i as i32 - 1 }).collect();
+                s.indicator_signals.groups = vec![IndicatorSignalGroup { instance_id: 4, indicator_name: "RSI".into(), collapsed: false, signals: rows }];
+                s.indicator_signals.total_count = 3;
+            }
+            "screener" => {
+                s.screener_items = (0..3)
+                    .map(|i| mlc_app_sidebar_content::types::ScreenerItem {
+                        symbol: format!("SYM{i}USDT"),
+                        exchange: "binance".into(),
+                        account_type: "S".into(),
+                        last_price: 10.0 + i as f64,
+                        change_percent: i as f64 - 1.0,
+                        volume_24h_quote: 2.5e6,
+                        rsi14: (i > 0).then_some(25.0 + 30.0 * i as f64),
+                        ..Default::default()
+                    })
+                    .collect();
+            }
+            _ => {}
+        }
+        h.advance(0.017);
+        h.advance(0.017);
+    }
+
+    /// DOM vs app pixels of the sidebar with the pointer on each of `ids`.
+    fn panel_matches(h: &mut Host, win: WindowId, ids: &[&str]) {
+        sidebar_pixels(h, win, true);
+        let sb = sb_hit(h, "right_sidebar_close");
+        let left = (sb.x + sb.width + 2.0 - 341.0) as usize;
+        let spots: Vec<(String, f64, f64)> = ids
+            .iter()
+            .map(|id| {
+                let r = sb_hit(h, id);
+                (id.to_string(), r.x + r.width / 2.0, r.y + r.height / 2.0)
+            })
+            .chain([("away".to_string(), 700.0, 400.0)])
+            .collect();
+        for (id, x, y) in spots {
+            move_to(h, win, x, y);
+            let old = sidebar_pixels(h, win, false);
+            let new = sidebar_pixels(h, win, true);
+            let off: Vec<usize> = old
+                .chunks_exact(4)
+                .zip(new.chunks_exact(4))
+                .enumerate()
+                .filter(|(i, (a, b))| (i % 1280) >= left && (i % 1280) < 1228 && (72..760).contains(&(i / 1280)) && a.iter().zip(b.iter()).any(|(p, q)| p.abs_diff(*q) > 8))
+                .map(|(i, _)| i)
+                .collect();
+            if let Some(dir) = std::env::var_os("MLC_SB_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("p-{n}-{}.png", id.replace(':', "_")));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            if off.len() > 40 {
+                let (x0, x1) = (off.iter().map(|i| i % 1280).min().unwrap(), off.iter().map(|i| i % 1280).max().unwrap());
+                let (y0, y1) = (off.iter().map(|i| i / 1280).min().unwrap(), off.iter().map(|i| i / 1280).max().unwrap());
+                panic!("pointer at {id}: {} pixels differ in x {x0}..={x1}, y {y0}..={y1}", off.len());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_other_dom_panels_paint_what_the_app_painted() {
+        for (key, ids) in [
+            ("alerts", &["alert_7", "alert_delete_8", "alert_add_button"][..]),
+            ("events", &["events:row:1", "events_mark_all_read"][..]),
+            ("signals", &["signal_group_4", "signal_4_101"][..]),
+            ("screener", &["screener_row:SYM1USDT:binance:S", "screener_filter_rsi_above", "screener_scan"][..]),
+            ("object_tree", &["right_sidebar_close"][..]),
+            ("performance", &["monitoring_section:connectors", "perf:backend"][..]),
+        ] {
+            let (mut h, win) = host();
+            open_panel(&mut h, key);
+            sidebar_pixels(&mut h, win, true);
+            let newest = h.runtime().app().chart.sidebar_state.system_event_items.first().map(|e| format!("events:row:{}", e.id));
+            let ids: Vec<&str> = ids.iter().map(|i| if *i == "events:row:1" { newest.as_deref().unwrap_or(i) } else { *i }).collect();
+            assert!(!h.runtime().app().sidebar_hits.is_empty(), "{key} is on DOM");
+            panel_matches(&mut h, win, &ids);
+        }
+    }
+
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
     fn watchlist_presses_reach_the_app_as_before() {

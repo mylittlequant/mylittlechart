@@ -17,13 +17,30 @@ pub struct WatchlistDomData {
 
 impl ChartApp {
     /// Whether a host that set `dom_hosted.sidebar` draws the right sidebar this
-    /// frame: the watchlist, outside the states it does not cover (the column
-    /// menu, the colour picker, a row drag, the market counters, a failing row).
+    /// frame: the panels it covers, outside the states it does not (the watchlist's
+    /// column menu, colour picker, row drag, market counters and failing rows).
     pub fn sidebar_on_dom(&self) -> bool {
         let s = &self.sidebar_state;
-        if !(self.panel_app.dom_hosted.sidebar && s.is_right_open() && s.right_panel == RightSidebarPanel::Watchlist) {
+        if !(self.panel_app.dom_hosted.sidebar && s.is_right_open()) {
             return false;
         }
+        match s.right_panel {
+            RightSidebarPanel::Watchlist => self.watchlist_on_dom(),
+            RightSidebarPanel::Alerts | RightSidebarPanel::Events | RightSidebarPanel::ObjectTree | RightSidebarPanel::Screener => true,
+            // The Performance tab (the Connectors tab stays the app's).
+            RightSidebarPanel::Monitoring => s.monitoring_section_expanded(mlc_app_sidebar_content::state::MonitoringSection::Performance),
+            // A group that scrolls (more than 8 rows shown) keeps the app's painting.
+            RightSidebarPanel::Signals => s
+                .indicator_signals
+                .groups
+                .iter()
+                .all(|g| g.signals.len() <= 8 || s.collapsed_signal_groups.contains(&g.instance_id)),
+            _ => false,
+        }
+    }
+
+    fn watchlist_on_dom(&self) -> bool {
+        let s = &self.sidebar_state;
         let cfg = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
         !s.watchlist_config_dropdown_open
             && s.watchlist_color_picker_open.is_none()
