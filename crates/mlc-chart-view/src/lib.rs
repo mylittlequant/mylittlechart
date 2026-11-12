@@ -23,10 +23,10 @@ mod shots;
 
 use uzor::input::Sense;
 use uzor::layout::docking::DockPanel;
-use uzor::render::TickRate;
+use uzor::render::{RenderContext, TickRate};
 use uzor::tokens::{BuiltinSet, Tokens};
 use uzor::{Rect, WidgetId};
-use uzor_framework::widgets::kit;
+use uzor_framework::widgets::kit::{self, SlotFrame};
 use uzor_framework::{
     App, AppCommand, ChromeModel, DockTarget, InitCx, Intent, IntentCx, LayoutCmd, OverlayCx, OverlayModel, PanelCx, PanelHome, RuntimeConfig, SizePx, Spec, WindowId,
     WindowIntent, WindowSpec,
@@ -34,7 +34,7 @@ use uzor_framework::{
 
 use crate::demo::TIMEFRAMES;
 use crate::i18n::{t, K};
-use crate::input::{ChartInput, ChartOp};
+use crate::input::{ChartInput, ChartOp, Mouse};
 use crate::model::ChartModel;
 use crate::source::{DemoSource, Feed, Source};
 
@@ -89,6 +89,16 @@ pub enum Shown {
     /// Live source failed or timed out: demo bars, said so.
     Offline,
     Live,
+}
+
+/// Apply one chart op to `model` for a plot `width` px wide.
+pub fn apply_op(model: &mut ChartModel, op: ChartOp, width: f64) {
+    match op {
+        ChartOp::Pan(dx) => model.pan(dx, width),
+        ChartOp::Zoom { factor, anchor } => model.zoom(factor, anchor, width),
+        ChartOp::Crosshair(c) => model.crosshair = c,
+        ChartOp::Reset => model.reset(),
+    }
 }
 
 /// The chart app.
@@ -197,12 +207,7 @@ impl ChartViewApp {
 
     /// Apply one chart op for a plot `width` px wide.
     pub fn apply(&mut self, op: ChartOp, width: f64) {
-        match op {
-            ChartOp::Pan(dx) => self.model.pan(dx, width),
-            ChartOp::Zoom { factor, anchor } => self.model.zoom(factor, anchor, width),
-            ChartOp::Crosshair(c) => self.model.crosshair = c,
-            ChartOp::Reset => self.model.reset(),
-        }
+        apply_op(&mut self.model, op, width);
     }
 
     /// The faint note in the plot corner.
@@ -231,7 +236,25 @@ impl ChartViewApp {
         let tree = screen::tree(&header, self.tf).css(format!("height: {}px", cx.rect.height));
         let rect = cx.rect;
         let sheet = self.sheet().clone();
-        let resp = kit::dom(rect, &sheet, tree).build(cx);
+        let id = WidgetId::from(screen::CHART_SLOT);
+        // The mouse is read from the view before the tree is built (it reports the
+        // last frame's targets); fingers come with the slot frame.
+        let mouse = Mouse::read(cx.view, &id);
+        let label = self.plot_label();
+        let (model, input) = (&mut self.model, &mut self.input);
+        let mut chart = None;
+        let mut painter = |ctx: &mut dyn RenderContext, f: &SlotFrame<'_>| {
+            if f.key != screen::CHART_SLOT {
+                return;
+            }
+            let plot = paint::areas(f.rect).plot;
+            for op in input.ops(&f.gestures, f.pointer, f.clicked, &mouse, plot, now) {
+                apply_op(model, op, plot.width);
+            }
+            paint::chart(ctx, f.rect, model, label);
+            chart = Some(f.rect);
+        };
+        let resp = kit::dom(rect, &sheet, tree).paint_slots(&mut painter).build(cx);
         match resp.clicked.as_deref() {
             Some(screen::RESET_ID) => self.model.reset(),
             Some(id) => {
@@ -242,20 +265,12 @@ impl ChartViewApp {
             None => {}
         }
         self.last_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
-        let Some(chart) = resp.dom.slots().find(|(k, _)| *k == screen::CHART_SLOT).map(|(_, r)| r) else { return };
-        self.last_chart = Some(chart);
-        let plot = paint::areas(chart).plot;
-        let id = WidgetId::from(screen::CHART_ID);
-        // The chart takes clicks, drags and the wheel; `touch` + `gesture` ask uzor
-        // for its fingers (touch capture, `uzor-next`).
-        let mut sense = Sense::CLICK_AND_DRAG.union(Sense::SCROLL);
-        sense.touch = true;
-        sense.gesture = true;
-        cx.widgets.coord.register(id.clone(), chart, sense);
-        for op in self.input.update(cx.view, &id, plot, now) {
-            self.apply(op, plot.width);
+        self.last_chart = chart;
+        if let Some(chart) = chart {
+            // The DOM registers the slot for clicks, hover and its fingers; the chart
+            // also takes the mouse drag and the wheel.
+            cx.widgets.coord.register(id, chart, Sense::CLICK_AND_DRAG.union(Sense::SCROLL).with_touch().with_gesture());
         }
-        paint::chart(cx.render, chart, &self.model, self.plot_label());
         // A requested series arrives on a later frame (demo: the next one; live: the
         // waker, or the timeout below while loading).
         if self.requested_at.is_some() || self.shown == Shown::Loading {

@@ -9,10 +9,9 @@ use uzor::ui::mobile::{segmented, top_bar, Dot};
 use crate::demo::TIMEFRAMES;
 use crate::i18n::{t, tf_label, K};
 
-/// The chart slot's key (its rect comes back from `Dom::slots`).
+/// The chart's paint slot: its key and hit id (`El::paint_slot`; its rect comes
+/// back from `Dom::slots`, its fingers with the slot frame).
 pub const CHART_SLOT: &str = "chart";
-/// Hit id of the chart widget.
-pub const CHART_ID: &str = "mlc-chart";
 /// Hit id of the reset button in the top bar.
 pub const RESET_ID: &str = "nav:reset";
 
@@ -44,7 +43,7 @@ pub fn tree(h: &Header<'_>, tf: usize) -> El {
     El::new("div.m-screen").css("height: 100%").child(El::new("div.m-safe-top")).children([
         top_bar("nav", t(K::Markets), h.symbol, Some((dot, &status)), &[("reset", ICON_RESET, t(K::Reset))]),
         El::new("div.mlc-tf").name(t(K::Timeframes)).child(segmented("tf", &items, tf)),
-        El::new("div.mlc-chart").id(CHART_SLOT).name(t(K::Chart)).slot(CHART_SLOT),
+        El::new("div.mlc-chart").paint_slot(CHART_SLOT).name(t(K::Chart)),
         El::new("div.mlc-foot").child(El::new("div.mlc-hint").text(t(K::Hint))),
     ])
 }
@@ -93,6 +92,7 @@ mod tests {
                 let chart = d.slots().find(|(k, _)| *k == CHART_SLOT).map(|(_, r)| r).expect("chart slot");
                 assert!(chart.y >= reset.y + reset.height && chart.height >= 450.0, "the chart gets most of the screen: {chart:?}");
                 assert_eq!((chart.x, chart.width), (0.0, 390.0));
+                assert!(d.touch_targets().any(|(id, _)| id == CHART_SLOT), "the chart captures its fingers");
                 let foot = d.boxes.iter().find(|p| p.text.as_deref() == Some(t(K::Hint))).expect("hint");
                 assert!(foot.rect.y >= chart.y + chart.height, "hint under the chart");
                 assert!(foot.rect.y + foot.rect.height <= 844.0 - 34.0 + 0.5, "hint above the home indicator: {:?}", foot.rect);

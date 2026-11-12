@@ -5,12 +5,11 @@
 //! view, a tap hides the crosshair. Mouse: drag pans, the wheel zooms at the
 //! pointer, hover moves the crosshair, a double click resets.
 //!
-//! With uzor 1.5.35 (crates.io) the chart reads the window's gestures
-//! (`VisualView::gestures`) inside its rect. With the `uzor-next` feature it reads
-//! the gestures its touch-capturing widget owns (`VisualView::captured_gestures`,
-//! uzor's touch-capture branch): two fingers then never scroll anything else, the
-//! long-pressed finger drags the crosshair and double taps come from the recogniser.
-//! Everything below the [`Touch`] translation is the same in both.
+//! The chart is a DOM paint slot (`El::paint_slot`): it captures its fingers, so the
+//! gestures arrive with its [`SlotFrame`](uzor_framework::widgets::kit::SlotFrame)
+//! (or `VisualView::captured_gestures`) and two fingers never scroll anything else;
+//! the long-pressed finger drags the crosshair and double taps come from uzor's
+//! recogniser. The mouse (press, wheel) is read from the view ([`Mouse::read`]).
 
 use uzor::{Rect, WidgetId};
 use uzor_framework::types::gesture::Gesture;
@@ -91,14 +90,15 @@ impl Touch {
                     self.crosshair = true;
                     out.push(ChartOp::Crosshair(Some(local(pos.x, pos.y))));
                 }
-                #[cfg(feature = "uzor-next")]
                 Gesture::LongPressDrag { pos, .. } if self.held => out.push(ChartOp::Crosshair(Some(local(pos.x, pos.y)))),
-                #[cfg(feature = "uzor-next")]
                 Gesture::LongPressEnd { .. } => self.held = false,
-                #[cfg(feature = "uzor-next")]
                 Gesture::PinchPan { delta, .. } if self.pinch_scale.is_some() => out.push(ChartOp::Pan(delta.0)),
-                #[cfg(feature = "uzor-next")]
-                Gesture::DoubleTap { pos } if inside(plot, pos.x, pos.y) => out.push(ChartOp::Reset),
+                Gesture::DoubleTap { pos } if inside(plot, pos.x, pos.y) => {
+                    self.held = false;
+                    self.crosshair = false;
+                    out.push(ChartOp::Reset);
+                }
+                // Taps arrive as clicks; swipes and the rest are not the chart's.
                 _ => {}
             }
         }
@@ -137,23 +137,18 @@ impl ChartInput {
         None
     }
 
-    /// All ops of this frame for the widget `id` drawn over `plot`.
-    pub fn update<S: Spec>(&mut self, view: &VisualView<S>, id: &WidgetId, plot: Rect, now: f64) -> Vec<ChartOp> {
-        #[cfg(feature = "uzor-next")]
-        let gestures = view.captured_gestures(id);
-        #[cfg(not(feature = "uzor-next"))]
-        let gestures = view.gestures().to_vec();
-        let mut out = self.touch.ops(&gestures, plot);
-        let coarse = view.coarse_pointer();
-        let over = view.pointer_over(id);
-        if view.clicked(id) {
-            let at = over.or(view.raw_pointer()).unwrap_or((plot.x, plot.y));
-            out.extend(self.click(at, now, coarse));
+    /// All ops of this frame: the slot's captured `gestures`, the `pointer` over it,
+    /// whether it was `clicked`, and the [`Mouse`] read from the view, over `plot`.
+    pub fn ops(&mut self, gestures: &[Gesture], pointer: Option<(f64, f64)>, clicked: bool, mouse: &Mouse, plot: Rect, now: f64) -> Vec<ChartOp> {
+        let mut out = self.touch.ops(gestures, plot);
+        if clicked {
+            let at = pointer.or(mouse.raw).unwrap_or((plot.x, plot.y));
+            out.extend(self.click(at, now, mouse.coarse));
         }
-        if !coarse {
+        if !mouse.coarse {
             // Mouse drag pans.
-            if view.is_pressed(id) {
-                if let Some(p) = view.raw_pointer() {
+            match mouse.pressed_at {
+                Some(p) => {
                     if let Some(l) = self.mouse_last {
                         if p.0 != l.0 {
                             out.push(ChartOp::Pan(p.0 - l.0));
@@ -161,19 +156,52 @@ impl ChartInput {
                     }
                     self.mouse_last = Some(p);
                 }
-            } else {
-                self.mouse_last = None;
+                None => self.mouse_last = None,
             }
             // Hover crosshair.
-            out.push(ChartOp::Crosshair(over.filter(|p| inside(plot, p.0, p.1)).map(|p| (p.0 - plot.x, p.1 - plot.y))));
+            out.push(ChartOp::Crosshair(pointer.filter(|p| inside(plot, p.0, p.1)).map(|p| (p.0 - plot.x, p.1 - plot.y))));
             // Wheel zoom at the pointer (not a finger's scroll).
-            let (_, dy) = view.scroll_over(id);
-            if dy != 0.0 && !view.scroll_touch() {
-                let anchor = over.map(|p| p.0 - plot.x).unwrap_or(plot.width / 2.0);
-                out.push(ChartOp::Zoom { factor: 1.12f64.powf(dy), anchor });
+            if mouse.wheel != 0.0 {
+                let anchor = pointer.map(|p| p.0 - plot.x).unwrap_or(plot.width / 2.0);
+                out.push(ChartOp::Zoom { factor: 1.12f64.powf(mouse.wheel), anchor });
             }
         }
         out
+    }
+
+    /// All ops of this frame for widget `id` drawn over `plot`, everything read from
+    /// the view (a chart outside a DOM tree).
+    pub fn update<S: Spec>(&mut self, view: &VisualView<S>, id: &WidgetId, plot: Rect, now: f64) -> Vec<ChartOp> {
+        let mouse = Mouse::read(view, id);
+        self.ops(&view.captured_gestures(id), view.pointer_over(id), view.clicked(id), &mouse, plot, now)
+    }
+}
+
+/// The mouse over the chart this frame, read from the view before the tree is built.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Mouse {
+    /// A finger or a pen: no hover crosshair, no mouse drag, no wheel.
+    pub coarse: bool,
+    /// The pointer while a mouse button holds the chart.
+    pub pressed_at: Option<(f64, f64)>,
+    /// Wheel steps over the chart (a finger's scroll is not a wheel).
+    pub wheel: f64,
+    /// The raw pointer (z-order blind), for where a click landed.
+    pub raw: Option<(f64, f64)>,
+}
+
+impl Mouse {
+    /// Read the mouse over widget `id` from `view`.
+    pub fn read<S: Spec>(view: &VisualView<S>, id: &WidgetId) -> Self {
+        let coarse = view.coarse_pointer();
+        let raw = view.raw_pointer();
+        let (_, dy) = view.scroll_over(id);
+        Mouse {
+            coarse,
+            pressed_at: if view.is_pressed(id) { raw } else { None },
+            wheel: if view.scroll_touch() { 0.0 } else { dy },
+            raw,
+        }
     }
 }
 
@@ -237,12 +265,39 @@ mod tests {
         assert_eq!(i.click((200.0, 300.0), 5.0, true), Some(ChartOp::Crosshair(None)));
     }
 
-    #[cfg(feature = "uzor-next")]
     #[test]
     fn captured_gestures_double_tap_and_long_press_drag() {
         let mut t = Touch::default();
         assert_eq!(t.ops(&[Gesture::DoubleTap { pos: p(30.0, 300.0) }], PLOT), [ChartOp::Reset]);
+        assert!(t.ops(&[Gesture::DoubleTap { pos: p(30.0, 50.0) }], PLOT).is_empty(), "not over the plot");
         t.ops(&[Gesture::LongPress { pos: p(50.0, 200.0) }], PLOT);
         assert_eq!(t.ops(&[Gesture::LongPressDrag { pos: p(80.0, 220.0), delta: (30.0, 20.0) }], PLOT), [ChartOp::Crosshair(Some((80.0, 120.0)))]);
+        t.ops(&[Gesture::LongPressEnd { pos: p(80.0, 220.0) }], PLOT);
+        assert!(t.ops(&[Gesture::LongPressDrag { pos: p(90.0, 220.0), delta: (10.0, 0.0) }], PLOT).is_empty(), "released: the crosshair stays put");
+        assert!(t.crosshair_shown(), "and stays shown until a tap");
+    }
+
+    #[test]
+    fn two_finger_pan_moves_the_bars_while_pinching() {
+        let mut t = Touch::default();
+        t.ops(&[Gesture::Pinch { center: p(200.0, 300.0), scale: 1.0 }], PLOT);
+        assert_eq!(t.ops(&[Gesture::PinchPan { center: p(212.0, 300.0), delta: (12.0, 0.0), total: (12.0, 0.0) }], PLOT), [ChartOp::Pan(12.0)]);
+        t.ops(&[Gesture::PinchEnd { scale: 1.0 }], PLOT);
+        assert!(t.ops(&[Gesture::PinchPan { center: p(220.0, 300.0), delta: (8.0, 0.0), total: (20.0, 0.0) }], PLOT).is_empty());
+    }
+
+    #[test]
+    fn mouse_drag_wheel_and_hover() {
+        let mut i = ChartInput::default();
+        let m = |pressed_at, wheel| Mouse { coarse: false, pressed_at, wheel, raw: pressed_at };
+        let ops = i.ops(&[], Some((100.0, 200.0)), false, &m(Some((100.0, 200.0)), 0.0), PLOT, 0.0);
+        assert_eq!(ops, [ChartOp::Crosshair(Some((100.0, 100.0)))]);
+        let ops = i.ops(&[], Some((130.0, 200.0)), false, &m(Some((130.0, 200.0)), 1.0), PLOT, 0.1);
+        assert_eq!(ops[0], ChartOp::Pan(30.0));
+        assert!(matches!(ops[2], ChartOp::Zoom { anchor, .. } if anchor == 130.0));
+        let ops = i.ops(&[], None, false, &m(None, 0.0), PLOT, 0.2);
+        assert_eq!(ops, [ChartOp::Crosshair(None)], "left: the crosshair hides");
+        let coarse = Mouse { coarse: true, ..m(Some((10.0, 200.0)), 2.0) };
+        assert!(i.ops(&[], Some((10.0, 200.0)), false, &coarse, PLOT, 0.3).is_empty(), "a finger is not a mouse");
     }
 }
