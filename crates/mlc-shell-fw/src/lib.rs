@@ -324,6 +324,7 @@ impl HostedApp {
             sidebar_hover: None,
             sidebar_sheet: None,
             sidebar_press: PressForward::default(),
+
             sidebar_shown: false,
             sidebar_scroll: None,
             chart_settings_shown: false,
@@ -337,6 +338,7 @@ impl HostedApp {
         chart.panel_app.dom_hosted.preset_name = true;
         chart.panel_app.dom_hosted.chart_settings = true;
         chart.panel_app.dom_hosted.sidebar = true;
+        chart.panel_app.dom_hosted.user_settings = true;
         let mut host = Self::new(chart);
         host.chrome_on_dom = true;
         host.toolbars_on_dom = true;
@@ -718,6 +720,57 @@ impl HostedApp {
         }
     }
 
+    /// The user settings modal on DOM, in place: the app laid it out and takes its
+    /// input; this paints it ([`dom::user_settings`]).
+    fn user_settings_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        use dom::user_settings as us;
+        let look = us::Look::of(&self.chart);
+        let sheet = self.sheet(look.css());
+        let tt = self.chart.panel_app.toolbar_theme_for_render();
+        let st = &self.chart.panel_app.user_settings_state;
+        let at = us::frame(cx.rect, chrome::CHROME_HEIGHT, st);
+        let (tree, content_h) = {
+            let render = &mut *cx.render;
+            let mut measure = |font: &str, s: &str| {
+                render.set_font(font);
+                let w = render.measure_text(s);
+                ctx::measured(font, s, w)
+            };
+            let hover = us::Hover::of(&self.chart.input_coordinator.borrow(), &st.visible_tabs());
+            us::tree(st, &look, hover, at, &mut measure)
+        };
+        let (ch, vh, off) = us::scrollbar(st, content_h);
+        let dragging = st.general_tab_scroll.is_dragging;
+        // The app's General tab scrollbar theme (`render_user_settings_modal`).
+        let wt = mlc_app_layout::ui::widgets::WidgetTheme {
+            bg_normal: tt.item_bg_hover.clone(),
+            bg_hover: tt.item_bg_hover.clone(),
+            bg_pressed: tt.item_bg_active.clone(),
+            bg_disabled: tt.item_bg_hover.clone(),
+            text_normal: tt.item_text.clone(),
+            text_hover: tt.item_text_active.clone(),
+            text_disabled: tt.item_text_muted.clone(),
+            border_normal: tt.separator.clone(),
+            border_hover: tt.separator.clone(),
+            border_focused: tt.item_bg_active.clone(),
+            accent: tt.accent.clone(),
+            accent_hover: tt.accent.clone(),
+            success: tt.success.clone(),
+            warning: tt.warning.clone(),
+            danger: tt.danger.clone(),
+        };
+        let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+            if f.key == us::SCROLLBAR {
+                use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
+                let mut c = ctx::ChartCtx::new(ctx);
+                let state = if dragging { ScrollbarState::Dragging } else { ScrollbarState::Active };
+                draw_scrollbar(&mut c, &ScrollbarConfig::new(ch, vh, off), state, f.rect, &wt, None);
+            }
+        };
+        // No hits: the input stays the app's, unhandled.
+        uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+    }
+
     /// The DOM pieces over the app's own frame.
     fn dom_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
         use dom::preset_name as pn;
@@ -731,6 +784,8 @@ impl HostedApp {
                 }
                 self.chart_settings_shown = true;
                 self.chart_settings_layer(cx, &data);
+            } else if self.chart.panel_app.user_settings_on_dom() {
+                self.user_settings_layer(cx);
             }
             return;
         }

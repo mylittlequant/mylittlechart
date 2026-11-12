@@ -491,6 +491,104 @@ mod hosted {
         assert!(worst.iter().all(|&o| o == 0), "{worst:?}");
     }
 
+    /// The window painted with the DOM user settings modal on or off.
+    fn us_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
+        use uzor::render::{Painter, ShapeHelpers};
+        h.runtime_mut().app_mut().chart.panel_app.dom_hosted.user_settings = dom;
+        h.advance(0.017);
+        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx.set_fill_color("#131722");
+        ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx).expect("window");
+        ctx.pixmap().data().to_vec()
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_user_settings_general_tab_paints_what_the_app_painted() {
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
+        let (mut h, win) = host();
+        h.runtime_mut().app_mut().chart.open_user_settings();
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        us_pixels(&mut h, win, true);
+        assert!(h.runtime().app().chart.panel_app.user_settings_on_dom(), "General tab on DOM");
+        // The frame, as the app placed it.
+        let fr = crate::dom::user_settings::frame(uzor::types::Rect::new(0.0, 0.0, 1280.0, 800.0), crate::chrome::CHROME_HEIGHT, &h.runtime().app().chart.panel_app.user_settings_state);
+        let (x0, y0) = (fr.x as usize, fr.y as usize);
+        let (x1, y1) = (x0 + fr.width as usize, y0 + fr.height as usize);
+        // Away; on the second language; on the third language; then scrolled to the end
+        // and on the welcome wizard button.
+        let vx = fr.x + 1.0 + crate::dom::user_settings::VIEW_X + 60.0;
+        let vy = fr.y + 1.0 + crate::dom::user_settings::VIEW_Y;
+        let mut worst = Vec::new();
+        let (fx, fy) = (fr.x + 1.0, fr.y + 1.0);
+        // A spot is a point, or the centre of a widget the app registered (found after
+        // scrolling, so it lands where the app put it).
+        for (name, spot, id, wheel) in [
+            ("away", (200.0, 400.0), "", 0),
+            ("tab2", (fx + 24.0, fy + 44.0 + 44.0 + 22.0), "", 0),
+            ("close", (0.0, 0.0), "user_settings:close", 0),
+            ("ok", (0.0, 0.0), "user_settings:ok", 0),
+            ("lang", (vx, vy + 20.0 + 36.0 + 16.0), "", 0),
+            ("wizard", (0.0, 0.0), "user_settings:show_wizard", 40),
+            ("anchor", (0.0, 0.0), "user_settings:toast_anchor:BottomLeft", 0),
+        ] {
+            for _ in 0..wheel {
+                let pos = uzor_framework::Point { x: vx, y: vy + 100.0 };
+                h.input(win, InputEvent::Pointer(PointerInput::Moved { pos, mods: Default::default() }));
+                h.input(win, InputEvent::Wheel(uzor_framework::WheelInput { pos, delta: uzor_framework::WheelDelta::Lines { x: 0.0, y: -3.0 }, mods: Default::default() }));
+                h.advance(0.017);
+            }
+            for _ in 0..30 {
+                h.advance(0.017);
+            }
+            let spot = if id.is_empty() {
+                spot
+            } else {
+                let r = h.runtime().app().chart.input_coordinator.borrow().widget_rect(&uzor::WidgetId::from(id)).unwrap_or_else(|| panic!("{id} registered"));
+                (r.x + r.width / 2.0, r.y + r.height / 2.0)
+            };
+            move_to(&mut h, win, spot.0, spot.1);
+            // The app's hover settles a frame behind the pointer.
+            for _ in 0..3 {
+                h.advance(0.017);
+            }
+            if std::env::var_os("MLC_US_DUMP").is_some() {
+                let c = h.runtime().app().chart.input_coordinator.borrow();
+                eprintln!("{name} at {spot:?}: hit {:?}, hovered {:?}", c.hit_test_now(spot.0, spot.1), c.hovered_widget());
+            }
+            let old = us_pixels(&mut h, win, false);
+            let new = us_pixels(&mut h, win, true);
+            let (mut over, mut exact) = (0, 0);
+            for (i, (a, b)) in old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate() {
+                let (x, y) = (i % 1280, i / 1280);
+                // The header strip carries the old path's misplaced glass blur.
+                if x < x0 || x >= x1 || y < y0 + 46 || y >= y1 {
+                    continue;
+                }
+                let d = a.iter().zip(b.iter()).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+                exact += usize::from(d > 0);
+                over += usize::from(d > 8);
+            }
+            eprintln!("user settings {name}: {over} px over 8, {exact} differ");
+            if let Some(dir) = std::env::var_os("MLC_US_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("us-{n}-{name}.png"));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            worst.push(over);
+        }
+        mlc_app::set_fixed_clock(None);
+        assert!(worst.iter().all(|&o| o <= 40), "{worst:?}");
+    }
+
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {
         let pos = uzor_framework::Point { x, y };
         let b = uzor::input::MouseButton::Left;

@@ -63,6 +63,10 @@ pub struct DomHosted {
     /// `ChartApp::sidebar_on_dom`); the app still lays it out and registers its
     /// hit zones, and paints it in any other state.
     pub sidebar: bool,
+    /// The user settings modal, in the states the DOM version covers (see
+    /// `ChartPanelApp::user_settings_on_dom`); the app still lays it out, registers
+    /// its hit zones and handles its input, and paints it in any other state.
+    pub user_settings: bool,
 }
 
 pub struct ChartPanelApp {
@@ -407,6 +411,20 @@ impl ChartPanelApp {
             crosshair_label_bg_styled:  rt.crosshair_label_bg_styled(),
             crosshair_label_text:       rt.chart.crosshair_label_text.clone(),
         }
+    }
+
+    /// Whether a uzor-framework host paints the user settings modal this frame: it
+    /// has taken it over (`dom_hosted.user_settings`) and the modal shows the
+    /// General tab without the profile section (signed out, one profile). The app
+    /// still lays it out and takes its input (its paint goes nowhere).
+    pub fn user_settings_on_dom(&self) -> bool {
+        use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+        let s = &self.user_settings_state;
+        self.dom_hosted.user_settings
+            && s.is_open
+            && s.active_tab == UserSettingsTab::General
+            && !s.account_signed_in
+            && !s.multi_profile
     }
 
     /// Whether a uzor-framework host draws the chart settings modal this frame: it
@@ -1072,8 +1090,18 @@ impl ChartPanelApp {
 
         if self.user_settings_state.is_open && !user_settings_after_community {
             use mlc_app_layout::layout::modals::user_settings::render_user_settings_modal;
+            // A uzor-framework host paints it itself (`user_settings_on_dom`): the
+            // layout, hit zones and input stay here, the paint goes nowhere.
+            let on_dom = self.user_settings_on_dom();
+            let mut off;
+            let us_ctx: &mut dyn RenderContext = if on_dom {
+                off = crate::paint_off::PaintOff(&mut *ctx);
+                &mut off
+            } else {
+                &mut *ctx
+            };
             result.user_settings = Some(render_user_settings_modal(
-                ctx,
+                us_ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.user_settings_state,
@@ -1141,8 +1169,18 @@ impl ChartPanelApp {
         #[cfg(feature = "cloud")]
         if user_settings_after_community {
             use mlc_app_layout::layout::modals::user_settings::render_user_settings_modal;
+            // A uzor-framework host paints it itself (`user_settings_on_dom`): the
+            // layout, hit zones and input stay here, the paint goes nowhere.
+            let on_dom = self.user_settings_on_dom();
+            let mut off;
+            let us_ctx: &mut dyn RenderContext = if on_dom {
+                off = crate::paint_off::PaintOff(&mut *ctx);
+                &mut off
+            } else {
+                &mut *ctx
+            };
             result.user_settings = Some(render_user_settings_modal(
-                ctx,
+                us_ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.user_settings_state,

@@ -42,6 +42,9 @@ const CRED_ITEM_PADDING: f64 = 8.0;
 /// Label column width in the Vault tab's add-key form / webhook row.
 const CRED_LABEL_W: f64 = 90.0;
 
+/// The version the General tab shows.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Render the User Settings modal dialog.
 pub fn render_user_settings_modal(
     ctx: &mut dyn RenderContext,
@@ -1621,7 +1624,7 @@ fn render_general_tab(
 
     ctx.set_font("700 18px sans-serif");
     ctx.set_fill_color(text_color);
-    ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x, cy);
+    ctx.fill_text(&format!("v{VERSION}"), x, cy);
     cy += 30.0;
 
     // "Show Welcome Wizard" debug button

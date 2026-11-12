@@ -189,6 +189,8 @@ pub(crate) fn font_css(font: &str) -> String {
     for part in font.split_whitespace() {
         if part == "bold" {
             out.push("font-weight: bold".to_string());
+        } else if part.len() == 3 && part.ends_with("00") && part.parse::<u16>().is_ok() {
+            out.push(format!("font-weight: {part}"));
         } else if part.ends_with("px") && part[..part.len() - 2].parse::<f64>().is_ok() {
             out.push(format!("font-size: {part}"));
         } else {
