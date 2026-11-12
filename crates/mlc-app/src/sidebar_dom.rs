@@ -17,8 +17,7 @@ pub struct WatchlistDomData {
 
 impl ChartApp {
     /// Whether a host that set `dom_hosted.sidebar` draws the right sidebar this
-    /// frame: the panels it covers, outside the states it does not (the watchlist's
-    /// column menu, colour picker, row drag, market counters and failing rows).
+    /// frame: the panels it covers, outside the states it does not.
     pub fn sidebar_on_dom(&self) -> bool {
         let s = &self.sidebar_state;
         if !(self.panel_app.dom_hosted.sidebar && s.is_right_open()) {
@@ -40,13 +39,7 @@ impl ChartApp {
     }
 
     fn watchlist_on_dom(&self) -> bool {
-        let s = &self.sidebar_state;
-        let cfg = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
-        !s.watchlist_config_dropdown_open
-            && s.watchlist_color_picker_open.is_none()
-            && s.watchlist_drag_index.is_none()
-            && !(cfg.show_market_counters && !s.counter_rows.is_empty())
-            && s.watchlist_items.iter().all(|i| i.status.is_none())
+        true
     }
 
     /// The active watchlist's columns and row flags.

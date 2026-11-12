@@ -955,10 +955,10 @@ pub fn render_right_sidebar(
 pub const WATCHLIST_TICKER_SECTION_H: f64 = 96.0;
 
 /// Height of one market-counters row (funding/OI block, owner spec 2026-08-01).
-const COUNTERS_ROW_H: f64 = 15.0;
+pub const COUNTERS_ROW_H: f64 = 15.0;
 /// Header + top/bottom padding reserved by the market-counters block on top
 /// of `COUNTERS_ROW_H * rows.len()`.
-const COUNTERS_CHROME_H: f64 = 16.0 + 4.0;
+pub const COUNTERS_CHROME_H: f64 = 16.0 + 4.0;
 
 pub fn counters_block_h(show_counters: bool, counter_rows: &[crate::types::CounterRowData]) -> f64 {
     if show_counters && !counter_rows.is_empty() {

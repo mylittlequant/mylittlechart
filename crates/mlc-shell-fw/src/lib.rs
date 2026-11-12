@@ -485,6 +485,7 @@ impl HostedApp {
             viewport: uzor::types::Rect::new(r.x + vp.x, r.y + vp.y + chrome::CHROME_HEIGHT, vp.width, vp.height),
             app_content_h,
             now_ms,
+            app_rect: uzor::types::Rect::new(rect.x, rect.y, rect.width, rect.height),
         };
         let tree = {
             let render = &mut *cx.render;
@@ -507,7 +508,9 @@ impl HostedApp {
             let spark = |ctx: &mut dyn uzor::render::RenderContext, data: &[f64], up: bool| {
                 let color = if up { &theme.success } else { &theme.danger };
                 let mut c = ctx::ChartCtx::new(ctx);
-                draw_price_sparkline(&mut c, fr.x, fr.y, fr.width, fr.height, data, color);
+                // The slot box is grown by `SPARK_BLEED` for the line's caps.
+                let b = sb::SPARK_BLEED;
+                draw_price_sparkline(&mut c, fr.x + b, fr.y + b, fr.width - 2.0 * b, fr.height - 2.0 * b, data, color);
             };
             if f.key == sb::BLUR {
                 // In the app's own coordinate space, as it made the call.
@@ -524,6 +527,19 @@ impl HostedApp {
                 if let Some(item) = state.watchlist_items.get(i) {
                     spark(ctx, &item.spark, item.change_percent >= 0.0);
                 }
+            } else if f.key == sb::SWATCH_X {
+                // As the app strokes it, with the round caps its chart left set.
+                ctx.save();
+                ctx.set_stroke_color(&theme.item_text);
+                ctx.set_stroke_width(1.5);
+                ctx.set_line_cap("round");
+                ctx.begin_path();
+                ctx.move_to(fr.x + 4.0, fr.y + 4.0);
+                ctx.line_to(fr.x + fr.width - 4.0, fr.y + fr.height - 4.0);
+                ctx.move_to(fr.x + fr.width - 4.0, fr.y + 4.0);
+                ctx.line_to(fr.x + 4.0, fr.y + fr.height - 4.0);
+                ctx.stroke();
+                ctx.restore();
             } else if f.key == sb::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
                 let track = uzor::types::Rect::new(fr.x, fr.y + 4.0, fr.width, view_h.min(content_h) - 8.0);

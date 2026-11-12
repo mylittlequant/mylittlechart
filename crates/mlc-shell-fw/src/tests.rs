@@ -670,6 +670,8 @@ mod hosted {
                     enc.write_header().unwrap().write_image_data(px).unwrap();
                 }
             }
+            let any = old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate().filter(|(i, (a, b))| (i % 1280) >= left && (i % 1280) < 1228 && (72..760).contains(&(i / 1280)) && a != b).count();
+            eprintln!("panel_matches {id}: {any} pixels differ at all, {} by more than 8", off.len());
             if off.len() > 40 {
                 let (x0, x1) = (off.iter().map(|i| i % 1280).min().unwrap(), off.iter().map(|i| i % 1280).max().unwrap());
                 let (y0, y1) = (off.iter().map(|i| i / 1280).min().unwrap(), off.iter().map(|i| i / 1280).max().unwrap());
@@ -696,6 +698,65 @@ mod hosted {
             let ids: Vec<&str> = ids.iter().map(|i| if *i == "events:row:1" { newest.as_deref().unwrap_or(i) } else { *i }).collect();
             assert!(!h.runtime().app().sidebar_hits.is_empty(), "{key} is on DOM");
             panel_matches(&mut h, win, &ids);
+        }
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_watchlist_fallback_states_paint_what_the_app_painted() {
+        // The states the host used to leave to the app: failing rows, a row drag,
+        // the colour picker, the column menu and the market counters.
+        for state in ["status", "drag", "picker", "colmenu", "counters"] {
+            let (mut h, win) = host();
+            open_watchlist(&mut h, 5);
+            sidebar_pixels(&mut h, win, true);
+            let ids: &[&str] = match state {
+                "status" => {
+                    let items = &mut h.runtime_mut().app_mut().chart.sidebar_state.watchlist_items;
+                    items[1].status = Some("Venue unreachable".into());
+                    items[3].status = Some("Symbol not listed on this venue any more".into());
+                    &["watchlist_1", "watchlist_3"]
+                }
+                "drag" => {
+                    let s = &mut h.runtime_mut().app_mut().chart.sidebar_state;
+                    s.watchlist_drag_index = Some(1);
+                    s.watchlist_drop_index = Some(3);
+                    &["watchlist_0"]
+                }
+                "picker" => {
+                    let r = sb_hit(&h, "watchlist_flag_1");
+                    press_at(&mut h, win, r.x + r.width / 2.0, r.y + r.height / 2.0);
+                    assert!(h.runtime().app().chart.sidebar_state.watchlist_color_picker_open.is_some(), "the picker opened");
+                    &["watchlist_color_1_0", "watchlist_color_1_7"]
+                }
+                "colmenu" => {
+                    h.runtime_mut().app_mut().chart.sidebar_state.watchlist_config_dropdown_open = true;
+                    &["watchlist_cfg:show_spark", "watchlist_cfg:show_counters"]
+                }
+                _ => {
+                    let app = &mut h.runtime_mut().app_mut().chart;
+                    let id = app.watchlist_ui.active_list_id;
+                    app.watchlist_ui.column_config_mut(id).show_market_counters = true;
+                    // Pinned rows (the app rebuilds them from live counters only
+                    // when its sidebar data goes dirty).
+                    app.sidebar_state.counter_rows = (0..3)
+                        .map(|k| mlc_app_sidebar_content::types::CounterRowData {
+                            venue: ["binance", "bybit", "okx"][k].into(),
+                            funding_rate: Some(0.0001 * (k as f64 - 1.0)),
+                            countdown_secs: (k != 2).then_some(3725 + k as i64 * 600),
+                            d1h_pct: (k != 1).then_some(1.25 - k as f64),
+                            d24h_pct: Some(-3.5 + k as f64 * 2.0),
+                        })
+                        .collect();
+                    h.advance(0.017);
+                    assert!(!h.runtime().app().chart.sidebar_state.counter_rows.is_empty(), "counter rows");
+                    &["watchlist_metrics_sep"]
+                }
+            };
+            h.advance(0.017);
+            sidebar_pixels(&mut h, win, true);
+            assert!(h.runtime().app().chart.sidebar_on_dom(), "{state} is on DOM");
+            panel_matches(&mut h, win, ids);
         }
     }
 

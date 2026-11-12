@@ -439,7 +439,7 @@ fn object_tree(w: &Sidebar<'_>, content_w: f64, measure: &mut dyn FnMut(&str, &s
 }
 
 /// The `#rrggbbAA` fill the app makes by appending `aa` (hex) to a theme colour.
-fn hexa(hex: &str, aa: &str) -> String {
+pub fn hexa(hex: &str, aa: &str) -> String {
     alpha(hex, u8::from_str_radix(aa, 16).unwrap_or(255) as f64 / 255.0)
 }
 
@@ -506,8 +506,46 @@ fn signals(w: &Sidebar<'_>, content_w: f64, measure: &mut dyn FnMut(&str, &str) 
 
 /// The app's 1 px stroke along integer `y` from `l` to `r`: half cover on the rows
 /// either side.
-fn hline(l: f64, r: f64, y: f64, color: &str) -> El {
+pub fn hline(l: f64, r: f64, y: f64, color: &str) -> El {
     El::new("div.s-fill").css(format!("left: {l}px; top: {}px; width: {}px; height: 2px; opacity: 0.5; background: {color}", y - 1.0, r - l))
+}
+
+/// The app's 1 px outline `move_to(x, y)` → right → down → left → back up (not
+/// closed, butt caps, miter joins) on integer corners, as disjoint fills of the
+/// coverage it leaves: the sides straddle two pixel rows or columns at half cover,
+/// the inner corner pixels are covered by two halves (¾), the three mitred corners
+/// add a quarter pixel outside and the open corner (`x, y`) none.
+pub fn open_outline(x: f64, y: f64, w: f64, h: f64, color: &str) -> Vec<El> {
+    outline(x, y, w, h, color, false)
+}
+
+/// [`open_outline`] as the watchlist menu's 10 px checkboxes come out: no cover
+/// outside the far corners, and the open corner partly covered (measured off the
+/// app's pixels: ⅜ outside, 0.59 / 0.6 beside it).
+pub fn checkbox_outline(x: f64, y: f64, w: f64, h: f64, color: &str) -> Vec<El> {
+    outline(x, y, w, h, color, true)
+}
+
+fn outline(x: f64, y: f64, w: f64, h: f64, color: &str, small: bool) -> Vec<El> {
+    let f = |l: f64, t: f64, w: f64, h: f64, a: f64| El::new("div.s-fill").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px; background: {}", alpha(color, a)));
+    let (x1, y1) = (x + w, y + h);
+    let q = if small { 0.0 } else { 0.25 };
+    let mut out = vec![f(x, y - 1.0, w, 1.0, 0.5), f(x1, y - 1.0, 1.0, 1.0, q)];
+    if small {
+        out.extend([f(x - 1.0, y - 1.0, 1.0, 1.0, 0.3625), f(x, y - 1.0, 1.0, 1.0, 0.1875)]);
+    }
+    for row in [y, y1 - 1.0] {
+        out.extend([
+            f(x - 1.0, row, 1.0, 1.0, if small && row == y { 0.6 } else { 0.5 }),
+            f(x, row, 1.0, 1.0, 0.75),
+            f(x + 1.0, row, w - 2.0, 1.0, 0.5),
+            f(x1 - 1.0, row, 1.0, 1.0, 0.75),
+            f(x1, row, 1.0, 1.0, 0.5),
+        ]);
+    }
+    out.extend([f(x - 1.0, y + 1.0, 2.0, h - 2.0, 0.5), f(x1 - 1.0, y + 1.0, 2.0, h - 2.0, 0.5)]);
+    out.extend([f(x - 1.0, y1, 1.0, 1.0, q), f(x, y1, w, 1.0, 0.5), f(x1, y1, 1.0, 1.0, q)]);
+    out
 }
 
 /// `render_monitoring_panel` with its Performance tab (`render_performance_panel`);

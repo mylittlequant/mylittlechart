@@ -82,6 +82,8 @@ const SCENES: &[&str] = &[
     "main", "chart-settings", "user-settings", "chart-browser", "preset-rename",
     // A right sidebar panel open (`sb-` + the app's persisted panel key).
     "sb-watchlist", "sb-alerts", "sb-object_tree", "sb-signals", "sb-performance", "sb-screener", "sb-events",
+    // The watchlist with seeded rows, and its other states.
+    "wl-rows", "wl-status", "wl-drag", "wl-picker", "wl-colmenu", "wl-counters",
 ];
 
 fn open_scene(app: &mut mlc_app::ChartApp, scene: &str) {
@@ -97,12 +99,65 @@ fn open_scene(app: &mut mlc_app::ChartApp, scene: &str) {
                 app.open_preset_save_as();
             }
         }
+        s if s.starts_with("wl-") => {
+            app.sidebar_state.toggle_right_panel(mlc_app::ChartApp::str_to_panel("watchlist"));
+            app.sidebar_data_dirty = true;
+            if s == "wl-counters" {
+                let id = app.watchlist_ui.active_list_id;
+                app.watchlist_ui.column_config_mut(id).show_market_counters = true;
+            }
+        }
         s if s.starts_with("sb-") => {
             app.sidebar_state.toggle_right_panel(mlc_app::ChartApp::str_to_panel(&s[3..]));
             app.sidebar_data_dirty = true;
         }
         _ => {}
     }
+}
+
+/// Seeds the watchlist scenes after the app settled: rows the app does not rebuild
+/// unless its sidebar data goes dirty, and the state each scene shows.
+fn seed_watchlist(h: &mut HeadlessChartApp, scene: &str) {
+    use mlc_app_sidebar_content::types::WatchlistItem;
+    let app = h.inner_mut();
+    let s = &mut app.sidebar_state;
+    s.watchlist_items = (0..6)
+        .map(|i| WatchlistItem {
+            symbol: format!("SYM{i}USDT"),
+            exchange: "binance".into(),
+            last_price: 100.0 + i as f64 * 7.25,
+            change_percent: if i % 2 == 0 { 1.5 } else { -2.25 },
+            high_24h: 120.0,
+            low_24h: 90.0,
+            volume_24h: 1.5e6,
+            spark: (0..20).map(|k| ((k * (i + 3)) % 11) as f64).collect(),
+            ..Default::default()
+        })
+        .collect();
+    match scene {
+        "wl-status" => {
+            s.watchlist_items[1].status = Some("Venue unreachable".into());
+            s.watchlist_items[3].status = Some("Symbol not listed on this venue any more".into());
+        }
+        "wl-drag" => {
+            s.watchlist_drag_index = Some(1);
+            s.watchlist_drop_index = Some(3);
+        }
+        "wl-colmenu" => s.watchlist_config_dropdown_open = true,
+        "wl-counters" => {
+            s.counter_rows = (0..3)
+                .map(|k| mlc_app_sidebar_content::types::CounterRowData {
+                    venue: ["binance", "bybit", "okx"][k].into(),
+                    funding_rate: Some(0.0001 * (k as f64 - 1.0)),
+                    countdown_secs: (k != 2).then_some(3725 + k as i64 * 600),
+                    d1h_pct: (k != 1).then_some(1.25 - k as f64),
+                    d24h_pct: Some(-3.5 + k as f64 * 2.0),
+                })
+                .collect();
+        }
+        _ => {}
+    }
+    h.pump_once();
 }
 
 fn main() {
@@ -136,6 +191,17 @@ fn main() {
             let loaded = h.pump_until(|h| h.active_chart_id().is_some_and(|c| h.chart_bar_count(c) > 0), Duration::from_secs(wait));
             open_scene(h.inner_mut(), scene);
             for _ in 0..10 {
+                h.pump_once();
+            }
+            if scene.starts_with("wl-") {
+                seed_watchlist(&mut h, scene);
+            }
+            if *scene == "wl-picker" {
+                // Laid out once, then opened under row 1 as a click on its flag does.
+                let _ = render(&mut h, &mut state, w, hgt, 0);
+                let app = h.inner_mut();
+                let r = app.last_sidebar_result.as_ref().and_then(|r| r.watchlist_row_rects.get(1).map(|(_, r)| *r)).expect("row 1 laid out");
+                app.sidebar_state.watchlist_color_picker_open = Some((1, r.x, r.y + r.height));
                 h.pump_once();
             }
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);

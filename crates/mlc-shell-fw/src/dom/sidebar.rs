@@ -13,10 +13,10 @@
 //! metrics drag, the buttons.
 //!
 //! Covered: watchlist, alerts, events, object tree, signals, monitoring (its
-//! Performance tab) and screener, outside the states `ChartApp::sidebar_on_dom`
-//! refuses (the watchlist's column menu, colour picker, row drag, market counters
-//! and failing rows; a signal group that scrolls; the Connectors tab). Agents and
-//! the slot panels are still painted by the app.
+//! Performance tab) and screener, including the watchlist's column menu, colour
+//! picker, row drag, market counters and failing rows; outside the states
+//! `ChartApp::sidebar_on_dom` refuses (a signal group that scrolls, the Connectors
+//! tab). Agents and the slot panels are still painted by the app.
 
 use mlc_app_layout::ui::toolbar_theme::ToolbarTheme;
 use mlc_app_sidebar_content::render::{
@@ -35,6 +35,11 @@ use uzor::ui::dom::El;
 pub const VIEWPORT: &str = "right_sidebar:viewport";
 /// Paint slot prefix of the row sparklines (`{SPARK}{row}`); the ticker's is [`TICKER_SPARK`].
 pub const SPARK: &str = "sb:spark:";
+/// How far the sparkline slots reach past the line's box: its round caps and joins
+/// spill a pixel over, which the DOM would clip.
+pub const SPARK_BLEED: f64 = 2.0;
+/// The colour picker's "none" swatch cross (two 1.5 px strokes, round caps).
+pub const SWATCH_X: &str = "sb:swatch_x";
 /// The ticker footer's sparkline slot.
 pub const TICKER_SPARK: &str = "sb:tspark";
 /// The frosted backdrop's paint slot (the host calls `draw_blur_background` over the
@@ -74,6 +79,9 @@ pub struct Sidebar<'a> {
     pub app_content_h: f64,
     /// Now, unix ms (event times).
     pub now_ms: i64,
+    /// The sidebar in the app's own coordinates (what its stored popup positions,
+    /// like the colour picker's, are relative to).
+    pub app_rect: Rect,
 }
 
 impl Sidebar<'_> {
@@ -469,7 +477,7 @@ fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) 
             let bg = flag_bg.map(|c| format!("; background: {c}")).unwrap_or_default();
             row = row.child(El::new("div.s-hit").id(flag_id).css(format!("left: 0px; top: 0px; width: 10px; height: {ROW_H}px{bg}")));
             let cy = ROW_H / 2.0;
-            let mut cell = |row: El, i: usize, s: &str, font: &str, color: &str| -> El {
+            let cell = |row: El, i: usize, s: &str, font: &str, color: &str, measure: &mut dyn FnMut(&str, &str) -> f64| -> El {
                 let (l, r) = cols.clip(i);
                 let cw = (r - l).max(0.0);
                 if cw < 1.0 {
@@ -479,46 +487,71 @@ fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) 
                 let shown = truncate(measure, font, s, max);
                 row.child(cols.cell(i, &shown, cy, font, color, measure))
             };
-            row = cell(row, 0, &item.symbol, "12px sans-serif", &t.item_text);
+            row = cell(row, 0, &item.symbol, "12px sans-serif", &t.item_text, measure);
             let mut k = 1;
             if c.show_exchange {
-                row = cell(row, k, &mlc_core::venue_label(&item.exchange), "10px sans-serif", &t.item_text_muted);
+                row = cell(row, k, &mlc_core::venue_label(&item.exchange), "10px sans-serif", &t.item_text_muted, measure);
                 k += 1;
             }
             if c.show_account_type {
                 let at = if item.account_type.is_empty() { "S" } else { item.account_type.as_str() };
-                row = cell(row, k, at, "10px sans-serif", &t.item_text_muted);
+                row = cell(row, k, at, "10px sans-serif", &t.item_text_muted, measure);
                 k += 1;
             }
+            // A failing row says why across the rest of the row, in place of its
+            // price, change and spark (the app's `row_status`).
+            let status = item.status.as_deref();
+            let preempt = status.is_some() && c.show_last_price;
             if c.show_last_price {
-                row = cell(row, k, &format_price(item.last_price), data_font, &t.item_text);
+                if let Some(st) = status {
+                    let (l, _) = cols.clip(k);
+                    let span = (cols.clip(cols.n().saturating_sub(1)).1 - l - 4.0).max(0.0);
+                    if span >= 1.0 {
+                        let shown = truncate_words(measure, data_font, st, span);
+                        row = row.child(panels::mid_text(&shown, l + 2.0, cy, panels::At::L, data_font, &t.danger, measure));
+                    }
+                } else {
+                    row = cell(row, k, &format_price(item.last_price), data_font, &t.item_text, measure);
+                }
                 k += 1;
             }
             if c.show_change_pct {
-                row = cell(row, k, &format!("{:+.1}%", item.change_percent), data_font, chg_color(t, item.change_percent));
+                if !preempt {
+                    row = cell(row, k, &format!("{:+.1}%", item.change_percent), data_font, chg_color(t, item.change_percent), measure);
+                }
                 k += 1;
             }
             if c.show_spark {
                 let (l, r) = cols.clip(k);
                 let cw = (r - l).max(0.0);
-                if cw >= 14.0 && item.spark.len() >= 2 {
+                if cw >= 14.0 && item.spark.len() >= 2 && !preempt {
                     let sw = (cw - 6.0).min(64.0);
-                    row = row.child(El::new("div.s-abs").css(format!("left: {}px; top: 9px; width: {sw}px; height: {}px", l + 2.0, ROW_H - 18.0)).slot(format!("{SPARK}{i}")));
+                    row = row.child(El::new("div.s-abs").css(format!("left: {}px; top: {}px; width: {}px; height: {}px", l + 2.0 - SPARK_BLEED, 9.0 - SPARK_BLEED, sw + 2.0 * SPARK_BLEED, ROW_H - 18.0 + 2.0 * SPARK_BLEED)).slot(format!("{SPARK}{i}")));
+                } else if cw >= 1.0 && item.spark.len() < 2 && !c.show_last_price {
+                    if let Some(st) = status {
+                        let shown = truncate_words(measure, data_font, st, cw);
+                        let (x, at) = match cols.align(k) {
+                            Align::L => (l + 2.0, panels::At::L),
+                            Align::C => ((l + r) / 2.0, panels::At::C),
+                            Align::R => (r - 2.0, panels::At::R),
+                        };
+                        row = row.child(panels::mid_text(&shown, x, cy, at, data_font, &t.danger, measure));
+                    }
                 }
                 k += 1;
             }
             if c.show_change_abs {
                 let abs = item.last_price - (item.last_price / (1.0 + item.change_percent / 100.0));
-                row = cell(row, k, &format_price(abs), data_font, chg_color(t, item.change_percent));
+                row = cell(row, k, &format_price(abs), data_font, chg_color(t, item.change_percent), measure);
                 k += 1;
             }
             if c.show_high_low {
-                row = cell(row, k, &format_price_compact(item.high_24h), data_font, &t.item_text_muted);
-                row = cell(row, k + 1, &format_price_compact(item.low_24h), data_font, &t.item_text_muted);
+                row = cell(row, k, &format_price_compact(item.high_24h), data_font, &t.item_text_muted, measure);
+                row = cell(row, k + 1, &format_price_compact(item.low_24h), data_font, &t.item_text_muted, measure);
                 k += 2;
             }
             if c.show_volume {
-                row = cell(row, k, &format_volume(item.volume_24h), data_font, &t.item_text_muted);
+                row = cell(row, k, &format_volume(item.volume_24h), data_font, &t.item_text_muted, measure);
             }
             if hovered {
                 let dx = content_w - DEL_PAD - DEL - BTN_PAD;
@@ -528,10 +561,28 @@ fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) 
             }
             view = view.child(row);
         }
+        // Drag-reorder: the dragged row tinted, a 2 px line where it would land.
+        if let Some(d) = s.watchlist_drag_index {
+            let mut marks = El::new("div.s-abs").css("left: 0px; top: 0px; width: 0px; height: 0px");
+            marks = marks.child(fill(0.0, d as f64 * ROW_H, content_w, ROW_H, &panels::hexa("#4a9eff", "33")));
+            if let Some(drop) = s.watchlist_drop_index {
+                let y = drop as f64 * ROW_H - 1.0;
+                marks = marks.child(fill(cols.area_left, y, cols.area_right - cols.area_left, 2.0, "#4a9eff"));
+                // The app strokes it with the round caps its sparklines left set:
+                // a half disc past each end, ~0.82 of a pixel per row.
+                for x in [cols.area_left - 1.0, cols.area_right] {
+                    marks = marks.child(fill(x, y, 1.0, 2.0, &panels::alpha("#4a9eff", 0.815)));
+                }
+            }
+            view = view.child(marks);
+        }
     }
     root = root.child(view);
     if w.content_h() > view_h + 0.5 {
         root = root.child(El::new("div.s-scroll").css(format!("left: {content_w}px; height: {view_h}px")).slot(SCROLLBAR));
+    }
+    if let Some((row_idx, px, py)) = s.watchlist_color_picker_open {
+        root = root.child(color_picker(w, row_idx, px - w.app_rect.x, py - w.app_rect.y, view_h));
     }
 
     // Ticker footer.
@@ -546,12 +597,15 @@ fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) 
             let up = tk.change_pct >= 0.0;
             let col = if up { &t.success } else { &t.danger };
             let at = if tk.account_type.is_empty() { "S" } else { &tk.account_type };
+            if counters > 0.0 {
+                foot = foot.children(counters_block(w, measure));
+            }
             foot = foot.child(text(&format!("{} · {} · {}", tk.symbol, tk.exchange.to_uppercase(), at), 10.0, rw, y + 14.0, Align::L, "10px sans-serif", &t.item_text_muted));
             foot = foot.child(text(&format!("{} {:.2}", if up { "▲" } else { "▼" }, tk.last_price), 10.0, rw, y + 38.0, Align::L, "bold 22px sans-serif", col));
             let sign = if up { "+" } else { "" };
             foot = foot.child(text(&format!("{sign}{:.2}% · {sign}{:.2}", tk.change_pct, tk.change_abs), 10.0, rw, y + 58.0, Align::L, "11px monospace", col));
             if tk.spark.len() >= 2 {
-                foot = foot.child(El::new("div.s-abs").css(format!("left: 8px; top: {}px; width: {}px; height: {}px", y + 66.0, rw - 16.0, h - 72.0)).slot(TICKER_SPARK));
+                foot = foot.child(El::new("div.s-abs").css(format!("left: {}px; top: {}px; width: {}px; height: {}px", 8.0 - SPARK_BLEED, y + 66.0 - SPARK_BLEED, rw - 16.0 + 2.0 * SPARK_BLEED, h - 72.0 + 2.0 * SPARK_BLEED)).slot(TICKER_SPARK));
             }
         }
         root = root.child(foot);
@@ -559,7 +613,168 @@ fn watchlist(mut root: El, w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) 
         root = root.child(fill(0.0, y0, rw, if hov { 2.0 } else { 1.0 }, if hov { "#4a9eff" } else { t.separator.as_str() }));
         root = root.child(El::new("div.s-hit").id("watchlist_metrics_sep").css(format!("left: 0px; top: {}px; width: {rw}px; height: 7px", y0 - 3.0)));
     }
+    if s.watchlist_config_dropdown_open {
+        root = root.child(column_menu(w, measure));
+    }
     root
+}
+
+/// The app's `truncate_to_width_word_boundary`: cut at the last whole word that
+/// fits with a trailing "…".
+fn truncate_words(measure: &mut dyn FnMut(&str, &str) -> f64, font: &str, text: &str, max: f64) -> String {
+    if measure(font, text) <= max {
+        return text.to_string();
+    }
+    let avail = max - measure(font, "\u{2026}");
+    if avail <= 0.0 {
+        return String::new();
+    }
+    let mut t = text.to_string();
+    while !t.is_empty() && measure(font, &t) > avail {
+        t.pop();
+    }
+    if let Some(sp) = t.trim_end().rfind(char::is_whitespace) {
+        t.truncate(sp);
+    }
+    format!("{}\u{2026}", t.trim_end())
+}
+
+/// `render_watchlist_counters_block`: funding and OI change per venue, above the
+/// ticker in the footer (footer coordinates).
+fn counters_block(w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> Vec<El> {
+    use mlc_app_sidebar_content::render::{COUNTERS_CHROME_H, COUNTERS_ROW_H};
+    use panels::{mid_text, At};
+    let t = w.theme;
+    let rw = w.rect.width;
+    let (left, right) = (10.0, rw - 10.0);
+    let (show_next, show_24h) = (rw >= 240.0, rw >= 200.0);
+    let mut headers = vec!["VENUE", "FUND"];
+    if show_next {
+        headers.push("NEXT");
+    }
+    headers.push("OI 1H");
+    if show_24h {
+        headers.push("OI 24H");
+    }
+    let col_w = (right - left) / headers.len() as f64;
+    let col_x = |i: usize| left + col_w * i as f64;
+    let mut out = Vec::new();
+    for (i, h) in headers.iter().enumerate() {
+        out.push(mid_text(h, col_x(i), 8.0, At::L, "9px sans-serif", &t.item_text_muted, measure));
+    }
+    let font = "10px monospace";
+    let pct = |v: Option<f64>| match v {
+        Some(v) => (format!("{}{:.2}%", if v >= 0.0 { "+" } else { "" }, v), if v >= 0.0 { &t.success } else { &t.danger }),
+        None => ("\u{2014}".to_string(), &t.item_text_muted),
+    };
+    for (r, row) in w.state.counter_rows.iter().enumerate() {
+        let y = COUNTERS_CHROME_H - 4.0 + COUNTERS_ROW_H * r as f64 + COUNTERS_ROW_H / 2.0;
+        let mut cells: Vec<(String, &String)> = vec![(row.venue.chars().take(3).collect::<String>().to_uppercase(), &t.item_text_muted)];
+        cells.push(match row.funding_rate {
+            Some(rate) => {
+                let p = rate * 100.0;
+                (format!("{p:.4}%"), if p >= 0.0 { &t.success } else { &t.danger })
+            }
+            None => ("\u{2014}".to_string(), &t.item_text_muted),
+        });
+        if show_next {
+            let s = match row.countdown_secs {
+                Some(secs) => {
+                    let secs = secs.max(0);
+                    format!("-{:02}:{:02}:{:02}", secs / 3600, (secs % 3600) / 60, secs % 60)
+                }
+                None => "\u{2014}".to_string(),
+            };
+            cells.push((s, &t.item_text_muted));
+        }
+        cells.push(pct(row.d1h_pct));
+        if show_24h {
+            cells.push(pct(row.d24h_pct));
+        }
+        for (i, (s, c)) in cells.iter().enumerate() {
+            out.push(mid_text(s, col_x(i), y, At::L, font, c, measure));
+        }
+    }
+    out
+}
+
+/// The colour-flag popup under a row (`watchlist_color_picker_open`), clipped to the
+/// rows' viewport as the app draws it inside the scroll clip; sidebar coordinates.
+fn color_picker(w: &Sidebar<'_>, row_idx: usize, x: f64, y: f64, view_h: f64) -> El {
+    const COLORS: [&str; 8] = ["#ef5350", "#f59e0b", "#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#6b7280", ""];
+    let (sw, gap, pad) = (20.0, 4.0, 6.0);
+    let pw = COLORS.len() as f64 * (sw + gap) - gap + pad * 2.0;
+    let ph = sw + pad * 2.0;
+    let t = w.theme;
+    let vt = HEADER_H + COL_HEADER_H + 1.0;
+    let (x, y) = (x, y - vt);
+    let mut clip = El::new("div.s-clip").css(format!("left: 0px; top: {vt}px; width: {}px; height: {view_h}px", w.rect.width - SCROLLBAR_W));
+    clip = clip.child(fill(x, y, pw, ph, &t.dropdown_bg));
+    clip = clip.children(panels::checkbox_outline(x, y, pw, ph, &t.separator));
+    for (i, c) in COLORS.iter().enumerate() {
+        let sx = x + pad + i as f64 * (sw + gap);
+        let sy = y + pad;
+        let id = format!("watchlist_color_{row_idx}_{i}");
+        if c.is_empty() {
+            // The ×: the app's two 1.5 px strokes, painted by the host ([`SWATCH_X`]).
+            clip = clip.child(
+                El::new("div.s-abs").id(id).css(format!("left: {sx}px; top: {sy}px; width: {sw}px; height: {sw}px; background: {}", t.item_text_muted)).child(
+                    El::new("div.s-abs").css(format!("left: 0px; top: 0px; width: {sw}px; height: {sw}px")).slot(SWATCH_X),
+                ),
+            );
+        } else {
+            clip = clip.child(fill(sx, sy, sw, sw, c).id(id));
+        }
+    }
+    clip
+}
+
+/// `render_watchlist_config_dropdown`: the column checkboxes under the header,
+/// right-aligned; sidebar coordinates.
+fn column_menu(w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
+    let t = w.theme;
+    let c = w.columns;
+    let (row_h, pad, cb, gap, mw, sep_h) = (28.0, 10.0, 10.0, 8.0, 180.0, 8.0);
+    let options: [(&str, &str, bool); 11] = [
+        ("show_exchange", "Exchange", c.show_exchange),
+        ("show_account_type", "Type", c.show_account_type),
+        ("show_last_price", "Last Price", c.show_last_price),
+        ("show_change_pct", "Change %", c.show_change_pct),
+        ("show_spark", "Sparkline", c.show_spark),
+        ("show_change_abs", "Change", c.show_change_abs),
+        ("show_volume", "Volume", c.show_volume),
+        ("show_high_low", "High / Low", c.show_high_low),
+        ("show_ticker", "Metrics panel", c.show_ticker_section),
+        ("show_counters", "Fund/OI", c.show_market_counters),
+        ("show_align_columns", "Align columns", c.align_columns),
+    ];
+    let mh = row_h * options.len() as f64 + pad * 2.0 + sep_h;
+    let (x, y) = (w.rect.width - mw - 4.0, HEADER_H);
+    let mut menu = El::new("div.s-abs").css("left: 0px; top: 0px; width: 0px; height: 0px");
+    menu = menu.child(fill(x, y, mw, mh, &t.background).id("watchlist_cfg_backdrop"));
+    menu = menu.children(panels::checkbox_outline(x, y, mw, mh, &t.separator));
+    let last = options.len() - 1;
+    for (i, (field, label, on)) in options.iter().enumerate() {
+        let ry = y + pad + i as f64 * row_h + if i >= last { sep_h } else { 0.0 };
+        if i == last {
+            let ly = ry - sep_h / 2.0;
+            menu = menu.child(panels::hline(x + pad, x + mw - pad, ly, &t.separator));
+            // Its round caps: a half disc of radius ½ past each end.
+            for cx in [x + pad - 1.0, x + mw - pad] {
+                menu = menu.child(fill(cx, ly - 1.0, 1.0, 2.0, &panels::alpha(&t.separator, 0.196)));
+            }
+        }
+        let id = format!("watchlist_cfg:{field}");
+        let bg = if w.hov(&id) { format!("; background: {}", t.item_bg_hover) } else { String::new() };
+        menu = menu.child(El::new("div.s-hit").id(id).css(format!("left: {x}px; top: {ry}px; width: {mw}px; height: {row_h}px{bg}")));
+        let (cx, cy) = (x + pad, ry + (row_h - cb) / 2.0);
+        menu = menu.children(panels::checkbox_outline(cx, cy, cb, cb, &t.item_text_muted));
+        if *on {
+            menu = menu.child(fill(cx + 1.0, cy + 1.0, cb - 2.0, cb - 2.0, "#4a9eff"));
+        }
+        menu = menu.child(panels::mid_text(label, cx + cb + gap, ry + row_h / 2.0, panels::At::L, "12px sans-serif", &t.item_text, measure));
+    }
+    menu
 }
 
 /// The root in its frame: the backdrop slot, the root, the border's outer pixel.

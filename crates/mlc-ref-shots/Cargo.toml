@@ -17,6 +17,7 @@ mlc-app-test-harness = { path = "../mlc-app-test-harness" }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 png = "0.17"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 
 mlc-shell-fw = { path = "../mlc-shell-fw" }
 uzor = "=1.5.41"
