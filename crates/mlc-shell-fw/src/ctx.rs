@@ -32,12 +32,34 @@ pub struct ChartCtx<'a> {
     price_scale: Option<&'a PriceScale>,
     coord_override: Option<CoordinateSpaceOverride>,
     bars: Vec<Bar>,
+    font: String,
+}
+
+thread_local! {
+    static WIDTHS: std::cell::RefCell<std::collections::HashMap<(String, String), f64>> = Default::default();
+}
+
+/// `w`, the width `text` measured in `font` on the current context — or, on a
+/// context that measures nothing (the passes that only lay out and hit-test), the
+/// width a painting pass measured for it, so both passes lay out the same boxes.
+pub fn measured(font: &str, text: &str, w: f64) -> f64 {
+    WIDTHS.with(|m| {
+        let mut m = m.borrow_mut();
+        if w > 0.0 || text.is_empty() {
+            if w > 0.0 && m.len() < 4096 {
+                m.insert((font.to_string(), text.to_string()), w);
+            }
+            w
+        } else {
+            m.get(&(font.to_string(), text.to_string())).copied().unwrap_or(0.0)
+        }
+    })
 }
 
 impl<'a> ChartCtx<'a> {
     /// Wrap the frame's paint target (no viewport / price scale, as the shell passes).
     pub fn new(inner: &'a mut dyn UzorRenderContext) -> Self {
-        ChartCtx { inner, viewport: None, price_scale: None, coord_override: None, bars: Vec::new() }
+        ChartCtx { inner, viewport: None, price_scale: None, coord_override: None, bars: Vec::new(), font: String::new() }
     }
 }
 
@@ -80,7 +102,11 @@ impl<'a> Painter for ChartCtx<'a> {
 // ─── TextRenderer ─────────────────────────────────────────────────────────────
 
 impl<'a> TextRenderer for ChartCtx<'a> {
-    fn set_font(&mut self, font: &str) { self.inner.set_font(font) }
+    fn set_font(&mut self, font: &str) {
+        self.font.clear();
+        self.font.push_str(font);
+        self.inner.set_font(font)
+    }
     fn set_text_align(&mut self, align: TextAlign) { self.inner.set_text_align(align) }
     fn set_text_baseline(&mut self, baseline: TextBaseline) { self.inner.set_text_baseline(baseline) }
     fn fill_text(&mut self, text: &str, x: f64, y: f64) { self.inner.fill_text(text, x, y) }
@@ -90,7 +116,7 @@ impl<'a> TextRenderer for ChartCtx<'a> {
 // ─── TextMetrics ──────────────────────────────────────────────────────────────
 
 impl<'a> TextMetrics for ChartCtx<'a> {
-    fn measure_text(&self, text: &str) -> f64 { self.inner.measure_text(text) }
+    fn measure_text(&self, text: &str) -> f64 { measured(&self.font, text, self.inner.measure_text(text)) }
     fn text_bounds(&self, text: &str, font: &str) -> TextBounds { self.inner.text_bounds(text, font) }
 }
 

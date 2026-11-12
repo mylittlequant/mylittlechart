@@ -390,8 +390,11 @@ mod hosted {
         let (mut h, win) = host();
         // Top: symbol dropdown, timeframe button, an icon button; left: the active
         // crosshair, a split tool, a plain tool; right: two rail buttons, the mascot.
-        let spots = [(60.0, 52.0), (150.0, 52.0), (310.0, 52.0), (24.0, 96.0), (24.0, 142.0), (24.0, 420.0), (1254.0, 96.0), (1254.0, 140.0), (1254.0, 325.0)];
+        let spots = [(60.0, 52.0), (210.0, 52.0), (310.0, 52.0), (24.0, 96.0), (24.0, 142.0), (24.0, 420.0), (1254.0, 96.0), (1254.0, 140.0), (1254.0, 325.0)];
         let in_toolbars = |x: usize, y: usize| (32..72).contains(&y) || (y >= 72 && (x < 48 || x >= 1228));
+        // A painted frame first, as a window has: the passes that only hit-test
+        // reuse the label widths it measured.
+        window_pixels(&mut h, win, true);
         for (x, y) in spots {
             move_to(&mut h, win, x, y);
             let old = window_pixels(&mut h, win, false);
@@ -436,13 +439,16 @@ mod hosted {
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
     fn toolbar_presses_reach_the_app_as_before() {
-        // The DOM toolbar boxes take no presses: the app's own hit test gets them.
-        // The same presses with the app's own toolbars must leave the same state.
+        // The DOM toolbars take the presses and hand them to the app as its raw
+        // press and release: the same presses with the app's own toolbars must leave
+        // the same state (a dropdown, a rail panel, the active drawing tool).
         let (mut dom, wd) = host();
         let (mut old, wo) = host();
         old.runtime_mut().app_mut().toolbars_on_dom = false;
+        window_pixels(&mut dom, wd, true);
+        window_pixels(&mut old, wo, false);
         let mut opened = 0;
-        for (x, y) in [(150.0, 52.0), (60.0, 52.0), (1254.0, 96.0)] {
+        for (x, y) in [(210.0, 52.0), (60.0, 52.0), (1254.0, 96.0), (24.0, 142.0)] {
             press_at(&mut dom, wd, x, y);
             press_at(&mut old, wo, x, y);
             let a = dom.runtime().app().chart.panel_app.toolbar_state.open_dropdown_id.clone();
@@ -451,6 +457,9 @@ mod hosted {
             let ra = dom.runtime().app().chart.panel_app.toolbar_state.active_right_toolbar_id.clone();
             let rb = old.runtime().app().chart.panel_app.toolbar_state.active_right_toolbar_id.clone();
             assert_eq!(ra, rb, "press at {x},{y}");
+            let ta = dom.runtime().app().chart.panel_app.toolbar_state.active_tool_id.clone();
+            let tb = old.runtime().app().chart.panel_app.toolbar_state.active_tool_id.clone();
+            assert_eq!(ta, tb, "press at {x},{y}");
             opened += usize::from(a.is_some()) + usize::from(ra.is_some());
             press_at(&mut dom, wd, 700.0, 400.0);
             press_at(&mut old, wo, 700.0, 400.0);

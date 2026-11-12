@@ -209,6 +209,11 @@ pub struct HostedApp {
     pub last_hits: Vec<(String, uzor::types::Rect)>,
     /// The toolbars painted on DOM in the last frame, by slot ("top", "left", "right").
     pub toolbar_slots: Vec<&'static str>,
+    /// The toolbar item the DOM reported under the pointer last frame (its DOM id).
+    pub toolbar_hover: Option<String>,
+    /// The toolbar item held down whose press went to the app (DOM id).
+    toolbar_pressed: Option<String>,
+    toolbar_was_pressed: bool,
     /// The DOM chrome strip's hit rects of the last frame (empty while the app paints it).
     pub chrome_hits: Vec<(String, uzor::types::Rect)>,
     chart_settings_shown: bool,
@@ -256,6 +261,9 @@ impl HostedApp {
             last_hits: Vec::new(),
             chrome_hits: Vec::new(),
             toolbar_slots: Vec::new(),
+            toolbar_hover: None,
+            toolbar_pressed: None,
+            toolbar_was_pressed: false,
             chart_settings_shown: false,
             cs_scroll_seeded: false,
             pointer: PointerPoll::default(),
@@ -281,6 +289,10 @@ impl HostedApp {
         use mlc_app_layout::ui::toolbar_core::{capture, render_icon, IconId};
         let taken = capture::take();
         self.toolbar_slots.clear();
+        if taken.is_empty() {
+            return;
+        }
+        let (mut hover, mut clicked, mut pressed) = (None, None, None);
         let mut edges = Vec::new();
         for t in &taken {
             let r = cx.rect;
@@ -296,11 +308,14 @@ impl HostedApp {
             let sheet = cached_sheet(&mut self.toolbar_sheets[slot].1, css);
             let (tree, own) = {
                 let render = &mut *cx.render;
+                // The passes that only lay out and hit-test reuse the widths the
+                // painting pass measured: the boxes they hit-test are the ones painted.
                 let mut measure = |s: &str| {
                     render.set_font("13px sans-serif");
-                    render.measure_text(s)
+                    let w = render.measure_text(s);
+                    ctx::measured("13px sans-serif", s, w)
                 };
-                dom::toolbar::tree(t, o, &mut measure)
+                dom::toolbar::tree(t, o.width, o.height, self.toolbar_hover.as_deref(), &mut measure)
             };
             let anim = t.config.mascot_anim;
             let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
@@ -321,7 +336,14 @@ impl HostedApp {
                     render_icon(ctx, &IconId::new(icon), mlc_app_layout::ui::toolbar_core::WidgetRect::new(ir.x, ir.y, ir.width, ir.height), color, anim);
                 }
             };
-            uzor_framework::widgets::kit::dom(o, &sheet, tree).paint_slots(&mut painter).build(cx);
+            let resp = uzor_framework::widgets::kit::dom(o, &sheet, tree).paint_slots(&mut painter).build(cx);
+            hover = hover.or(resp.hovered.clone());
+            clicked = clicked.or(resp.clicked);
+            for (id, _) in resp.dom.hits() {
+                if cx.view.is_pressed(&uzor::WidgetId::from(id)) {
+                    pressed = Some(id.to_string());
+                }
+            }
             self.toolbar_slots.push(t.slot);
             if let Some(e) = dom::toolbar::edge(t, o) {
                 edges.push((e, sheet));
@@ -330,6 +352,29 @@ impl HostedApp {
         for (e, sheet) in edges {
             uzor_framework::widgets::kit::dom(e, &sheet, dom::toolbar::edge_tree(e)).build(cx);
         }
+        self.toolbar_hover = hover;
+        let (x, y) = self.pointer.last.unwrap_or(self.input.last_mouse_pos);
+        // The DOM laid the items out and says which one the pointer is on; the
+        // press itself goes to the app as the raw press it always got (its hit test
+        // sees the same boxes): it arms what it arms on a press (a drawing group's
+        // drag onto the favourites arc), and its release runs the click — the
+        // item's action, a double-click, a drag's end — through the app's own path.
+        use mlc_app_input_shell::{MouseBtn, ShellEvent};
+        if pressed.is_some() && !self.toolbar_was_pressed {
+            self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+            self.pointer.held = Some(MouseBtn::Left);
+            self.toolbar_pressed = pressed.clone();
+        }
+        if let Some(id) = clicked {
+            // The DOM reports the click a frame after the release the app already
+            // got; only a press it never saw (down and up between two frames) is
+            // handed over here, whole.
+            if self.toolbar_pressed.take().as_deref() != Some(id.as_str()) {
+                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: true, x, y });
+                self.dispatch(ShellEvent::MouseInput { button: MouseBtn::Left, pressed: false, x, y });
+            }
+        }
+        self.toolbar_was_pressed = pressed.is_some();
     }
 
     /// The chrome strip on DOM, when it covers the state; `false` = the app paints it.
@@ -341,7 +386,7 @@ impl HostedApp {
         }
         let sheet = cached_sheet(&mut self.chrome_sheet, dom::chrome::css(&self.chrome));
         cx.render.set_font("12px sans-serif");
-        let text_w: Vec<f64> = self.chrome.tabs.iter().map(|t| cx.render.measure_text(&t.name)).collect();
+        let text_w: Vec<f64> = self.chrome.tabs.iter().map(|t| ctx::measured("12px sans-serif", &t.name, cx.render.measure_text(&t.name))).collect();
         let tree = dom::chrome::tree(&self.chrome, r.width, &text_w);
         let strip = uzor::types::Rect::new(r.x, r.y, r.width, chrome::CHROME_HEIGHT);
         let resp = uzor_framework::widgets::kit::dom(strip, &sheet, tree).build(cx);
