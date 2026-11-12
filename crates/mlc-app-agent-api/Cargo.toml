@@ -18,7 +18,7 @@ mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indic
 mlc-backend-data-bridge = { version = "0.5.656", path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 mlc-vault = { version = "0.5.656", path = "../mlc-vault", package = "mylittlechart-vault" }
-uzor = "=1.5.36"
+uzor = "=1.5.37"
 tokio = { version = "1", features = ["sync"] }
 serde_json = "1"
 rand.workspace = true

@@ -20,12 +20,12 @@ mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
-uzor = { version = "=1.5.36", default-features = false, features = ["flow-flex"] }
-uzor-framework = { version = "=1.5.36", default-features = false }
+uzor = { version = "=1.5.37", default-features = false, features = ["flow-flex"] }
+uzor-framework = { version = "=1.5.37", default-features = false }
 web-time = "1"
 
 [dev-dependencies]
-uzor-render-tiny-skia = "=1.5.36"
+uzor-render-tiny-skia = "=1.5.37"
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 png = "0.17"
 

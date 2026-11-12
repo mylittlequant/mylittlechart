@@ -10,8 +10,8 @@ description = "VelloHybridChartRenderContext, a chart-aware wrapper over the Vel
 name = "mlc_app_render_context_vello_hybrid"
 
 [dependencies]
-uzor = "=1.5.36"
-uzor-render-vello-hybrid = "=1.5.36"
+uzor = "=1.5.37"
+uzor-render-vello-hybrid = "=1.5.37"
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]
