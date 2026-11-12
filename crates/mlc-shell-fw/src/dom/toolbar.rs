@@ -168,10 +168,12 @@ pub fn tree(t: &CapturedToolbar, w: f64, h: f64, hovered: Option<&str>, measure:
     let (is, sp, pad, sep) = (cfg.item_size, cfg.spacing, cfg.padding, cfg.separator_size);
     let mut slots = Vec::new();
     let full = format!("width: {w}px; height: {h}px");
-    let mut root = El::new("div.t-bar")
-        .css(full.clone())
-        .child(El::new("div.t-blur").slot(format!("{BLUR}{}:bar", t.slot)).css(full.clone()))
-        .child(El::new("div.t-bg").css(full.clone()));
+    let mut root = El::new("div.t-bar").css(full.clone());
+    if !t.app_painted_background {
+        root = root
+            .child(El::new("div.t-blur").slot(format!("{BLUR}{}:bar", t.slot)).css(full.clone()))
+            .child(El::new("div.t-bg").css(full.clone()));
+    }
     // Gap after a box along the main axis.
     let gap = |g: f64| if horizontal { format!("margin-right: {g}px") } else { format!("margin-bottom: {g}px") };
     // A lit item's face: the blur, then the fill (`draw_hover_rounded_rect` /

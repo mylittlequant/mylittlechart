@@ -1132,7 +1132,15 @@ pub fn draw_toolbar_with_icons(
         // runs here as always (hit rects, hover, scroll limits), nothing is drawn.
         let result = draw_toolbar_inner(&mut capture::LayoutOnly(&mut *ctx), config, rect, theme, hovered_id);
         if !ctx.use_convex_glass_buttons() && capture::host_can_paint(config, &result) {
+            let app_painted_background = slot == "bottom";
+            if app_painted_background {
+                // As `draw_toolbar_inner` begins.
+                ctx.draw_blur_background(rect.x, rect.y, rect.width, rect.height);
+                ctx.set_fill_color(&theme.background);
+                ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+            }
             capture::push(capture::CapturedToolbar {
+                app_painted_background,
                 slot,
                 config: config.clone(),
                 rect,
@@ -2078,6 +2086,10 @@ pub mod capture {
         pub hovered: Option<String>,
         /// The layout: item rects, separators.
         pub result: ToolbarResult,
+        /// The bar's background (blur + fill) was painted here, in the app's pass:
+        /// the bottom bar's, because the sidebar's backdrop blur, drawn later in the
+        /// same pass, reaches into it and must find the bar there, not the chart.
+        pub app_painted_background: bool,
     }
 
     thread_local! {
