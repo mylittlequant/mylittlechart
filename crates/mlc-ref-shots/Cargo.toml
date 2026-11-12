@@ -1,0 +1,22 @@
+[package]
+name = "mlc-ref-shots"
+description = "Reference screenshots of the current desktop app (mlc-app + chrome on the tiny-skia context) at a given size, for the pixel-perfect port onto uzor-framework."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "mlc-ref-shots"
+path = "src/main.rs"
+
+[dependencies]
+mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
+mlc-app-test-harness = { path = "../mlc-app-test-harness" }
+mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
+png = "0.17"
+mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
+
+[lints]
+workspace = true
