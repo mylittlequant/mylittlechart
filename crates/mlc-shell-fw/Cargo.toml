@@ -33,6 +33,7 @@ png = "0.17"
 [features]
 default = []
 native = ["uzor-framework/native"]
+dev-control = ["native", "uzor-framework/dev-control"]
 
 [lints]
 workspace = true

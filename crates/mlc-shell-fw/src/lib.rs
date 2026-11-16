@@ -1003,6 +1003,27 @@ impl App for HostedApp {
             _ => {}
         }
     }
+
+    #[cfg(feature = "dev-control")]
+    fn automation_state(&self) -> Option<String> {
+        let dom = &self.chart.panel_app.dom_hosted;
+        // No volatile counters here: `settle` compares this report, so a
+        // per-frame field would keep it "changing" forever.
+        Some(format!(
+            "{{\"app\":\"mlc-fw\",\"size\":[{},{}],\"chrome_on_dom\":{},\"toolbars_on_dom\":{},\"dom_hosted\":{{\"preset_name\":{},\"chart_settings\":{},\"sidebar\":{},\"user_settings\":{}}},\"sidebar_shown\":{},\"chart_settings_shown\":{},\"preset_name_open\":{}}}",
+            self.size.0,
+            self.size.1,
+            self.chrome_on_dom,
+            self.toolbars_on_dom,
+            dom.preset_name,
+            dom.chart_settings,
+            dom.sidebar,
+            dom.user_settings,
+            self.sidebar_shown,
+            self.chart_settings_shown,
+            self.preset_name.is_some(),
+        ))
+    }
 }
 
 /// `slot`'s sheet for `css`, parsed again only when the CSS or the media generation
