@@ -16,10 +16,11 @@ use super::sidebar::{Sidebar, SCROLLBAR, VIEWPORT};
 const SCROLLBAR_W: f64 = 8.0;
 /// The text box of [`base_text`]: taller than any line it holds.
 const AT_H: f64 = 40.0;
-/// Where the DOM puts the alphabetic baseline below the middle of a text box, per px
-/// of font size: it centres the line on Inter's ascent + descent (1984 + 494 of
-/// 2048) and draws at the ascent.
-const DOM_BASELINE: f64 = 1984.0 / 2048.0 - (1984.0 + 494.0) / 2048.0 / 2.0;
+/// The first family of a canvas font string, for the DOM's per-family metrics
+/// (uzor `font-metrics: auto`, >= 1.5.43).
+fn family_of(font: &str) -> &str {
+    font.split_once("px").map(|(_, rest)| rest.trim()).unwrap_or("Inter")
+}
 
 /// How a run sits on its anchor `x`.
 #[derive(Clone, Copy, PartialEq)]
@@ -53,15 +54,27 @@ fn ascent(font: &str) -> f64 {
 /// alignment (a box centred on, or ending at, the anchor), so the pen is the same to
 /// the bit.
 pub fn base_text(s: &str, x: f64, at: At, base: f64, font: &str, color: &str) -> El {
+    base_text_ws(s, x, at, base, font, color, "")
+}
+
+/// [`base_text`] with `white-space: pre` so a run's leading/doubled spaces survive
+/// at the app's pen width (uzor >= 1.5.43).
+fn pre_text(s: &str, x: f64, at: At, base: f64, font: &str, color: &str) -> El {
+    base_text_ws(s, x, at, base, font, color, "white-space: pre; ")
+}
+
+fn base_text_ws(s: &str, x: f64, at: At, base: f64, font: &str, color: &str, ws: &str) -> El {
     const W: f64 = 1024.0;
-    let top = base - AT_H / 2.0 - DOM_BASELINE * px_of(font);
+    // With `font-metrics: auto` the DOM centres each face's own ascent+descent;
+    // place the box so its baseline lands exactly on the app's `base`.
+    let top = base - uzor::ui::css_text::baseline(px_of(font), AT_H, uzor::ui::css_text::metrics_for(family_of(font)));
     let (left, align) = match at {
         At::L => (x, "left"),
         At::C => (x - W / 2.0, "center"),
         At::R => (x - W, "right"),
     };
     El::new("div.s-at")
-        .css(format!("left: {left}px; top: {top}px; width: {W}px; text-align: {align}; {}; color: {color}", super::sidebar::font_css(font)))
+        .css(format!("left: {left}px; top: {top}px; width: {W}px; text-align: {align}; font-metrics: auto; {ws}{}; color: {color}", super::sidebar::font_css(font)))
         .text(s.to_string())
 }
 
@@ -77,24 +90,12 @@ pub fn mid_text(s: &str, x: f64, y: f64, at: At, font: &str, color: &str, measur
 
 /// [`base_text`], except that a run with spaces the DOM would collapse (leading,
 /// trailing or doubled) is drawn as its pieces at the app's pen offsets.
-fn runs(s: &str, x: f64, at: At, base: f64, font: &str, color: &str, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
-    if !(s.starts_with(' ') || s.contains("  ")) {
-        return base_text(s, x, at, base, font, color);
+fn runs(s: &str, x: f64, at: At, base: f64, font: &str, color: &str, _measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
+    if s.starts_with(' ') || s.contains("  ") {
+        pre_text(s, x, at, base, font, color)
+    } else {
+        base_text(s, x, at, base, font, color)
     }
-    let left = match at {
-        At::L => x,
-        At::C => x - measure(font, s) / 2.0,
-        At::R => x - measure(font, s),
-    };
-    let mut el = El::new("div.s-abs").css("left: 0px; top: 0px; width: 0px; height: 0px");
-    let mut i = 0;
-    for piece in s.split(' ') {
-        if !piece.is_empty() {
-            el = el.child(base_text(piece, left + measure(font, &s[..i]), At::L, base, font, color));
-        }
-        i += piece.len() + 1;
-    }
-    el
 }
 
 /// A filled box.
