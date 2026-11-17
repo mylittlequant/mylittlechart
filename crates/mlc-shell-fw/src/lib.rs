@@ -735,13 +735,9 @@ impl HostedApp {
         ));
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let st = &self.chart.panel_app.user_settings_state;
-        // General and Persistence are DOM-ported; other tabs stay app-painted so
-        // the hosted and app-hosted renders agree until they are ported.
-        if !matches!(
-            st.active_tab,
-            mlc_app_layout::ui::modal_settings::UserSettingsTab::General
-                | mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence
-        ) {
+        // The app-side gate decides which tabs the DOM tree can render; other tabs
+        // stay app-painted so the hosted and app-hosted renders agree until ported.
+        if !self.chart.panel_app.user_settings_on_dom() {
             return;
         }
         let at = us::frame(cx.rect, chrome::CHROME_HEIGHT, st);
@@ -758,8 +754,16 @@ impl HostedApp {
         let (ch, vh, off) = us::scrollbar(st, content_h);
         let dragging = match st.active_tab {
             mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => st.persistence_tab_scroll.is_dragging,
+            mlc_app_layout::ui::modal_settings::UserSettingsTab::Performance => st.performance_tab_scroll.is_dragging,
             _ => st.general_tab_scroll.is_dragging,
         };
+        // Performance slider slots: committed value unless a drag preview is live.
+        let lang = mlc_core::i18n::current_language();
+        let floating = st.data_slider_floating();
+        let bg_val = match floating { Some(("data_bg_bars", v)) => v, _ => st.data_bg_bars as f64 };
+        let max_val = match floating { Some(("data_max_bars", v)) => v, _ => st.data_max_bars as f64 };
+        let bg_label = mlc_core::i18n::UserSettingsKey::SliderBgBars.get(lang);
+        let max_label = mlc_core::i18n::UserSettingsKey::SliderMaxBars.get(lang);
         // The app's General tab scrollbar theme (`render_user_settings_modal`).
         let wt = mlc_app_layout::ui::widgets::WidgetTheme {
             bg_normal: tt.item_bg_hover.clone(),
@@ -784,6 +788,15 @@ impl HostedApp {
                 let mut c = ctx::ChartCtx::new(ctx);
                 let state = if dragging { ScrollbarState::Dragging } else { ScrollbarState::Active };
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(ch, vh, off), state, f.rect, &wt, None);
+            } else if f.key == us::SLIDER_BG || f.key == us::SLIDER_MAX {
+                use mlc_app_layout::ui::widgets::slider::{render_single_slider, SliderConfig};
+                let mut c = ctx::ChartCtx::new(ctx);
+                let (cfg, val, label) = if f.key == us::SLIDER_BG {
+                    (SliderConfig::new(300.0, 10000.0).with_step(100.0), bg_val, bg_label)
+                } else {
+                    (SliderConfig::new(0.0, 50000.0).with_step(500.0), max_val, max_label)
+                };
+                render_single_slider(&mut c, &cfg, val, f.rect, label, &wt, false, None);
             }
         };
         // DOM hits carry the legacy ids; forward clicks to the app's dispatcher so

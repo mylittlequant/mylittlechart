@@ -417,6 +417,86 @@ fn persistence_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(
     (els, y)
 }
 
+/// The Performance tab's two slider controls, painted by the legacy
+/// `render_single_slider` into paint slots (the chart-as-SlotPainter pattern):
+/// DOM owns the row layout, hits and scroll; the slider's label/track/handle/
+/// number-input stay pixel-exact until catalog adoption replaces the slot.
+pub const SLIDER_BG: &str = "us:slider:bg";
+pub const SLIDER_MAX: &str = "us:slider:max";
+
+/// The Performance tab: indicator-recalc radio group (full rows with
+/// descriptions), the diagnostics checkbox, and the two data/cache sliders.
+/// Geometry mirrors `render_performance_tab` + `draw_radio_group(compact=false)`
+/// + `render_single_slider` row placement.
+fn performance_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str, &str) -> f64) -> (Vec<El>, f64) {
+    let lang = current_language();
+    let mut els = Vec::new();
+    let w = ROWS_W;
+    let mut y = 0.0;
+    let muted = look.muted.clone();
+
+    els.push(top_text(UserSettingsKey::SectionIndicatorRecalc.get(lang), 0.0, y, At::L, "12px sans-serif", &muted, measure));
+    y += 22.0;
+
+    // Full-row radios: 52 px rows 8 px apart, ring centre at +14, label top +4,
+    // description top +24, text at x+30. Hover fill via `.us-row:hover` (6 px).
+    let options = [
+        ("PerFrame", "Per Frame", "Recalculate once per rendered frame. Best balance of accuracy and performance."),
+        ("PerTick", "Per Tick", "Recalculate on every incoming trade. Most accurate, higher CPU. Best for agents."),
+        ("PerBar", "Per Bar", "Recalculate only when a new bar closes. Minimal CPU, suitable for long timeframes."),
+    ];
+    let selected = match s.recalc_mode_label.as_str() {
+        "Per Tick" => 1,
+        "Per Bar" => 2,
+        _ => 0,
+    };
+    for (i, (key, label, desc)) in options.iter().enumerate() {
+        let on = i == selected;
+        els.push(
+            El::new("div.us-row")
+                .css(format!("left: 0px; top: {y}px; width: {w}px; height: 52px; background: transparent"))
+                .id(format!("user_settings:recalc_mode:{key}"))
+                .tab(),
+        );
+        let (cx, cy) = (11.0, y + 14.0);
+        let ring_c = if on { &look.accent } else { &look.line };
+        els.push(bx(cx - 7.75, cy - 7.75, 15.5, 15.5, &format!("border: 1.5px solid {ring_c}; border-radius: 7.75px")));
+        if on {
+            els.push(bx(cx - 4.0, cy - 4.0, 8.0, 8.0, &format!("background: {}; border-radius: 4px", look.accent)));
+        }
+        els.push(top_text(label, 30.0, y + 4.0, At::L, "13px sans-serif", if on { &look.text_on } else { &look.text }, measure));
+        els.push(top_text(desc, 30.0, y + 24.0, At::L, "11px sans-serif", &muted, measure));
+        y += 60.0;
+    }
+    y = y - 8.0 + 24.0;
+
+    // Diagnostics checkbox row (24 px) at +18 under its section label.
+    els.push(top_text(UserSettingsKey::SectionDiagnostics.get(lang), 0.0, y, At::L, "12px sans-serif", &muted, measure));
+    let cb_y = y + 18.0;
+    els.push(bx(0.0, cb_y, w, 24.0, "transparent").id("user_settings:diagnostics_toggle").tab());
+    els.push(ring(0.0, cb_y + 4.0, 16.0, 16.0, 2.0, &look.line));
+    if s.diagnostics_enabled {
+        els.push(bx(3.0, cb_y + 7.0, 10.0, 10.0, &format!("background: {}; border-radius: 1px", look.text_on)));
+    }
+    els.push(mid_text(UserSettingsKey::EnableDiagnosticLogging.get(lang), 26.0, cb_y + 12.0, At::L, "12px sans-serif", &look.text, measure));
+    els.push(top_text("Logs trade and recalculation counts every 5 seconds.", 26.0, cb_y + 26.0, At::L, "11px sans-serif", &muted, measure));
+    y = cb_y + 26.0 + 15.0;
+
+    // Data & cache: two slider rows (28 px) each followed by an 11 px description.
+    y += 24.0;
+    els.push(top_text(UserSettingsKey::SectionDataCache.get(lang), 0.0, y, At::L, "12px sans-serif", &muted, measure));
+    y += 22.0;
+    for (slot, desc_key) in [(SLIDER_BG, UserSettingsKey::DescBgBars), (SLIDER_MAX, UserSettingsKey::DescMaxBars)] {
+        els.push(bx(0.0, y, w, 28.0, "transparent").id(format!("user_settings:{}", if slot == SLIDER_BG { "data_bg_bars" } else { "data_max_bars" })).tab());
+        els.push(bx(0.0, y, w, 28.0, "").paint_slot(slot));
+        y += 28.0;
+        els.push(top_text(desc_key.get(lang), 4.0, y, At::L, "11px sans-serif", &muted, measure));
+        y += 14.0;
+        y += 8.0;
+    }
+    (els, y)
+}
+
 /// What the app's input says the pointer is on (its own hit test, last frame).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Hover {
@@ -446,16 +526,24 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     let _ = hover;
     let tabs = s.visible_tabs();
     let active = s.active_tab;
-    let rail = El::new("div.m-rail").children(tabs.iter().map(|t| {
-        let cls = if *t == active { "button.m-tab.on" } else { "button.m-tab" };
+    // The app highlights `position(active).unwrap_or(0)`: a tab the rail no longer
+    // shows (e.g. Sync) falls back to the first cell, not to no highlight.
+    let active_i = tabs.iter().position(|t| *t == active).unwrap_or(0);
+    let rail = El::new("div.m-rail").children(tabs.iter().enumerate().map(|(i, t)| {
+        let cls = if i == active_i { "button.m-tab.on" } else { "button.m-tab" };
         El::new(cls).id(format!("user_settings:tab:{}", t.id())).tab().svg(tab_icon(*t))
     }));
     let (rows, content_h) = match active {
-        mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => persistence_rows(s, look, measure),
+        UserSettingsTab::Persistence => persistence_rows(s, look, measure),
+        UserSettingsTab::Performance => performance_rows(s, look, measure),
+        // The legacy Sync arm paints nothing (`=> {}`); the shell alone is the tab.
+        UserSettingsTab::Sync => (Vec::new(), 0.0),
         _ => general_rows(s, look, measure),
     };
     let scroll = match active {
-        mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
+        UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
+        UserSettingsTab::Performance => s.performance_tab_scroll.animated_offset(),
+        UserSettingsTab::Sync => 0.0,
         _ => s.general_tab_scroll.animated_offset(),
     };
     let view = El::new("div.u-view").child(El::new("div.u-rows").css(format!("top: {}px; height: {content_h}px", -scroll)).children(rows));
@@ -497,7 +585,7 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     // the DOM dialog's border sits over whatever is behind it.
     let under = El::new("div.u-under").css(format!("left: {fx}px; top: {fy}px; width: {W}px; height: {H}px"));
     // The old active tab reached under the rail's edge rule (one more column).
-    let tab_i = tabs.iter().position(|t| *t == active).unwrap_or(0) as f64;
+    let tab_i = active_i as f64;
     let tab_edge = El::new("div.u-tab-edge").css(format!("left: {}px; top: {}px; width: 1px; height: 44px", fx + RAIL_W - 1.0, fy + HEADER_H + tab_i * 44.0));
     let rules = [rule(fx + RAIL_W - 1.0, fy + HEADER_H + tab_i * 44.0, 1.0, 44.0), rule(fx + RAIL_W - 1.0, fy + HEADER_H, W - RAIL_W + 1.0, 1.0), rule(fx + RAIL_W, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H)];
     // A hovered tab's fill reaches under the rail rule too.
@@ -514,6 +602,8 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
 pub fn scrollbar(s: &UserSettingsState, content_h: f64) -> (f64, f64, f64) {
     let off = match s.active_tab {
         UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
+        UserSettingsTab::Performance => s.performance_tab_scroll.animated_offset(),
+        UserSettingsTab::Sync => 0.0,
         _ => s.general_tab_scroll.animated_offset(),
     };
     (content_h, VIEW_H, off)
