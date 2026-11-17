@@ -767,7 +767,7 @@ impl HostedApp {
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(ch, vh, off), state, f.rect, &wt, None);
             }
         };
-        // No hits: the input stays the app's, unhandled.
+        // No DOM hits: the input (radios included) stays the app's legacy zones.
         uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
     }
 

@@ -866,6 +866,22 @@ mod hosted {
 
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn user_settings_radio_clicks_reach_the_app() {
+        let (mut h, _win) = host();
+        h.runtime_mut().app_mut().chart.open_user_settings();
+        // The G25 forwarding target: the public setter the DOM host will call with
+        // a radio hit. (Click-through z-order vs the scroll viewport is a uzor
+        // issue tracked separately; here we exercise the pick application.)
+        h.runtime_mut().app_mut().chart.apply_user_settings_radio("language:ru");
+        h.advance(0.017);
+        assert_eq!(h.runtime().app().chart.panel_app.user_settings_state.language, "ru", "radio pick sets language");
+        h.runtime_mut().app_mut().chart.apply_user_settings_radio("control_point_shape:Square");
+        h.advance(0.017);
+        assert_eq!(h.runtime().app().chart.panel_app.user_settings_state.control_point_shape, mlc_core::drawing::primitives_v2::ControlPointShape::Square);
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
     fn the_watchlist_fallback_states_paint_what_the_app_painted() {
         // The states the host used to leave to the app: failing rows, a row drag,
         // the colour picker, the column menu and the market counters.

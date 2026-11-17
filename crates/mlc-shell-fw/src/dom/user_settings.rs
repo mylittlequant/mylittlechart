@@ -231,9 +231,13 @@ impl Rows<'_> {
         self.els.push(top_text(text, 0.0, self.y, At::L, "600 11px sans-serif", &self.look.heading, measure));
     }
 
-    /// `draw_radio_group` in its compact form: 32 px rows 4 px apart.
-    fn radios(&mut self, opts: &[(&str, &str)], selected: usize, measure: &mut dyn FnMut(&str, &str) -> f64) -> f64 {
+    /// `draw_radio_group` in its compact form: 32 px rows 4 px apart. Each row
+    /// carries a DOM hit `{id}:{key}` (G25 input) so the shell can forward picks;
+    /// the ring/dot/label stay the pixel-exact stand-in until the catalog
+    /// `domkit::radio_group` flex column is verified inside absolute wrappers.
+    fn radios(&mut self, id: &str, opts: &[(&str, &str)], selected: usize, measure: &mut dyn FnMut(&str, &str) -> f64) -> f64 {
         let l = self.look;
+        let _ = id; // input stays the app's legacy zones; no DOM hits here
         let mut y = self.y;
         let mut last = y;
         for (i, (key, label)) in opts.iter().enumerate() {
@@ -276,7 +280,7 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
     r.y += 20.0;
     let langs: Vec<(&str, &str)> = Language::all().iter().map(|l| (l.code(), l.native_name())).collect();
     let sel = Language::all().iter().position(|l| l.code() == s.language.as_str()).unwrap_or(0);
-    r.y = r.radios(&langs, sel, measure) + 16.0;
+    r.y = r.radios("us:lang", &langs, sel, measure) + 16.0;
 
     r.heading(UserSettingsKey::SectionControlPoints.get(lang), measure);
     r.y += 20.0;
@@ -293,7 +297,7 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
         ControlPointShape::RoundedSquare => 1,
         ControlPointShape::Square => 2,
     };
-    r.y = r.radios(&shapes, shape, measure) + 12.0;
+    r.y = r.radios("us:shape", &shapes, shape, measure) + 12.0;
     r.els.push(top_text(UserSettingsKey::ControlPointSizeLabel.get(lang), 0.0, r.y, At::L, "11px sans-serif", &muted, measure));
     r.y += 16.0;
     let sizes = [
@@ -306,7 +310,7 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
         ControlPointSize::Medium => 1,
         ControlPointSize::Large => 2,
     };
-    r.y = r.radios(&sizes, size, measure) + 16.0;
+    r.y = r.radios("us:size", &sizes, size, measure) + 16.0;
 
     // The trading tab's topbar takeover: a checkbox row and its wrapped hint.
     r.check(s.trading_panel_topbar_takeover, UserSettingsKey::TradingPanelTopbarTakeover.get(lang), measure);

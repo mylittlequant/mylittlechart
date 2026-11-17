@@ -9917,6 +9917,38 @@ impl ChartApp {
         log::debug!("[ChartApp] control_point_shape = {:?}", shape);
     }
 
+    /// Apply a General-tab radio pick forwarded from the uzor-DOM host
+    /// (`domkit::radio_group` hits), using the legacy hit ids
+    /// (`language:{code}`, `control_point_shape:{Variant}`,
+    /// `control_point_size:{Variant}`). Mirrors the legacy dispatcher arms so
+    /// the DOM-hosted and app-hosted modals behave identically.
+    pub fn apply_user_settings_radio(&mut self, id: &str) {
+        if let Some(code) = id.strip_prefix("language:") {
+            let lang = mlc_core::i18n::Language::from_code(code).unwrap_or(crate::Language::En);
+            crate::set_language(lang);
+            self.panel_app.user_settings_state.language = code.to_string();
+            self.language_changed = Some(code.to_string());
+        } else if let Some(v) = id.strip_prefix("control_point_shape:") {
+            use mlc_core::drawing::primitives_v2::ControlPointShape;
+            let shape = match v {
+                "Circle" => ControlPointShape::Circle,
+                "RoundedSquare" => ControlPointShape::RoundedSquare,
+                "Square" => ControlPointShape::Square,
+                _ => return,
+            };
+            self.set_control_point_shape(shape);
+        } else if let Some(v) = id.strip_prefix("control_point_size:") {
+            use mlc_core::drawing::primitives_v2::ControlPointSize;
+            let size = match v {
+                "Small" => ControlPointSize::Small,
+                "Medium" => ControlPointSize::Medium,
+                "Large" => ControlPointSize::Large,
+                _ => return,
+            };
+            self.set_control_point_size(size);
+        }
+    }
+
     /// Set `ProfileUiSettings::control_point_size` — same shape as
     /// [`Self::set_control_point_shape`] above for the Size picker.
     pub(crate) fn set_control_point_size(&mut self, size: mlc_core::drawing::primitives_v2::ControlPointSize) {
