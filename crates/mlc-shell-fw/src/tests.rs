@@ -65,6 +65,26 @@ mod hosted {
     type Host = HeadlessHost<HostSpec, HostedApp>;
 
     fn host() -> (Host, WindowId) {
+        // Fresh scratch profile per host: sequential tests share one process, and a
+        // shared HOME lets earlier tests' persisted state (tabs, sort, columns) leak
+        // into later ones. Each host starts clean so old-vs-DOM compares are fair.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let base = std::env::var("MLC_TEST_HOME_BASE")
+            .unwrap_or_else(|_| std::env::temp_dir().join("mlc-fw-test").display().to_string());
+        let home = std::path::Path::new(&base).join(format!("h{n}"));
+        let roaming = home.join("AppData").join("Roaming");
+        let local = home.join("AppData").join("Local");
+        let _ = std::fs::create_dir_all(&roaming);
+        let _ = std::fs::create_dir_all(&local);
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("APPDATA", &roaming);
+        std::env::set_var("LOCALAPPDATA", &local);
+        // Freeze the clock so live backdrop/feed cannot tick between the old-app
+        // and DOM renders of a pixel compare. Behaviour tests that depend on the
+        // clock (sort debounce) unfreeze themselves at their start.
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
         let app = HostedApp::with_dom(mlc_app::ChartApp::new("BTCUSDT"));
         let (mut h, _) = HeadlessHost::new(app, HostedApp::runtime_config(1280, 800));
         for _ in 0..3 {
@@ -908,6 +928,9 @@ mod hosted {
     fn watchlist_presses_reach_the_app_as_before() {
         let (mut dom, wd) = host();
         let (mut old, wo) = host();
+        // The sort/column-menu debounce is clock-driven; run this behaviour test
+        // on the live clock (pixel compares keep the frozen one from host()).
+        mlc_app::set_fixed_clock(None);
         old.runtime_mut().app_mut().chart.panel_app.dom_hosted.sidebar = false;
         for (h, w) in [(&mut dom, wd), (&mut old, wo)] {
             open_watchlist(h, 4);
