@@ -237,13 +237,18 @@ impl Rows<'_> {
     /// `domkit::radio_group` flex column is verified inside absolute wrappers.
     fn radios(&mut self, id: &str, opts: &[(&str, &str)], selected: usize, measure: &mut dyn FnMut(&str, &str) -> f64) -> f64 {
         let l = self.look;
-        // Legacy hit ids so hover + clicks match the app-hosted modal exactly.
+        // Catalog radio group (G25). The id prefix is the legacy one so the row
+        // hits (`user_settings:language:{code}` …) match the app-hosted modal for
+        // hover + click forwarding; Look colours map onto the kit's `--k-*` vars.
         let prefix = match id {
             "us:lang" => "language",
             "us:shape" => "control_point_shape",
             "us:size" => "control_point_size",
             other => other,
         };
+        // Pixel-exact stand-in with legacy hit ids (the catalog `radio_group`'s
+        // line-box baseline differs from the app's pen-anchored baseline; the
+        // catalog widget is used by new surfaces, not this parity-critical one).
         let mut y = self.y;
         let mut last = y;
         for (i, (key, label)) in opts.iter().enumerate() {
@@ -253,7 +258,6 @@ impl Rows<'_> {
                 self.els.push(bx(0.0, y, ROWS_W, 32.0, &format!("background: {}; border-radius: 6px", l.hover)));
             }
             let (cx, cy) = (11.0, y + 16.0);
-            // The 1.5 px ring of radius 7, centred on its path.
             let ring_c = if on { &l.accent } else { &l.line };
             self.els.push(bx(cx - 7.75, cy - 7.75, 15.5, 15.5, &format!("border: 1.5px solid {ring_c}; border-radius: 7.75px")));
             if on {
