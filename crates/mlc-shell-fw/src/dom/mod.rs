@@ -4,6 +4,7 @@
 pub mod chart_browser;
 pub mod chart_settings;
 pub mod chrome;
+pub mod clock_popup;
 pub mod context_menu;
 pub mod toolbar;
 pub mod preset_name;
