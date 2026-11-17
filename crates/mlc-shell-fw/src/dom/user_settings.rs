@@ -1,4 +1,5 @@
-//! The user settings modal as uzor DOM — General tab, signed out, one profile.
+//! The user settings modal as uzor DOM — General (signed out, one profile) and
+//! Persistence tabs.
 //!
 //! Was: `mlc-app-layout` `layout/modals/user_settings.rs`
 //! (`render_user_settings_modal` + `render_general_tab`), hand-drawn through
@@ -380,6 +381,42 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
     (r.els, r.y)
 }
 
+/// The Persistence tab: two checkbox rows with wrapped hints, exactly the
+/// legacy `persist_checkbox_row` geometry (24 px row, 16 px box, 12 px label,
+/// 11 px hint at +26, 14 px line height, +12 trailing). The hit rect spans the
+/// row plus its hint and carries the legacy id so clicks forward unchanged.
+/// Unlike General's radios there is no hover fill in the legacy paint, so the
+/// hit div stays transparent with no `:hover` rule.
+fn persistence_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str, &str) -> f64) -> (Vec<El>, f64) {
+    let lang = current_language();
+    let mut els = Vec::new();
+    let mut y = 0.0;
+    let w = ROWS_W;
+    let text_w = (w - 26.0).max(0.0);
+    let rows = [
+        (s.persist_toolbar_last_tools, "persist_toolbar_last_tools", UserSettingsKey::PersistToolbarLastTools.get(lang), UserSettingsKey::PersistToolbarLastToolsHint.get(lang)),
+        (s.persist_toolbar_toggles, "persist_toolbar_toggles", UserSettingsKey::PersistToolbarToggles.get(lang), UserSettingsKey::PersistToolbarTogglesHint.get(lang)),
+    ];
+    for (on, hit_id, label, hint) in rows {
+        let hint_lines = wrap(&hint, text_w, "11px sans-serif", measure);
+        let hint_h = hint_lines.len().max(1) as f64 * 14.0;
+        let hit_h = 24.0 + 2.0 + hint_h;
+        els.push(bx(0.0, y, w, hit_h, "transparent").id(format!("user_settings:{hit_id}")).tab());
+        els.push(ring(0.0, y + 4.0, 16.0, 16.0, 2.0, &look.line));
+        if on {
+            els.push(bx(3.0, y + 7.0, 10.0, 10.0, &format!("background: {}; border-radius: 1px", look.text_on)));
+        }
+        let label = fit(&label, text_w, "12px sans-serif", measure);
+        els.push(mid_text(&label, 26.0, y + 12.0, At::L, "12px sans-serif", &look.text, measure));
+        let desc_y = y + 26.0;
+        for (i, line) in hint_lines.iter().enumerate() {
+            els.push(top_text(line, 26.0, desc_y + i as f64 * 14.0, At::L, "11px sans-serif", &look.muted, measure));
+        }
+        y = desc_y + hint_h + 12.0;
+    }
+    (els, y)
+}
+
 /// What the app's input says the pointer is on (its own hit test, last frame).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Hover {
@@ -413,8 +450,14 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
         let cls = if *t == active { "button.m-tab.on" } else { "button.m-tab" };
         El::new(cls).id(format!("user_settings:tab:{}", t.id())).tab().svg(tab_icon(*t))
     }));
-    let (rows, content_h) = general_rows(s, look, measure);
-    let scroll = s.general_tab_scroll.animated_offset();
+    let (rows, content_h) = match active {
+        mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => persistence_rows(s, look, measure),
+        _ => general_rows(s, look, measure),
+    };
+    let scroll = match active {
+        mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
+        _ => s.general_tab_scroll.animated_offset(),
+    };
     let view = El::new("div.u-view").child(El::new("div.u-rows").css(format!("top: {}px; height: {content_h}px", -scroll)).children(rows));
     let title = top_text(active.label(), GAP + PAD, PAD, At::L, "bold 14px sans-serif", &look.text, measure);
     let mut content = El::new("div.u-content").child(title).child(view);
@@ -469,5 +512,9 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
 /// The scrollbar's numbers for the slot painter: content height, viewport height,
 /// offset.
 pub fn scrollbar(s: &UserSettingsState, content_h: f64) -> (f64, f64, f64) {
-    (content_h, VIEW_H, s.general_tab_scroll.animated_offset())
+    let off = match s.active_tab {
+        UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
+        _ => s.general_tab_scroll.animated_offset(),
+    };
+    (content_h, VIEW_H, off)
 }

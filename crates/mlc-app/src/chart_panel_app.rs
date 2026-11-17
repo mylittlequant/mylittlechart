@@ -414,17 +414,21 @@ impl ChartPanelApp {
     }
 
     /// Whether a uzor-framework host paints the user settings modal this frame: it
-    /// has taken it over (`dom_hosted.user_settings`) and the modal shows the
-    /// General tab without the profile section (signed out, one profile). The app
-    /// still lays it out and takes its input (its paint goes nowhere).
+    /// has taken it over (`dom_hosted.user_settings`) and the modal shows a tab the
+    /// DOM tree can render — General without the profile section (signed out, one
+    /// profile), or Persistence (whose body is sign-in independent). The app still
+    /// lays it out and takes its input (its paint goes nowhere).
     pub fn user_settings_on_dom(&self) -> bool {
         use mlc_app_layout::ui::modal_settings::UserSettingsTab;
         let s = &self.user_settings_state;
-        self.dom_hosted.user_settings
-            && s.is_open
-            && s.active_tab == UserSettingsTab::General
-            && !s.account_signed_in
-            && !s.multi_profile
+        if !self.dom_hosted.user_settings || !s.is_open {
+            return false;
+        }
+        match s.active_tab {
+            UserSettingsTab::General => !s.account_signed_in && !s.multi_profile,
+            UserSettingsTab::Persistence => true,
+            _ => false,
+        }
     }
 
     /// Whether a uzor-framework host draws the chart settings modal this frame: it

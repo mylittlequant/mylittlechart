@@ -735,9 +735,13 @@ impl HostedApp {
         ));
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let st = &self.chart.panel_app.user_settings_state;
-        // Only the General tab is DOM-ported; other tabs stay app-painted so the
-        // hosted and app-hosted renders agree until they are ported.
-        if st.active_tab != mlc_app_layout::ui::modal_settings::UserSettingsTab::General {
+        // General and Persistence are DOM-ported; other tabs stay app-painted so
+        // the hosted and app-hosted renders agree until they are ported.
+        if !matches!(
+            st.active_tab,
+            mlc_app_layout::ui::modal_settings::UserSettingsTab::General
+                | mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence
+        ) {
             return;
         }
         let at = us::frame(cx.rect, chrome::CHROME_HEIGHT, st);
@@ -752,7 +756,10 @@ impl HostedApp {
             us::tree(st, &look, hover, at, &mut measure)
         };
         let (ch, vh, off) = us::scrollbar(st, content_h);
-        let dragging = st.general_tab_scroll.is_dragging;
+        let dragging = match st.active_tab {
+            mlc_app_layout::ui::modal_settings::UserSettingsTab::Persistence => st.persistence_tab_scroll.is_dragging,
+            _ => st.general_tab_scroll.is_dragging,
+        };
         // The app's General tab scrollbar theme (`render_user_settings_modal`).
         let wt = mlc_app_layout::ui::widgets::WidgetTheme {
             bg_normal: tt.item_bg_hover.clone(),
