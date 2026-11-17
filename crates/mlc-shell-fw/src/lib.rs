@@ -781,6 +781,19 @@ impl HostedApp {
     /// The DOM pieces over the app's own frame.
     fn dom_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
         use dom::preset_name as pn;
+        // The context menu is DOM (Wave A); picks map back to legacy action ids.
+        if self.chart.panel_app.context_menu_state.is_open {
+            let cm = dom::context_menu::tree(&self.chart.panel_app.context_menu_state);
+            let sheet = self.sheet(String::new());
+            let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, cm).build(cx);
+            if let Some(hit) = resp.clicked.as_deref() {
+                if let Some(action) = dom::context_menu::legacy_action(&self.chart.panel_app.context_menu_state, hit) {
+                    if let Some(r) = resp.dom.hits().find(|(k, _)| *k == hit).map(|(_, r)| r) {
+                        self.chart.dispatch_panel_click(&action, r.x + r.width / 2.0, r.y + r.height / 2.0);
+                    }
+                }
+            }
+        }
         let was_shown = std::mem::replace(&mut self.chart_settings_shown, false);
         if !self.preset_name_open() {
             self.preset_name = None;
