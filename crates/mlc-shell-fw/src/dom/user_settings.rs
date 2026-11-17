@@ -252,8 +252,8 @@ impl Rows<'_> {
         self.els.push(
             El::new("div")
                 .css(format!(
-                    "position: absolute; left: 0px; top: {y}px; width: {ROWS_W}px; --k-accent: {}; --k-line: {}; --k-fg: {}; --k-radio-on-fg: {}; --k-hover: {}",
-                    l.accent, l.line, l.text, l.text_on, l.hover
+                    "position: absolute; left: 0px; top: {y}px; width: {ROWS_W}px; --k-accent: {}; --k-line: {}; --k-fg: {}; --k-radio-on-fg: {}; --k-hover: transparent",
+                    l.accent, l.line, l.text, l.text_on
                 ))
                 .child(domkit::radio_group(&format!("user_settings:{prefix}"), opts, selected)),
         );

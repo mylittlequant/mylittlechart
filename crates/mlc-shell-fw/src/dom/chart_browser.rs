@@ -17,8 +17,8 @@ pub fn tree(s: &ChartBrowserState, presets: &[(String, String)]) -> El {
             .id(format!("chart_browser:item:{id}"))
             .tab()
             .child(El::new("div.k-td").text(name.clone()))
-            .child(El::new("button.k-act").id(format!("chart_browser:rename:{id}")).tab().name("Rename").text("✎"))
-            .child(El::new("button.k-act").id(format!("chart_browser:delete:{id}")).tab().name("Delete").text("🗑"))
+            .child(El::new("button.k-act").id(format!("chart_browser:rename:{id}")).tab().name("Rename").css("width: 16px; height: 16px").text("✎"))
+            .child(El::new("button.k-act").id(format!("chart_browser:delete:{id}")).tab().name("Delete").css("width: 16px; height: 16px").text("🗑"))
     });
     let list = El::new("div.k-tbody").css("overflow: auto; max-height: 280px").children(rows);
     El::new("div.k-modal")

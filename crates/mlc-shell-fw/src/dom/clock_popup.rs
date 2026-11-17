@@ -39,7 +39,7 @@ pub fn tree(screen_w: f64, bottom_toolbar_y: f64, active_offset: i32, use_24h: b
             .child(pen_label(label, 12.0, CHECKBOX_AREA_H))
     };
     El::new("div.k-modal")
-        .child(El::new("div.k-scrim").id("clock_popup:bg"))
+        .child(El::new("div").id("clock_popup:bg").css("position: absolute; left: 0px; top: 0px; width: 100000px; height: 100000px"))
         .child(
             El::new("div.k-dialog")
                 .css(format!("top: {y}px; left: {x}px; width: {POPUP_WIDTH}px; height: {POPUP_HEIGHT}px"))
