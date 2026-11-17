@@ -21,7 +21,7 @@ mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "myli
 
 mlc-shell-fw = { path = "../mlc-shell-fw" }
 uzor = "=1.5.47"
-uzor-framework = { version = "=1.5.47", default-features = false }
+uzor-framework = { version = "=1.5.48", default-features = false }
 uzor-render-tiny-skia = "=1.5.47"
 
 [lints]

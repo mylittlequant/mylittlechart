@@ -22,7 +22,7 @@ mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layo
 mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 uzor = { version = "=1.5.47", default-features = false, features = ["flow-flex"] }
-uzor-framework = { version = "=1.5.47", default-features = false }
+uzor-framework = { version = "=1.5.48", default-features = false }
 hatchery-hq-wire = { path = "../../../hatchery/crates/hatchery-hq-wire" }
 serde_json = "1"
 web-time = "1"
