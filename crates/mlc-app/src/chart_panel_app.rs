@@ -426,7 +426,13 @@ impl ChartPanelApp {
         }
         match s.active_tab {
             UserSettingsTab::General => !s.account_signed_in && !s.multi_profile,
-            UserSettingsTab::Persistence | UserSettingsTab::Sync | UserSettingsTab::Performance => true,
+            UserSettingsTab::Persistence
+            | UserSettingsTab::Sync
+            | UserSettingsTab::Performance
+            | UserSettingsTab::Server
+            | UserSettingsTab::Vault
+            | UserSettingsTab::Account
+            | UserSettingsTab::Shares => true,
             _ => false,
         }
     }

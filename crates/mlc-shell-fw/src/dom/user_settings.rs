@@ -30,6 +30,9 @@ use super::sidebar_panels::{mid_text, top_text, At};
 pub const ID: &str = "us";
 /// The scrollbar's paint slot.
 pub const SCROLLBAR: &str = "us:scrollbar";
+/// Whole-body paint slot for tabs whose legacy renderer is still the paint source
+/// (Server): DOM owns the shell/title/viewport, the legacy tab body paints here.
+pub const BODY: &str = "us:body";
 
 pub const W: f64 = 540.0;
 pub const H: f64 = 500.0;
@@ -96,6 +99,7 @@ div.u-content {{ flex-grow: 1; position: relative }}
 div.u-view {{ position: absolute; left: {vl}px; top: {vt}px; width: {ROWS_W}px; height: {VIEW_H}px; overflow: hidden }}
 div.u-rows {{ position: absolute; left: 0px; width: {ROWS_W}px }}
 div.u-scroll {{ position: absolute }}
+div.u-body {{ position: absolute }}
 div.s-at {{ position: absolute; white-space: nowrap; height: 40px }}
 div.s-fill {{ position: absolute }}
 div.u-box {{ position: absolute }}
@@ -538,17 +542,28 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
         UserSettingsTab::Performance => performance_rows(s, look, measure),
         // The legacy Sync arm paints nothing (`=> {}`); the shell alone is the tab.
         UserSettingsTab::Sync => (Vec::new(), 0.0),
+        // These bodies (incl. their scrollbars) paint through the BODY slot.
+        UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares => (Vec::new(), 0.0),
         _ => general_rows(s, look, measure),
     };
     let scroll = match active {
         UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
         UserSettingsTab::Performance => s.performance_tab_scroll.animated_offset(),
-        UserSettingsTab::Sync => 0.0,
+        UserSettingsTab::Sync | UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares => 0.0,
         _ => s.general_tab_scroll.animated_offset(),
     };
     let view = El::new("div.u-view").child(El::new("div.u-rows").css(format!("top: {}px; height: {content_h}px", -scroll)).children(rows));
     let title = top_text(active.label(), GAP + PAD, PAD, At::L, "bold 14px sans-serif", &look.text, measure);
     let mut content = El::new("div.u-content").child(title).child(view);
+    if matches!(active, UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares) {
+        content = content.child(
+            El::new("div.u-body").paint_slot(BODY).css(format!(
+                "left: {}px; top: {}px; width: {VIEW_W}px; height: {VIEW_H}px",
+                VIEW_X - RAIL_W,
+                VIEW_Y - HEADER_H
+            )),
+        );
+    }
     if content_h > VIEW_H {
         let eff = VIEW_H.min(content_h);
         content = content.child(

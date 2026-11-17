@@ -3504,6 +3504,73 @@ fn mask_agent_key(raw: &str) -> String {
     format!("{}••••…{}", &raw[..6], &raw[raw.len() - 4..])
 }
 
+/// DOM-host paint-slot entry: renders just the Server tab body into
+/// `viewport_rect` (the slot). Hits go into the caller's throwaway coordinator so
+/// the app's own layout pass remains the single source of live hit zones; the
+/// scrollbar is drawn here by the tab's `ScrollableContainer`, so the DOM shell
+/// must not add its own for this tab.
+pub fn render_server_tab_dom(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    render_server_tab(ctx, viewport_rect, state, toolbar_theme, frame_theme, scroll_widget_theme, input_coordinator, layer_id, result);
+}
+
+/// DOM-host paint-slot entry for the Vault tab body (see [`render_server_tab_dom`]).
+pub fn render_vault_tab_dom(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    credentials: &CredentialsState,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    render_vault_tab(ctx, viewport_rect, state, credentials, toolbar_theme, frame_theme, scroll_widget_theme, current_time_ms, input_coordinator, layer_id, result);
+}
+
+/// DOM-host paint-slot entry for the Shares tab body (see [`render_server_tab_dom`]).
+pub fn render_shares_tab_dom(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    render_shares_tab(ctx, viewport_rect, state, toolbar_theme, scroll_widget_theme, input_coordinator, layer_id, result);
+}
+
+/// DOM-host paint-slot entry for the Account tab body (see [`render_server_tab_dom`]).
+pub fn render_account_tab_dom(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    render_account_tab(ctx, viewport_rect, state, text_color, toolbar_theme, frame_theme, scroll_widget_theme, current_time_ms, input_coordinator, layer_id, result);
+}
+
 fn render_server_tab(
     ctx: &mut dyn RenderContext,
     viewport_rect: WidgetRect,

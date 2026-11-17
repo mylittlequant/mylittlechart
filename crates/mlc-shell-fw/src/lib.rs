@@ -782,6 +782,8 @@ impl HostedApp {
             warning: tt.warning.clone(),
             danger: tt.danger.clone(),
         };
+        let ft = self.chart.panel_app.frame_theme_for_render();
+        let cred = &self.chart.panel_app.credentials_state;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
             if f.key == us::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
@@ -797,6 +799,23 @@ impl HostedApp {
                     (SliderConfig::new(0.0, 50000.0).with_step(500.0), max_val, max_label)
                 };
                 render_single_slider(&mut c, &cfg, val, f.rect, label, &wt, false, None);
+            } else if f.key == us::BODY {
+                // Complex tab bodies: legacy renderer paints into the slot (incl. its
+                // own scrollbar). Hits go to a throwaway coordinator — the app's
+                // layout pass already registered the live zones. current_time_ms 0:
+                // these bodies are time-independent when idle (no editing cursor).
+                use mlc_app_layout::layout::modals::user_settings as usrender;
+                use mlc_app_layout::ui::modal_settings::UserSettingsTab as UTab;
+                let mut c = ctx::ChartCtx::new(ctx);
+                let mut coord = uzor::input::InputCoordinator::default();
+                let layer = uzor::input::LayerId("us-dom-body".to_string());
+                let mut res = mlc_app_layout::layout::render_frame::UserSettingsResult::default();
+                match st.active_tab {
+                    UTab::Vault => usrender::render_vault_tab_dom(&mut c, f.rect, st, cred, &tt, &ft, &wt, 0, &mut coord, &layer, &mut res),
+                    UTab::Account => usrender::render_account_tab_dom(&mut c, f.rect, st, &tt.item_text, &tt, &ft, &wt, 0, &mut coord, &layer, &mut res),
+                    UTab::Shares => usrender::render_shares_tab_dom(&mut c, f.rect, st, &tt, &wt, &mut coord, &layer, &mut res),
+                    _ => usrender::render_server_tab_dom(&mut c, f.rect, st, &tt, &ft, &wt, &mut coord, &layer, &mut res),
+                }
             }
         };
         // DOM hits carry the legacy ids; forward clicks to the app's dispatcher so
