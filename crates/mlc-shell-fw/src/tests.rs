@@ -515,6 +515,11 @@ mod hosted {
     fn us_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
         use uzor::render::{Painter, ShapeHelpers};
         h.runtime_mut().app_mut().chart.panel_app.dom_hosted.user_settings = dom;
+        if dom {
+            // Drop the app-hosted pass's legacy modal zones (higher ZLayer) so they
+            // don't overlay the DOM hits and swallow :hover.
+            h.runtime_mut().app_mut().chart.input_coordinator.borrow_mut().clear();
+        }
         // No advance here: old and DOM passes must render the SAME state snapshot,
         // else live-feed/hover ticks between them make the compare flaky. The DOM
         // tree is rebuilt on every paint, so the mode switch needs no extra frame.
