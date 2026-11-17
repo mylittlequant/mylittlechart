@@ -794,6 +794,31 @@ impl HostedApp {
                 }
             }
         }
+        // The chart browser is DOM (Wave A); picks map to legacy chart_browser:* ids.
+        if self.chart.panel_app.chart_browser.is_open {
+            let q = self.chart.panel_app.chart_browser.search_query.to_lowercase();
+            let presets: Vec<(String, String)> = self
+                .chart
+                .core
+                .presets()
+                .iter()
+                .map(|(id, p)| (id.clone(), p.name.clone()))
+                .filter(|(_, n)| q.is_empty() || n.to_lowercase().contains(&q))
+                .collect();
+            let tree = dom::chart_browser::tree(&self.chart.panel_app.chart_browser, &presets);
+            let sheet = self.sheet(String::new());
+            let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).build(cx);
+            if let Some(hit) = resp.clicked.as_deref() {
+                if let Some(r) = resp.dom.hits().find(|(k, _)| *k == hit).map(|(_, r)| r) {
+                    self.chart.dispatch_panel_click(hit, r.x + r.width / 2.0, r.y + r.height / 2.0);
+                }
+            }
+            for (id, text) in resp.edited {
+                if id == "chart_browser:search_input" {
+                    self.chart.panel_app.chart_browser.search_query = text;
+                }
+            }
+        }
         let was_shown = std::mem::replace(&mut self.chart_settings_shown, false);
         if !self.preset_name_open() {
             self.preset_name = None;
