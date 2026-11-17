@@ -54,7 +54,7 @@ mod tests {
         s.open(
             100.0,
             100.0,
-            ContextMenuTarget::Chart,
+            ContextMenuTarget::ChartBackground,
             vec![
                 ContextMenuItemState::action("clone", "Clone"),
                 ContextMenuItemState::action("more", "More").with_submenu(vec![ContextMenuItemState::action("del", "Delete")]),
