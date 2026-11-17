@@ -253,10 +253,14 @@ impl Rows<'_> {
         let mut last = y;
         for (i, (key, label)) in opts.iter().enumerate() {
             let on = i == selected;
-            self.els.push(bx(0.0, y, ROWS_W, 32.0, "transparent").id(format!("user_settings:{prefix}:{key}")).tab());
-            if self.hovered == Some(*key) {
-                self.els.push(bx(0.0, y, ROWS_W, 32.0, &format!("background: {}; border-radius: 6px", l.hover)));
-            }
+            // Hover is pointer-driven via `.us-row:hover` (sheet rule), matching the
+            // app-hosted modal's legacy-zone hover rather than app hover state.
+            self.els.push(
+                El::new("div.us-row")
+                    .css(format!("left: 0px; top: {y}px; width: {ROWS_W}px; height: 32px; background: transparent"))
+                    .id(format!("user_settings:{prefix}:{key}"))
+                    .tab(),
+            );
             let (cx, cy) = (11.0, y + 16.0);
             let ring_c = if on { &l.accent } else { &l.line };
             self.els.push(bx(cx - 7.75, cy - 7.75, 15.5, 15.5, &format!("border: 1.5px solid {ring_c}; border-radius: 7.75px")));
@@ -402,10 +406,11 @@ impl Hover {
 /// No element carries an id: nothing here is a hit, so every press, move and wheel
 /// over the modal reaches the app as unhandled input, as it did.
 pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure: &mut dyn FnMut(&str, &str) -> f64) -> (El, f64) {
+    let _ = hover;
     let tabs = s.visible_tabs();
     let active = s.active_tab;
-    let rail = El::new("div.m-rail").children(tabs.iter().enumerate().map(|(i, t)| {
-        let cls = if *t == active { "button.m-tab.on" } else if hover.tab == Some(i) { "button.m-tab.hov" } else { "button.m-tab" };
+    let rail = El::new("div.m-rail").children(tabs.iter().map(|t| {
+        let cls = if *t == active { "button.m-tab.on" } else { "button.m-tab" };
         El::new(cls).id(format!("user_settings:tab:{}", t.id())).tab().svg(tab_icon(*t))
     }));
     let (rows, content_h) = general_rows(s, look, measure);

@@ -726,7 +726,13 @@ impl HostedApp {
     fn user_settings_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
         use dom::user_settings as us;
         let look = us::Look::of(&self.chart);
-        let sheet = self.sheet(look.css());
+        // Pointer-driven hover (matches the app-hosted modal's legacy-zone hover).
+        let sheet = self.sheet(format!(
+            "{} div.us-row:hover {{ background: {}; border-radius: 6px }} button.m-tab:hover {{ background: {} }}",
+            look.css(),
+            look.hover,
+            look.hover
+        ));
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let st = &self.chart.panel_app.user_settings_state;
         let at = us::frame(cx.rect, chrome::CHROME_HEIGHT, st);
