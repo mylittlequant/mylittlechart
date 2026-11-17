@@ -18,7 +18,7 @@
 
 use mlc_app_layout::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
-use mlc_core::i18n::{current_language, Language, UserSettingsKey};
+use mlc_core::i18n::{current_language, Language, SettingsKey, UserSettingsKey};
 use uzor::types::Rect;
 use uzor::ui::dom::El;
 use uzor::ui::domkit;
@@ -409,7 +409,9 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     }
     let body = El::new("div.m-body-row").css("display: flex; flex-direction: row; flex-grow: 1").child(rail).child(content);
     // `domkit::dialog`'s shape, without its ids (they would be hits).
-    let title_s = UserSettingsKey::Title.get(current_language());
+    // The old modal shell captions this dialog with the shared settings title
+    // ("Settings"), not the longer user-settings key; match it pixel-for-pixel.
+    let title_s = SettingsKey::Title.get(current_language());
     let dialog = El::new("div.k-modal").child(El::new("div.k-scrim")).child(
         El::new("div.k-dialog")
             .css(format!("top: {}px; left: {}px; width: {}px; height: {}px", at.y, at.x, at.width, at.height))
