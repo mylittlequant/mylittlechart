@@ -767,8 +767,14 @@ impl HostedApp {
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(ch, vh, off), state, f.rect, &wt, None);
             }
         };
-        // No DOM hits: the input (radios included) stays the app's legacy zones.
-        uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        // DOM hits carry the legacy ids; forward clicks to the app's dispatcher so
+        // the DOM-hosted modal behaves exactly like the app-hosted one.
+        let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).build(cx);
+        if let Some(hit) = resp.clicked.as_deref() {
+            if let Some(r) = resp.dom.hits().find(|(k, _)| *k == hit).map(|(_, r)| r) {
+                self.chart.dispatch_panel_click(hit, r.x + r.width / 2.0, r.y + r.height / 2.0);
+            }
+        }
     }
 
     /// The DOM pieces over the app's own frame.

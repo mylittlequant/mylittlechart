@@ -237,11 +237,18 @@ impl Rows<'_> {
     /// `domkit::radio_group` flex column is verified inside absolute wrappers.
     fn radios(&mut self, id: &str, opts: &[(&str, &str)], selected: usize, measure: &mut dyn FnMut(&str, &str) -> f64) -> f64 {
         let l = self.look;
-        let _ = id; // input stays the app's legacy zones; no DOM hits here
+        // Legacy hit ids so hover + clicks match the app-hosted modal exactly.
+        let prefix = match id {
+            "us:lang" => "language",
+            "us:shape" => "control_point_shape",
+            "us:size" => "control_point_size",
+            other => other,
+        };
         let mut y = self.y;
         let mut last = y;
         for (i, (key, label)) in opts.iter().enumerate() {
             let on = i == selected;
+            self.els.push(bx(0.0, y, ROWS_W, 32.0, "transparent").id(format!("user_settings:{prefix}:{key}")).tab());
             if self.hovered == Some(*key) {
                 self.els.push(bx(0.0, y, ROWS_W, 32.0, &format!("background: {}; border-radius: 6px", l.hover)));
             }
@@ -340,6 +347,7 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
         let on = s.toast_anchor == *v;
         let hov = r.hovered == Some(format!("toast_anchor:{v:?}").as_str());
         let bg = if on { &look.active } else if hov { &look.hover } else { &look.control_bg };
+        r.els.push(bx(x, r.y, seg_w, 28.0, "transparent").id(format!("user_settings:toast_anchor:{v:?}")).tab());
         r.els.push(bx(x, r.y, seg_w, 28.0, &format!("background: {bg}; border-radius: 4px")));
         r.els.push(ring(x, r.y, seg_w, 28.0, 4.0, &look.line));
         let t = fit(label, (seg_w - 8.0).max(1.0), "11px sans-serif", measure);
@@ -355,6 +363,7 @@ fn general_rows(s: &UserSettingsState, look: &Look, measure: &mut dyn FnMut(&str
 
     let bw = w.min(180.0);
     let hov = r.hovered == Some("show_wizard");
+    r.els.push(bx(0.0, r.y, bw, 24.0, "transparent").id("user_settings:show_wizard").tab());
     r.els.push(bx(0.0, r.y, bw, 24.0, &format!("background: {}; border-radius: 4px", if hov { &look.wizard_hover } else { &look.hover })));
     r.els.push(ring(0.0, r.y, bw, 24.0, 4.0, &look.line));
     let c = if hov { look.wizard_text_hover.clone() } else { look.wizard_text.clone() };
@@ -393,7 +402,7 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     let active = s.active_tab;
     let rail = El::new("div.m-rail").children(tabs.iter().enumerate().map(|(i, t)| {
         let cls = if *t == active { "button.m-tab.on" } else if hover.tab == Some(i) { "button.m-tab.hov" } else { "button.m-tab" };
-        El::new(cls).svg(tab_icon(*t))
+        El::new(cls).id(format!("user_settings:tab:{}", t.id())).tab().svg(tab_icon(*t))
     }));
     let (rows, content_h) = general_rows(s, look, measure);
     let scroll = s.general_tab_scroll.animated_offset();
@@ -422,10 +431,10 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
             .child(
                 El::new("div.k-dialog-head")
                     .child(El::new("div.k-dialog-title").text(title_s))
-                    .child(El::new(if hover.close { "button.k-act.hov" } else { "button.k-act" }).svg(domkit::icon(domkit::icons::CLOSE))),
+                    .child(El::new(if hover.close { "button.k-act.hov" } else { "button.k-act" }).id("user_settings:close").tab().svg(domkit::icon(domkit::icons::CLOSE))),
             )
             .child(El::new("div.k-dialog-body").child(body))
-            .child(El::new("div.k-dialog-foot").child(El::new(if hover.ok { "button.k-btn.primary.hov" } else { "button.k-btn.primary" }).text("OK"))),
+            .child(El::new("div.k-dialog-foot").child(El::new(if hover.ok { "button.k-btn.primary.hov" } else { "button.k-btn.primary" }).id("user_settings:ok").tab().text("OK"))),
     );
     // Two more rules the old modal drew along the tab rail: across the top of the
     // body, from the rail's edge, and down the rail's right side, one pixel inside

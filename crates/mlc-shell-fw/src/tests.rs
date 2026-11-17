@@ -515,7 +515,9 @@ mod hosted {
     fn us_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
         use uzor::render::{Painter, ShapeHelpers};
         h.runtime_mut().app_mut().chart.panel_app.dom_hosted.user_settings = dom;
-        h.advance(0.017);
+        // No advance here: old and DOM passes must render the SAME state snapshot,
+        // else live-feed/hover ticks between them make the compare flaky. The DOM
+        // tree is rebuilt on every paint, so the mode switch needs no extra frame.
         let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
