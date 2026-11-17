@@ -20,9 +20,9 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 
 mlc-shell-fw = { path = "../mlc-shell-fw" }
-uzor = "=1.5.44"
-uzor-framework = { version = "=1.5.44", default-features = false }
-uzor-render-tiny-skia = "=1.5.44"
+uzor = "=1.5.45"
+uzor-framework = { version = "=1.5.45", default-features = false }
+uzor-render-tiny-skia = "=1.5.45"
 
 [lints]
 workspace = true
