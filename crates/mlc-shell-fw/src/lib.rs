@@ -15,6 +15,7 @@
 pub mod ctx;
 pub mod dom;
 pub mod frame;
+pub mod widget_seam;
 mod input;
 
 #[cfg(test)]
