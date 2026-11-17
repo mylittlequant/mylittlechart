@@ -735,6 +735,11 @@ impl HostedApp {
         ));
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let st = &self.chart.panel_app.user_settings_state;
+        // Only the General tab is DOM-ported; other tabs stay app-painted so the
+        // hosted and app-hosted renders agree until they are ported.
+        if st.active_tab != mlc_app_layout::ui::modal_settings::UserSettingsTab::General {
+            return;
+        }
         let at = us::frame(cx.rect, chrome::CHROME_HEIGHT, st);
         let (tree, content_h) = {
             let render = &mut *cx.render;
