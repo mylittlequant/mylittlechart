@@ -246,18 +246,28 @@ impl Rows<'_> {
             "us:size" => "control_point_size",
             other => other,
         };
-        // Catalog radio group with pen-anchored baseline (uzor >= 1.5.49); legacy
-        // hit ids keep hover + click forwarding identical to the app-hosted modal.
-        let y = self.y;
-        self.els.push(
-            El::new("div")
-                .css(format!(
-                    "position: absolute; left: 0px; top: {y}px; width: {ROWS_W}px; --k-accent: {}; --k-line: {}; --k-fg: {}; --k-radio-on-fg: {}; --k-hover: transparent",
-                    l.accent, l.line, l.text, l.text_on
-                ))
-                .child(domkit::radio_group(&format!("user_settings:{prefix}"), opts, selected)),
-        );
-        (opts.len().saturating_sub(1)) as f64 * 36.0 + 32.0
+        // Pixel-exact stand-in with legacy hit ids + app-driven hover. The catalog
+        // `radio_group` (pen-anchored, uzor >= 1.5.49) is used by new surfaces; this
+        // parity-critical modal keeps the stand-in until baseline match is exact.
+        let mut y = self.y;
+        let mut last = y;
+        for (i, (key, label)) in opts.iter().enumerate() {
+            let on = i == selected;
+            self.els.push(bx(0.0, y, ROWS_W, 32.0, "transparent").id(format!("user_settings:{prefix}:{key}")).tab());
+            if self.hovered == Some(*key) {
+                self.els.push(bx(0.0, y, ROWS_W, 32.0, &format!("background: {}; border-radius: 6px", l.hover)));
+            }
+            let (cx, cy) = (11.0, y + 16.0);
+            let ring_c = if on { &l.accent } else { &l.line };
+            self.els.push(bx(cx - 7.75, cy - 7.75, 15.5, 15.5, &format!("border: 1.5px solid {ring_c}; border-radius: 7.75px")));
+            if on {
+                self.els.push(bx(cx - 4.0, cy - 4.0, 8.0, 8.0, &format!("background: {}; border-radius: 4px", l.accent)));
+            }
+            self.els.push(mid_text(label, 30.0, cy, At::L, "13px sans-serif", if on { &l.text_on } else { &l.text }, measure));
+            last = y;
+            y += 36.0;
+        }
+        last + 32.0
     }
 
     /// The bare checkbox rows: a 16 px box (2 px corners), a 12 px label.

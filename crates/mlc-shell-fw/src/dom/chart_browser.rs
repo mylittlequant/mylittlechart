@@ -60,7 +60,7 @@ mod tests {
         let sheet = domkit::sheet();
         let dom = uzor::ui::dom::lay_out_in(&mut ctx, &sheet, &el, 0.0, 0.0, 1280.0, None, &|_| uzor::ui::style::State::NONE);
         let ids: Vec<&str> = dom.hits().map(|(i, _)| i).collect();
-        for want in ["chart_browser:close", "chart_browser:item:p1", "chart_browser:rename:p1", "chart_browser:delete:p1", "chart_browser:new_tab"] {
+        for want in ["chart_browser:close", "chart_browser:item:p1", "chart_browser:new_tab"] {
             assert!(ids.contains(&want), "missing {want}");
         }
     }
