@@ -883,6 +883,61 @@ mod hosted {
         mlc_app::set_fixed_clock(None);
     }
 
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_user_settings_general_signed_in_paints_what_the_app_painted() {
+        use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
+        let (mut h, win) = host();
+        h.runtime_mut().app_mut().chart.open_user_settings();
+        {
+            let st = &mut h.runtime_mut().app_mut().chart.panel_app.user_settings_state;
+            st.active_tab = UserSettingsTab::General;
+            st.account_signed_in = true;
+            st.multi_profile = true;
+        }
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        us_pixels(&mut h, win, true);
+        assert!(h.runtime().app().chart.panel_app.user_settings_on_dom(), "signed-in General on DOM");
+        let fr = crate::dom::user_settings::frame(uzor::types::Rect::new(0.0, 0.0, 1280.0, 800.0), crate::chrome::CHROME_HEIGHT, &h.runtime().app().chart.panel_app.user_settings_state);
+        let (x0, y0) = (fr.x as usize, fr.y as usize);
+        let (x1, y1) = (x0 + fr.width as usize, y0 + fr.height as usize);
+        move_to(&mut h, win, 10.0, 10.0);
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        let old = us_pixels(&mut h, win, false);
+        let new = us_pixels(&mut h, win, true);
+        let (mut over, mut exact) = (0, 0);
+        for (i, (a, b)) in old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate() {
+            let (x, y) = (i % 1280, i / 1280);
+            if x < x0 || x >= x1 || y < y0 + 46 || y >= y1 {
+                continue;
+            }
+            if x < x0 + 50 && y < y0 + 90 {
+                continue; // old-path glass blur over the first rail cell
+            }
+            let d = a.iter().zip(b.iter()).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+            exact += usize::from(d > 0);
+            over += usize::from(d > 8);
+        }
+        eprintln!("user settings general signed-in: {over} px over 8, {exact} differ");
+        if let Some(dir) = std::env::var_os("MLC_US_DUMP") {
+            for (n, px) in [("old", &old), ("new", &new)] {
+                let path = std::path::Path::new(&dir).join(format!("us-{n}-general-signedin.png"));
+                let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                let mut enc = png::Encoder::new(f, 1280, 800);
+                enc.set_color(png::ColorType::Rgba);
+                enc.set_depth(png::BitDepth::Eight);
+                enc.write_header().unwrap().write_image_data(px).unwrap();
+            }
+        }
+        assert!(over <= 300, "{over}");
+        mlc_app::set_fixed_clock(None);
+    }
+
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {
         let pos = uzor_framework::Point { x, y };
         let b = uzor::input::MouseButton::Left;

@@ -3571,6 +3571,25 @@ pub fn render_account_tab_dom(
     render_account_tab(ctx, viewport_rect, state, text_color, toolbar_theme, frame_theme, scroll_widget_theme, current_time_ms, input_coordinator, layer_id, result);
 }
 
+/// DOM-host paint-slot entry for the General tab body when it carries the profile
+/// section (signed in / multi-profile); the signed-out single-profile General tab
+/// is fully DOM ([`mlc-shell-fw` dom::user_settings::general_rows]).
+pub fn render_general_tab_dom(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    render_general_tab(ctx, viewport_rect, state, text_color, toolbar_theme, frame_theme, scroll_widget_theme, current_time_ms, input_coordinator, layer_id, result);
+}
+
 fn render_server_tab(
     ctx: &mut dyn RenderContext,
     viewport_rect: WidgetRect,

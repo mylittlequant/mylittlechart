@@ -544,18 +544,24 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
         UserSettingsTab::Sync => (Vec::new(), 0.0),
         // These bodies (incl. their scrollbars) paint through the BODY slot.
         UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares => (Vec::new(), 0.0),
+        // General with the profile section (signed in / multi-profile) is slot-painted;
+        // signed-out single-profile General is fully DOM below.
+        UserSettingsTab::General if s.account_signed_in || s.multi_profile => (Vec::new(), 0.0),
         _ => general_rows(s, look, measure),
     };
     let scroll = match active {
         UserSettingsTab::Persistence => s.persistence_tab_scroll.animated_offset(),
         UserSettingsTab::Performance => s.performance_tab_scroll.animated_offset(),
         UserSettingsTab::Sync | UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares => 0.0,
+        UserSettingsTab::General if s.account_signed_in || s.multi_profile => 0.0,
         _ => s.general_tab_scroll.animated_offset(),
     };
     let view = El::new("div.u-view").child(El::new("div.u-rows").css(format!("top: {}px; height: {content_h}px", -scroll)).children(rows));
     let title = top_text(active.label(), GAP + PAD, PAD, At::L, "bold 14px sans-serif", &look.text, measure);
     let mut content = El::new("div.u-content").child(title).child(view);
-    if matches!(active, UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares) {
+    let slot_body = matches!(active, UserSettingsTab::Server | UserSettingsTab::Vault | UserSettingsTab::Account | UserSettingsTab::Shares)
+        || (active == UserSettingsTab::General && (s.account_signed_in || s.multi_profile));
+    if slot_body {
         content = content.child(
             El::new("div.u-body").paint_slot(BODY).css(format!(
                 "left: {}px; top: {}px; width: {VIEW_W}px; height: {VIEW_H}px",

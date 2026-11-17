@@ -425,7 +425,9 @@ impl ChartPanelApp {
             return false;
         }
         match s.active_tab {
-            UserSettingsTab::General => !s.account_signed_in && !s.multi_profile,
+            // General is DOM in both forms: signed-out single-profile as full DOM
+            // rows, signed-in / multi-profile via the body paint slot.
+            UserSettingsTab::General => true,
             UserSettingsTab::Persistence
             | UserSettingsTab::Sync
             | UserSettingsTab::Performance

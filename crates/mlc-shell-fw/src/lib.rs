@@ -814,6 +814,7 @@ impl HostedApp {
                     UTab::Vault => usrender::render_vault_tab_dom(&mut c, f.rect, st, cred, &tt, &ft, &wt, 0, &mut coord, &layer, &mut res),
                     UTab::Account => usrender::render_account_tab_dom(&mut c, f.rect, st, &tt.item_text, &tt, &ft, &wt, 0, &mut coord, &layer, &mut res),
                     UTab::Shares => usrender::render_shares_tab_dom(&mut c, f.rect, st, &tt, &wt, &mut coord, &layer, &mut res),
+                    UTab::General => usrender::render_general_tab_dom(&mut c, f.rect, st, &tt.item_text, &tt, &ft, &wt, 0, &mut coord, &layer, &mut res),
                     _ => usrender::render_server_tab_dom(&mut c, f.rect, st, &tt, &ft, &wt, &mut coord, &layer, &mut res),
                 }
             }
