@@ -731,6 +731,29 @@ impl HostedApp {
                 let mut c = ctx::ChartCtx::new(ctx);
                 let theme = mlc_app_layout::ui::widgets::WidgetTheme::default();
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(cs::content_height(), cs::VIEW_H, scroll), ScrollbarState::Active, track, &theme, None);
+            } else if f.key == cs::RAIL {
+                use mlc_app_layout::ui::widgets::{draw_vertical_rail, ModalTab, ModalTheme};
+                use mlc_app_layout::ui::modal_settings::ChartSettingsTab as CTab;
+                use mlc_app_layout::ui::Icon;
+                let items: Vec<ModalTab<'_>> = CTab::all().iter().map(|t| {
+                    let icon = match t {
+                        CTab::Instrument => Icon::Candlestick,
+                        CTab::StatusLine => Icon::Legend,
+                        CTab::ScalesLines => Icon::Grid,
+                        CTab::Appearance => Icon::Palette,
+                    };
+                    ModalTab::with_icon(t.id(), t.label(), icon)
+                }).collect();
+                let active = CTab::all().iter().position(|t| *t == st.active_tab).unwrap_or(0);
+                let theme = ModalTheme::from_toolbar(&ft.modal_bg, &tt.separator, &tt);
+                let mut c = ctx::ChartCtx::new(ctx);
+                let mut coord = uzor::input::InputCoordinator::new();
+                let layer = uzor::input::LayerId::new("cs_rail");
+                // The slot content box loses the rail's 1px transparent right
+                // border and the body's last row; the legacy rail rect includes
+                // them (hairline at the right edge, full body height).
+                let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
+                draw_vertical_rail(&mut c, &mut coord, &layer, "chart_settings", &items, active, r, &theme);
             } else if f.key == cs::BODY {
                 use mlc_app_layout::layout::modals::chart_settings as csrender;
                 use mlc_app_layout::ui::modal_settings::ChartSettingsTab as CTab;

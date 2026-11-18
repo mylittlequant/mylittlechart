@@ -17,7 +17,7 @@ pub use loading_hat::draw_loading_hat;
 pub use sticker::{draw_sticker, sticker_pack, StickerInfo};
 pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_text_to_width, wrap_text_to_width, layout_btn_row, SETTINGS_BUTTON_RADIUS};
 pub use modal::{
-    begin_modal_shell, end_modal_shell, labelled_tabs_width, overlay_backdrop, register_dimmer_zones,
+    begin_modal_shell, draw_vertical_rail, end_modal_shell, labelled_tabs_width, overlay_backdrop, register_dimmer_zones,
     render_modal_frame_only, render_modal_shell,
     ModalFooter, ModalPlacement, ModalShell, ModalShellSpec, ModalTab, ModalTabs, ModalTheme,
     ResizeEdge,
