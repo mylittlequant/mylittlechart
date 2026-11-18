@@ -2981,3 +2981,17 @@ pub fn render_scales_tab_dom(
 ) {
     render_scales_settings(ctx, rect.x, rect.y, rect.width, rect.height, &data.scales, theme, frame_theme, chart_settings_state, result, current_time_ms);
 }
+
+/// DOM-host paint-slot entry for the Appearance tab body (see [`render_status_line_tab_dom`]).
+/// The renderer ignores `current_time_ms` (time-independent), so no clock freeze is needed.
+pub fn render_appearance_tab_dom(
+    ctx: &mut dyn RenderContext,
+    rect: uzor::types::Rect,
+    theme_manager: &ThemeManager,
+    theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    chart_settings_state: &ChartSettingsState,
+    result: &mut ChartSettingsModalResult,
+) {
+    render_appearance_settings(ctx, rect.x, rect.y, rect.width, rect.height, theme_manager, theme, frame_theme, chart_settings_state, result, 0);
+}

@@ -451,7 +451,7 @@ impl ChartPanelApp {
         // DOM shell + legacy body paint slot (chart-type independent).
         let tab_ok = match s.active_tab {
             ChartSettingsTab::Instrument => matches!(data.instrument.chart_type.as_str(), "candles" | "bars" | "heikin_ashi"),
-            ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines => true,
+            ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines | ChartSettingsTab::Appearance => true,
             _ => false,
         };
         self.dom_hosted.chart_settings

@@ -207,11 +207,16 @@ mod hosted {
         click(&mut h, win, "cs:tab:status_line");
         assert_eq!(cs_state(&h).active_tab, mlc_app_layout::ui::modal_settings::ChartSettingsTab::StatusLine);
         assert!(cs_state(&h).is_open && cs_shown(&h), "StatusLine is DOM now (body slot)");
-        // Appearance is still the app's renderer (needs theme manager + live clock).
         h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = mlc_app_layout::ui::modal_settings::ChartSettingsTab::Appearance;
         h.advance(0.017);
         h.advance(0.017);
-        assert!(cs_state(&h).is_open && !cs_shown(&h), "Appearance is still the app's renderer");
+        assert!(cs_state(&h).is_open && cs_shown(&h), "Appearance is DOM now (body slot)");
+        // A resized frame is still the app's renderer (gate requires natural size).
+        h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.size = Some((700.0, 620.0));
+        h.advance(0.017);
+        h.advance(0.017);
+        assert!(cs_state(&h).is_open && !cs_shown(&h), "a resized frame is drawn by the app");
+        h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.size = None;
         h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = Default::default();
         h.advance(0.017);
         h.advance(0.017);
@@ -245,7 +250,7 @@ mod hosted {
     fn the_chart_settings_slot_tabs_paint_what_the_app_painted() {
         use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
         mlc_app::set_fixed_clock(Some(1_700_000_000));
-        for tab in [ChartSettingsTab::StatusLine, ChartSettingsTab::ScalesLines] {
+        for tab in [ChartSettingsTab::StatusLine, ChartSettingsTab::ScalesLines, ChartSettingsTab::Appearance] {
             let (mut h, win) = host();
             open_chart_settings(&mut h);
             h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = tab;

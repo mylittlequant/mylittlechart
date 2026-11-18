@@ -690,6 +690,7 @@ impl HostedApp {
             st.active_tab,
             mlc_app_layout::ui::modal_settings::ChartSettingsTab::StatusLine
                 | mlc_app_layout::ui::modal_settings::ChartSettingsTab::ScalesLines
+                | mlc_app_layout::ui::modal_settings::ChartSettingsTab::Appearance
         );
         // The body scrolls itself; it opens where the app's own offset is.
         let seed = (!self.cs_scroll_seeded && !slot_tab).then_some(app_scroll);
@@ -705,6 +706,7 @@ impl HostedApp {
         };
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let ft = self.chart.panel_app.frame_theme_for_render();
+        let tm = &self.chart.panel_app.theme_manager;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
             if f.key == cs::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
@@ -720,6 +722,7 @@ impl HostedApp {
                 let mut res = mlc_app_layout::layout::render_frame::ChartSettingsModalResult::default();
                 match st.active_tab {
                     CTab::StatusLine => csrender::render_status_line_tab_dom(&mut c, f.rect, data, &tt, &ft, st, 0, &mut res),
+                    CTab::Appearance => csrender::render_appearance_tab_dom(&mut c, f.rect, tm, &tt, &ft, st, &mut res),
                     _ => csrender::render_scales_tab_dom(&mut c, f.rect, data, &tt, &ft, st, 0, &mut res),
                 }
             }

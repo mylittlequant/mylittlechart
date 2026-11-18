@@ -233,7 +233,7 @@ pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El 
         El::new(cls).id(format!("{ID}:tab:{}", t.id())).tab().name(t.label()).svg(tab_icon(*t))
     }));
     let active = state.active_tab;
-    let content = if matches!(active, ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines) {
+    let content = if matches!(active, ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines | ChartSettingsTab::Appearance) {
         // Legacy body paints into the BODY slot (no DOM viewport/scrollbar here);
         // the slot sits at the shell content origin (padding + title band).
         El::new("div.m-content")
