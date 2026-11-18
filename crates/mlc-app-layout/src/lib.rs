@@ -11,6 +11,7 @@
 
 pub mod chart_render;
 pub mod chart_type;
+pub mod dom;
 pub mod layout;
 pub mod ui;
 pub mod panel_app;

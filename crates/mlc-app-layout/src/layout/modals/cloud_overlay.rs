@@ -417,43 +417,7 @@ pub fn render_cloud_overlay(
         &toolbar_theme.separator,
         toolbar_theme,
     );
-    let mut spec = ModalShellSpec {
-        dim_backdrop: true,
-        placement: ModalPlacement::At(state.position),
-        layer: ZLayer::ModalOverlay,
-        ..ModalShellSpec::new(
-            "cloud_overlay",
-            title_for(state),
-            MODAL_W,
-            content_height(state),
-        )
-    };
-    // Tabs only over the News list view — a reading view or the Download
-    // overlay has nothing to switch between, so `spec.tabs` stays `None`
-    // and the shell draws no tab bar (and charges the frame no
-    // `TAB_BAR_H`) for either of them.
-    let show_news_tabs = state.kind == CloudOverlayKind::News
-        && state.selected_post.is_none()
-        && matches!(&state.data, CloudOverlayData::News { .. });
-    if show_news_tabs {
-        spec = spec.with_tabs(ModalTabs::Horizontal {
-            items: &NEWS_TAB_ITEMS,
-            active: state.news_tab.index(),
-            fit: TabFit::Equal,
-        });
-        // The News list view is the one whose content is unbounded (the
-        // `PatchNotes` tab, a long history under `Posts`'s LINKS section) —
-        // cap it here and let `draw_body`'s scroll container reach the
-        // rest.
-        spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
-    }
-    // The Download body is the OTHER unbounded view (the release catalogue
-    // once expanded). Capping every `Download` data variant, not just
-    // `Ready`, is what lets `draw_body` wrap the whole kind in one scroll
-    // container instead of special-casing which variant needs it.
-    if state.kind == CloudOverlayKind::Download {
-        spec = spec.with_max_content_height(DOWNLOAD_MAX_BODY_H);
-    }
+    let spec = overlay_spec(state);
     let mut result = CloudOverlayResult::default();
     let shell = render_modal_shell(
         ctx,
@@ -482,6 +446,86 @@ pub fn render_cloud_overlay(
     );
     result.header_rect = shell.header;
     result
+}
+
+/// The shell spec this overlay renders with — the single source of truth
+/// for its geometry, shared by [`render_cloud_overlay`] and the DOM host's
+/// tree builder (`crate::dom::cloud_overlay`), so the two can never size or
+/// place the frame differently.
+pub fn overlay_spec(state: &CloudOverlayState) -> ModalShellSpec<'static> {
+    let mut spec = ModalShellSpec {
+        dim_backdrop: true,
+        placement: ModalPlacement::At(state.position),
+        layer: ZLayer::ModalOverlay,
+        ..ModalShellSpec::new(
+            "cloud_overlay",
+            title_for(state),
+            MODAL_W,
+            content_height(state),
+        )
+    };
+    if show_news_tabs(state) {
+        spec = spec.with_tabs(ModalTabs::Horizontal {
+            items: &NEWS_TAB_ITEMS,
+            active: state.news_tab.index(),
+            fit: TabFit::Equal,
+        });
+        // The News list view is the one whose content is unbounded (the
+        // `PatchNotes` tab, a long history under `Posts`'s LINKS section) —
+        // cap it here and let `draw_body`'s scroll container reach the
+        // rest.
+        spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
+    }
+    // The Download body is the OTHER unbounded view (the release catalogue
+    // once expanded). Capping every `Download` data variant, not just
+    // `Ready`, is what lets `draw_body` wrap the whole kind in one scroll
+    // container instead of special-casing which variant needs it.
+    if state.kind == CloudOverlayKind::Download {
+        spec = spec.with_max_content_height(DOWNLOAD_MAX_BODY_H);
+    }
+    spec
+}
+
+/// Tabs only over the News list view — a reading view or the Download
+/// overlay has nothing to switch between, so the shell draws no tab bar
+/// (and charges the frame no `TAB_BAR_H`) for either of them.
+pub fn show_news_tabs(state: &CloudOverlayState) -> bool {
+    state.kind == CloudOverlayKind::News
+        && state.selected_post.is_none()
+        && matches!(&state.data, CloudOverlayData::News { .. })
+}
+
+/// The News list view's tab strip, painted with the shell's own pixels
+/// (active fill, centred labels, bottom hairline) into the DOM host's tab
+/// paint slot. The DOM keeps transparent per-cell buttons for the clicks;
+/// hits stay the app's (its layout pass registered the live zones).
+pub fn draw_news_tabs(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    rect: WidgetRect,
+    active: usize,
+    theme: &ModalTheme,
+) -> Vec<(String, WidgetRect)> {
+    crate::ui::widgets::draw_horizontal_tabs(
+        ctx, coord, layer, "cloud_overlay", &NEWS_TAB_ITEMS, active, TabFit::Equal, rect, theme,
+    )
+}
+
+/// The overlay's body (whichever view the state names), painted into the
+/// DOM host's body paint slot at the shell geometry the host laid out.
+/// Hits go to a throwaway coordinator — the app's layout pass already
+/// registered the live zones on the app's own coordinator.
+pub fn draw_body_dom(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    shell: &ModalShell,
+    state: &CloudOverlayState,
+    tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
+) {
+    draw_body(ctx, coord, layer, shell, state, tt, result);
 }
 
 /// The News overlay's tab strip: `Posts`/`PatchNotes`, always both — Forum

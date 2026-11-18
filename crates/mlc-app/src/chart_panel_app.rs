@@ -70,6 +70,10 @@ pub struct DomHosted {
     /// The cloud News/Links/Download overlay (cloud builds): the DOM host paints it
     /// via a whole-window slot; the app still lays it out and registers its hits.
     pub cloud_overlay: bool,
+    /// The Community modal (Forum + Messages, cloud builds): the DOM host paints
+    /// its shell and the legacy panes paint into its body slot; the app still
+    /// lays it out, registers its hits and takes its input.
+    pub community: bool,
 }
 
 pub struct ChartPanelApp {
@@ -440,6 +444,41 @@ impl ChartPanelApp {
             | UserSettingsTab::Shares => true,
             _ => false,
         }
+    }
+
+    /// Whether a uzor-framework host paints the cloud News/Links/Download overlay
+    /// this frame (cloud builds): it has taken it over (`dom_hosted.cloud_overlay`)
+    /// and the overlay is open. The DOM tree owns the dim veil and the dialog
+    /// shell; the legacy body paints into its body slot. The app still lays the
+    /// overlay out, registers its hit zones (the dimmer included) and takes its
+    /// input — its own paint goes nowhere (`PaintOff`).
+    #[cfg(feature = "cloud")]
+    pub fn cloud_overlay_on_dom(&self) -> bool {
+        self.dom_hosted.cloud_overlay && self.cloud_overlay_state.is_open
+    }
+
+    /// Whether a uzor-framework host paints the Community modal (Forum +
+    /// Messages) this frame (cloud builds): it has taken it over
+    /// (`dom_hosted.community`) and the modal is open. Same split as the cloud
+    /// overlay: DOM shell, legacy panes in the body slot, the app's layout /
+    /// hits / input stay. A resize drag in flight stays app-painted — the grip
+    /// pixels are the legacy shell's own until the DOM grip lands.
+    #[cfg(feature = "cloud")]
+    pub fn community_on_dom(&self) -> bool {
+        self.dom_hosted.community
+            && self.community_state.is_open
+            && self.community_state.resize_drag.is_none()
+    }
+
+    /// The outside `MessengerProvider` backing the Community modal's
+    /// Messages tab, as a paint-time read handle — the public face of the
+    /// crate-internal `messenger_view`, for a DOM host painting the
+    /// Community modal itself (`render_community_modal`'s
+    /// `messenger_provider_override` argument). `None` on the legacy DM
+    /// path.
+    #[cfg(feature = "cloud")]
+    pub fn messenger_provider_view(&self) -> Option<&dyn mlc_messenger_model::MessengerProvider> {
+        self.messenger_view()
     }
 
     /// Whether a uzor-framework host draws the chart settings modal this frame: it
@@ -1154,8 +1193,19 @@ impl ChartPanelApp {
         // Cloud News/Links/Download overlay (cloud builds only).
         #[cfg(feature = "cloud")]
         if self.cloud_overlay_state.is_open {
+            // A uzor-framework host paints it itself (`cloud_overlay_on_dom`):
+            // the layout, hit zones (dimmer included) and input stay here, the
+            // paint goes nowhere.
+            let on_dom = self.cloud_overlay_on_dom();
+            let mut off;
+            let co_ctx: &mut dyn RenderContext = if on_dom {
+                off = crate::paint_off::PaintOff(&mut *ctx);
+                &mut off
+            } else {
+                &mut *ctx
+            };
             result.cloud_overlay = Some(mlc_app_layout::layout::modals::render_cloud_overlay(
-                ctx,
+                co_ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.cloud_overlay_state,
@@ -1169,8 +1219,17 @@ impl ChartPanelApp {
         // community-modal arc W1).
         #[cfg(feature = "cloud")]
         if self.community_state.is_open {
+            // Same DOM-host split as the cloud overlay above.
+            let on_dom = self.community_on_dom();
+            let mut off;
+            let cm_ctx: &mut dyn RenderContext = if on_dom {
+                off = crate::paint_off::PaintOff(&mut *ctx);
+                &mut off
+            } else {
+                &mut *ctx
+            };
             result.community = Some(mlc_app_layout::layout::modals::render_community_modal(
-                ctx,
+                cm_ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.community_state,

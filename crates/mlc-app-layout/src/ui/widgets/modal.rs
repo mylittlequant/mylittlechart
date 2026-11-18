@@ -992,6 +992,25 @@ pub fn draw_vertical_rail(
     draw_tabs(ctx, coord, layer, ns, tabs, rect, theme);
 }
 
+/// Paint a whole horizontal tab bar with the shell's own pixels (active
+/// fill, hover fill, centred labels, bottom hairline). The DOM-host sibling
+/// of [`draw_vertical_rail`]: a host paints this into a slot and keeps
+/// transparent per-cell buttons for clicks.
+pub fn draw_horizontal_tabs(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    ns: &str,
+    items: &[ModalTab<'_>],
+    active: usize,
+    fit: TabFit,
+    rect: WidgetRect,
+    theme: &ModalTheme,
+) -> Vec<(String, WidgetRect)> {
+    let tabs = ModalTabs::Horizontal { items, active, fit };
+    draw_tabs(ctx, coord, layer, ns, tabs, rect, theme)
+}
+
 /// Where the footer's buttons land: `(template, primary)`. One source of
 /// truth, because `begin_modal_shell` reports the template rect to the body
 /// while `end_modal_shell` draws it a body later.

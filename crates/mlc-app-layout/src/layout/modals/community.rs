@@ -147,33 +147,50 @@ pub fn render_community_modal(
         &toolbar_theme.separator,
         toolbar_theme,
     );
-    // Which tab actually draws (falls back to Forum when `state.tab` names
-    // Messages but it is not visible for this caller right now — a stale
-    // `tab` surviving a sign-out or an account switch, see
-    // `CommunityState::active_tab`'s own doc) and whether the Messages tab
-    // exists at all this frame (owner ruling 2026-09-09: `paid` and above).
     let active_tab = state.active_tab();
     let messages_visible = state.messages_tab_visible();
-    // The FULL, unclamped content height — not just what the default frame
-    // shows. `state.size` is never `None` (see `CommunityState::default`),
-    // so this never drives the frame's own size (that always comes from
-    // `state.size`/`resizable`); its only remaining job is `shell.overflow`,
-    // which the `ScrollableContainer` in `forum_v2_overlay`/`dm_overlay`
-    // needs to know how much of a TALL board/thread/conversation list is
-    // still reachable by scrolling past the current viewport — capping it
-    // here (the way `cloud_overlay.rs`'s own `NEWS_LIST_MAX_BODY_H` caps a
-    // content-driven frame) would silently make the excess unreachable.
-    //
-    // No `.with_tabs(...)` here (messenger concept v1: the title never
-    // changes and the tab switch is two small pills INSIDE the header row,
-    // not a separate full-width bar under it) — the split `begin_modal_
-    // shell`/`end_modal_shell` form is used instead of the closure form so
-    // this function can paint the pills itself, between the shell's own
-    // chrome and the hosted pane's body, on the SAME layer both need
-    // (`modal.rs` itself recommends this split for bodies with extra chrome
-    // to add; here the reason is a header addition rather than a long tab
-    // body, same mechanism).
-    let spec = ModalShellSpec {
+    let spec = community_spec(state, promote_to_overlay);
+    let mut result = CommunityResult::default();
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &theme, (window_w, window_h));
+
+    let unread = unread_count(state, messenger_provider_override);
+    result.tab_rects = draw_header_tabs(
+        ctx, input_coordinator, &layer_id, shell.header, shell.close_btn,
+        active_tab, messages_visible, unread, toolbar_theme,
+    );
+
+    draw_pane(
+        ctx, input_coordinator, &layer_id, &shell, state, frame_theme, toolbar_theme,
+        current_time_ms, messenger_provider_override, &mut result,
+    );
+
+    end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
+
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+    result
+}
+
+/// The shell spec this modal renders with — the single source of truth for
+/// its geometry, shared by [`render_community_modal`] and the DOM host's
+/// tree builder (`crate::dom::community`).
+///
+/// The FULL, unclamped content height — not just what the default frame
+/// shows. `state.size` is never `None` (see `CommunityState::default`), so
+/// this never drives the frame's own size (that always comes from
+/// `state.size`/`resizable`); its only remaining job is `shell.overflow`,
+/// which the `ScrollableContainer` in `forum_v2_overlay`/`dm_overlay` needs
+/// to know how much of a TALL board/thread/conversation list is still
+/// reachable by scrolling past the current viewport.
+///
+/// No `.with_tabs(...)` here (messenger concept v1: the title never changes
+/// and the tab switch is two small pills INSIDE the header row, not a
+/// separate full-width bar under it).
+pub fn community_spec(state: &CommunityState, promote_to_overlay: bool) -> ModalShellSpec<'static> {
+    let active_tab = state.active_tab();
+    ModalShellSpec {
         placement: ModalPlacement::At(state.position),
         layer: if promote_to_overlay { ZLayer::ModalOverlay } else { ZLayer::Modal },
         ..ModalShellSpec::new("community", "Community", MODAL_W, content_height(state, active_tab))
@@ -184,52 +201,97 @@ pub fn render_community_modal(
         // Editor-footer default most settings modals get).
         .with_footer(ModalFooter::None)
         .resizable(state.size_for(active_tab), state.min_size())
-    };
-    let mut result = CommunityResult::default();
-    let (shell, layer_id) =
-        begin_modal_shell(ctx, input_coordinator, &spec, &theme, (window_w, window_h));
+    }
+}
 
-    // Client-side sum of every loaded room's own unread count — the
-    // Messages pill's badge (`messenger_concept_v1.html`'s own `.c` span).
-    // No aggregate "total unread" field exists on the wire; summing the
-    // per-room counts already fetched for the left column is cheap and
-    // needs no new one (audit `community-modal-and-forum-vs-concept.md`
-    // §1). Reads through `messenger_provider_override` when the caller
-    // supplied one, straight off `state.dm` otherwise (today's default).
-    let unread: i64 = match messenger_provider_override {
+/// Client-side sum of every loaded room's own unread count — the Messages
+/// pill's badge (`messenger_concept_v1.html`'s own `.c` span). Reads through
+/// `messenger_provider_override` when the caller supplied one, straight off
+/// `state.dm` otherwise (today's default).
+fn unread_count(
+    state: &CommunityState,
+    messenger_provider_override: Option<&dyn mlc_messenger_model::MessengerProvider>,
+) -> i64 {
+    match messenger_provider_override {
         Some(provider) => provider.rooms().iter().map(|r| r.notification_count as i64).sum(),
         None => state.dm.conversations.iter().map(|c| c.unread_count).sum(),
-    };
-    result.tab_rects = draw_header_tabs(
-        ctx, input_coordinator, &layer_id, shell.header, shell.close_btn,
-        active_tab, messages_visible, unread, toolbar_theme,
-    );
+    }
+}
 
+/// The active pane (Forum v2 or the messenger), painted into the shell's
+/// content rect. Shared by [`render_community_modal`] and the DOM host's
+/// body paint slot (`crate::dom::community`).
+#[allow(clippy::too_many_arguments)]
+fn draw_pane(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    shell: &crate::ui::widgets::ModalShell,
+    state: &CommunityState,
+    frame_theme: &FrameTheme,
+    toolbar_theme: &ToolbarTheme,
+    current_time_ms: u64,
+    messenger_provider_override: Option<&dyn mlc_messenger_model::MessengerProvider>,
+    result: &mut CommunityResult,
+) {
     let x = shell.content.x;
     let y = shell.content.y;
     let w = shell.content.width;
     let viewport_h = shell.content.height;
-    match active_tab {
+    match state.active_tab() {
         CommunityTab::Forum => forum_v2_overlay::draw(
-            ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
+            ctx, coord, layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
             current_time_ms, &mut result.content, &mut result.list,
         ),
         CommunityTab::Messages => {
             let default_provider = DmMessengerProviderView::new(&state.dm);
             let provider = messenger_provider_override.unwrap_or(&default_provider);
             messenger_overlay::draw(
-                ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, provider, frame_theme,
+                ctx, coord, layer_id, x, y, w, viewport_h, state, provider, frame_theme,
                 toolbar_theme, current_time_ms, &mut result.content, &mut result.list,
             )
         }
     }
+}
 
-    end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
+/// The Forum/Messages header pills, painted into the DOM host's header
+/// paint slot. Hits go to a throwaway coordinator — the app's layout pass
+/// already registered the live zones.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_pills_dom(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    shell: &crate::ui::widgets::ModalShell,
+    state: &CommunityState,
+    tt: &ToolbarTheme,
+    messenger_provider_override: Option<&dyn mlc_messenger_model::MessengerProvider>,
+    result: &mut CommunityResult,
+) {
+    let unread = unread_count(state, messenger_provider_override);
+    result.tab_rects = draw_header_tabs(
+        ctx, coord, layer_id, shell.header, shell.close_btn,
+        state.active_tab(), state.messages_tab_visible(), unread, tt,
+    );
+}
 
-    result.modal_rect = shell.frame;
-    result.header_rect = shell.header;
-    result.close_btn_rect = shell.close_btn.unwrap_or_default();
-    result
+/// The active pane, painted into the DOM host's body paint slot at the
+/// shell geometry the host laid out. Same throwaway-coordinator contract as
+/// [`draw_pills_dom`].
+#[allow(clippy::too_many_arguments)]
+pub fn draw_pane_dom(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    shell: &crate::ui::widgets::ModalShell,
+    state: &CommunityState,
+    ft: &FrameTheme,
+    tt: &ToolbarTheme,
+    current_time_ms: u64,
+    messenger_provider_override: Option<&dyn mlc_messenger_model::MessengerProvider>,
+    result: &mut CommunityResult,
+) {
+    draw_pane(ctx, coord, layer_id, shell, state, ft, tt, current_time_ms, messenger_provider_override, result);
 }
 
 /// Forum/Messages pills, drawn inside `header` — right of the title (which
