@@ -10,11 +10,11 @@ description = "TinySkiaChartRenderContext, a chart-aware wrapper over tiny-skia.
 name = "mlc_app_render_context_tiny_skia"
 
 [dependencies]
-uzor = "=1.5.49"
-uzor-render-tiny-skia = "=1.5.49"
+uzor = "=1.5.50"
+uzor-render-tiny-skia = "=1.5.50"
 # Opt-in CJK face (Noto Sans CJK SC, fetched at build time): without it the
 # language list's 中文/日本語/한국어 render as tofu in both old and DOM passes.
-uzor-fonts = { version = "=1.5.49", features = ["cjk"] }
+uzor-fonts = { version = "=1.5.50", features = ["cjk"] }
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]

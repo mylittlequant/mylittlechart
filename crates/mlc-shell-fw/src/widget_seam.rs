@@ -15,10 +15,26 @@ fn src(endpoint: &str) -> SeamSource {
     SeamSource { backend: "mlc".into(), endpoint: endpoint.into() }
 }
 
+/// A table-preset descriptor for a trading panel (WDC plugin: mlc owns the data
+/// and feeds rows per the contract; consumers render via `domkit::preset("table")`).
+fn table_desc(instance: String, title: &str, columns: &[&str]) -> WidgetDescriptor {
+    WidgetDescriptor {
+        wdc: 1,
+        instance: instance.clone(),
+        preset: "table".into(),
+        preset_version: 1,
+        title: title.into(),
+        data: json!({ "columns": columns, "rows": [] }),
+        options: json!({}),
+        actions: vec!["select-row".into()],
+        source: src(&format!("widget/{instance}")),
+    }
+}
+
 impl WidgetBackend for MlcWidgets<'_> {
     fn list(&self) -> Vec<WidgetDescriptor> {
         let symbol = "BTCUSDT".to_string();
-        vec![
+        let mut out = vec![
             WidgetDescriptor {
                 wdc: 1,
                 instance: format!("mlc:{symbol}:1h"),
@@ -52,7 +68,27 @@ impl WidgetBackend for MlcWidgets<'_> {
                 actions: vec![],
                 source: src("widget/status"),
             },
-        ]
+        ];
+        // Complex systems (trading panels) as contract widgets: the plugin (mlc)
+        // owns the data and feeds it per the WDC; any consumer (HQ) renders them
+        // via domkit::preset without compiling mlc in. Rows are filled by get().
+        let ps = &self.chart.panels_store;
+        for (id, _) in ps.trade_tape.iter() {
+            out.push(table_desc(format!("mlc:trade_tape:{}", id.0), "Trade tape", &["Time", "Price", "Size"]));
+        }
+        for (id, _) in ps.l2_tape.iter() {
+            out.push(table_desc(format!("mlc:l2:{}", id.0), "L2 tape", &["Time", "Type", "Side", "Price", "Qty"]));
+        }
+        for (id, _) in ps.big_trades.iter() {
+            out.push(table_desc(format!("mlc:big_trades:{}", id.0), "Big trades", &["Time", "Side", "Price", "Size", "Notional"]));
+        }
+        for (id, _) in ps.liq_tape.iter() {
+            out.push(table_desc(format!("mlc:liq:{}", id.0), "Liquidations", &["Time", "Side", "Price", "Size"]));
+        }
+        for (id, _) in ps.dom.iter() {
+            out.push(table_desc(format!("mlc:dom:{}", id.0), "DOM ladder", &["Bid", "Sell", "Buy", "Ask"]));
+        }
+        out
     }
 
     fn get(&self, instance: &str) -> Option<WidgetDescriptor> {
