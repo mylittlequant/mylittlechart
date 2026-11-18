@@ -890,10 +890,6 @@ impl HostedApp {
                 let mut coord = uzor::input::InputCoordinator::new();
                 let layer = uzor::input::LayerId::new("us_rail");
                 let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
-                let (hr, hg, hb, ha) = mlc_core::parse_css_color(&tt.separator);
-                use uzor::render::{Painter, ShapeHelpers};
-                c.set_fill_color(&format!("rgba({hr},{hg},{hb},{:.3})", ha as f64 / 255.0 * 0.5));
-                c.fill_rect(r.x, r.y, r.width, 1.0);
                 draw_vertical_rail(&mut c, &mut coord, &layer, "user_settings", &items, active, r, &theme);
             } else if f.key == us::BODY {
                 // Complex tab bodies: legacy renderer paints into the slot (incl. its
