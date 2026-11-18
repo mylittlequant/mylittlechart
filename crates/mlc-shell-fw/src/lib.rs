@@ -753,6 +753,13 @@ impl HostedApp {
                 // border and the body's last row; the legacy rail rect includes
                 // them (hairline at the right edge, full body height).
                 let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
+                // The legacy head border-bottom hairline runs across the rail
+                // columns at the rail's top row; the DOM head box paints it one
+                // row higher, so repaint it here over the rail.
+                let (hr, hg, hb, ha) = mlc_core::parse_css_color(&tt.separator);
+                use uzor::render::{Painter, ShapeHelpers};
+                c.set_fill_color(&format!("rgba({hr},{hg},{hb},{:.3})", ha as f64 / 255.0 * 0.5));
+                c.fill_rect(r.x, r.y, r.width, 1.0);
                 draw_vertical_rail(&mut c, &mut coord, &layer, "chart_settings", &items, active, r, &theme);
             } else if f.key == cs::BODY {
                 use mlc_app_layout::layout::modals::chart_settings as csrender;
