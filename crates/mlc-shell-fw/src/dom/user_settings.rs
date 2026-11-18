@@ -19,7 +19,7 @@
 
 use mlc_app_layout::ui::modal_settings::{UserSettingsState, UserSettingsTab};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
-use mlc_core::i18n::{current_language, Language, SettingsKey, UserSettingsKey};
+use mlc_core::i18n::{current_language, Language, UserSettingsKey};
 use uzor::types::Rect;
 use uzor::ui::dom::El;
 use uzor::ui::domkit;
@@ -541,7 +541,7 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     // shell's own raster); the DOM keeps transparent per-cell buttons for hits.
     // Inline css beats the shared shell sheet rules for the stand-in look.
     let rail = El::new("div.m-rail")
-        .css("border-right: 1px solid transparent; margin-left: -1px")
+        .css("width: 48px; border-right: 1px solid transparent; margin-left: -1px")
         .paint_slot(RAIL)
         .children(tabs.iter().map(|t| {
             El::new("button.m-tab")
@@ -595,9 +595,10 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     }
     let body = El::new("div.m-body-row").css("display: flex; flex-direction: row; flex-grow: 1").child(rail).child(content);
     // `domkit::dialog`'s shape, without its ids (they would be hits).
-    // The old modal shell captions this dialog with the shared settings title
-    // ("Settings"), not the longer user-settings key; match it pixel-for-pixel.
-    let title_s = SettingsKey::Title.get(current_language());
+    // The old shell captions this dialog with the user-settings key ("User
+    // Settings"); on the General tab its misplaced glass blur smears the first
+    // word away, which is why a "Settings" caption once looked pixel-exact there.
+    let title_s = UserSettingsKey::Title.get(current_language());
     let dialog = El::new("div.k-modal").child(El::new("div.k-scrim")).child(
         El::new("div.k-dialog")
             .css(format!("top: {}px; left: {}px; width: {}px; height: {}px", at.y, at.x, at.width, at.height))

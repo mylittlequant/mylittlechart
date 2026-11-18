@@ -340,6 +340,8 @@ impl HostedApp {
         chart.panel_app.dom_hosted.chart_settings = true;
         chart.panel_app.dom_hosted.sidebar = true;
         chart.panel_app.dom_hosted.user_settings = true;
+        chart.panel_app.dom_hosted.cloud_overlay = true;
+        chart.panel_app.dom_hosted.community = true;
         let mut host = Self::new(chart);
         host.chrome_on_dom = true;
         host.toolbars_on_dom = true;
@@ -573,6 +575,33 @@ impl HostedApp {
                 ctx.line_to(fr.x + 4.0, fr.y + fr.height - 4.0);
                 ctx.stroke();
                 ctx.restore();
+            } else if let Some(color) = f.key.strip_prefix(dom::sidebar_panels::OUTLINE) {
+                // The app's open 1 px square (menu border, picker, checkboxes),
+                // stroked with the round cap/join its rail icons leave set — the
+                // same call and pen as the app pass, so the corners rasterise
+                // identically on every backend. In the app's own coordinate space
+                // (the panel translate): axis-aligned strokes snap to the pixel
+                // grid in device space, and a different transform snaps them a
+                // half pixel apart.
+                let (dx, dy) = (r.x, r.y + chrome::CHROME_HEIGHT);
+                // The slot box carries a pixel of bleed; the outline is the inner rect.
+                let (x, y) = (fr.x + 1.0 - dx, fr.y + 1.0 - dy);
+                let (w, h) = (fr.width - 2.0, fr.height - 2.0);
+                ctx.save();
+                ctx.translate(dx, dy);
+                ctx.set_stroke_color(color);
+                ctx.set_stroke_width(1.0);
+                ctx.set_line_cap("round");
+                ctx.set_line_join("round");
+                ctx.set_line_dash(&[]);
+                ctx.begin_path();
+                ctx.move_to(x, y);
+                ctx.line_to(x + w, y);
+                ctx.line_to(x + w, y + h);
+                ctx.line_to(x, y + h);
+                ctx.line_to(x, y);
+                ctx.stroke();
+                ctx.restore();
             } else if f.key == sb::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
                 let track = uzor::types::Rect::new(fr.x, fr.y + 4.0, fr.width, view_h.min(content_h) - 8.0);
@@ -707,7 +736,7 @@ impl HostedApp {
         let st = &self.chart.panel_app.chart_settings_state;
         let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
         let app_scroll = st.scroll.animated_offset();
-        let tree = cs::tree(st, &data.instrument, at);
+        let tree = cs::tree(st, &data.instrument, at, &look.bg);
         // Slot-body tabs have no DOM viewport; don't seed/consume DOM scroll for them
         // (that would leave Instrument unseeded after visiting one).
         let slot_tab = matches!(
@@ -731,7 +760,12 @@ impl HostedApp {
         let tt = self.chart.panel_app.toolbar_theme_for_render();
         let ft = self.chart.panel_app.frame_theme_for_render();
         let tm = &self.chart.panel_app.theme_manager;
+        // The app paints the modal under the panel translate (chrome height);
+        // legacy-call slots paint in that same space so axis-aligned strokes
+        // snap to the same device pixels as the app pass.
+        let origin = cx.rect;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+            let (dx, dy) = (origin.x, origin.y + chrome::CHROME_HEIGHT);
             if f.key == cs::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
                 let r = f.rect;
@@ -754,22 +788,27 @@ impl HostedApp {
                 }).collect();
                 let active = CTab::all().iter().position(|t| *t == st.active_tab).unwrap_or(0);
                 let theme = ModalTheme::from_toolbar(&ft.modal_bg, &tt.separator, &tt);
+                use uzor::render::{Painter, ShapeHelpers};
+                ctx.save();
+                ctx.translate(dx, dy);
                 let mut c = ctx::ChartCtx::new(ctx);
                 let mut coord = uzor::input::InputCoordinator::new();
                 let layer = uzor::input::LayerId::new("cs_rail");
-                // The slot content box loses the rail's 1px transparent right
-                // border and the body's last row; the legacy rail rect includes
-                // them (hairline at the right edge, full body height).
-                let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
+                // The rail box has no border now, so its content box IS the legacy
+                // rail rect (the clip stays off the rail's right edge); only the
+                // body's last row is added back.
+                let r = uzor::types::Rect::new(f.rect.x - dx, f.rect.y - dy, f.rect.width, f.rect.height + 1.0);
                 // The legacy head border-bottom hairline runs across the rail
                 // columns at the rail's top row; the DOM head box paints it one
                 // row higher, so repaint it here over the rail.
                 let (hr, hg, hb, ha) = mlc_core::parse_css_color(&tt.separator);
-                use uzor::render::{Painter, ShapeHelpers};
                 c.set_fill_color(&format!("rgba({hr},{hg},{hb},{:.3})", ha as f64 / 255.0 * 0.5));
                 c.fill_rect(r.x, r.y, r.width, 1.0);
                 draw_vertical_rail(&mut c, &mut coord, &layer, "chart_settings", &items, active, r, &theme);
+                ctx.restore();
             } else if f.key == cs::BODY {
+                // The tab bodies paint in window space at identity in the app
+                // pass too (only the shell/rail carry the panel translate).
                 use mlc_app_layout::layout::modals::chart_settings as csrender;
                 use mlc_app_layout::ui::modal_settings::ChartSettingsTab as CTab;
                 let mut c = ctx::ChartCtx::new(ctx);
@@ -860,6 +899,9 @@ impl HostedApp {
         let ft = self.chart.panel_app.frame_theme_for_render();
         let cred = &self.chart.panel_app.credentials_state;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+            // The us bodies/scrollbars/sliders paint in window space at identity
+            // in the app pass too; only the sidebar and the cs rail carry the
+            // panel translate (see their slots).
             if f.key == us::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
                 let mut c = ctx::ChartCtx::new(ctx);
@@ -894,6 +936,9 @@ impl HostedApp {
                 let active = tabs.iter().position(|t| *t == st.active_tab).unwrap_or(0);
                 let tt = self.chart.panel_app.toolbar_theme_for_render();
                 let theme = ModalTheme::from_toolbar(&ft.modal_bg, &tt.separator, &tt);
+                // The us rail keeps the window-space paint its DOM rules were
+                // calibrated against (the shell hairline straddles here, unlike
+                // the cs rail's snapped one).
                 let mut c = ctx::ChartCtx::new(ctx);
                 let mut coord = uzor::input::InputCoordinator::new();
                 let layer = uzor::input::LayerId::new("us_rail");
@@ -1010,6 +1055,59 @@ impl HostedApp {
             Some(pn::Outcome::Commit(n)) => self.chart.commit_preset_name(&n),
             Some(pn::Outcome::Close) => self.chart.close_preset_name_input(),
             None => {}
+        }
+    }
+
+    /// The cloud News/Links/Download overlay and the Community modal on DOM
+    /// (cloud builds): the app lays them out, registers their hits and takes
+    /// their input; the DOM owns the dim veil / shell and the legacy panes
+    /// paint into the body slots ([`mlc_app_layout::dom`]).
+    #[cfg(feature = "cloud")]
+    fn cloud_overlay_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        let r = cx.rect;
+        let (co, cm) = (self.chart.panel_app.cloud_overlay_on_dom(), self.chart.panel_app.community_on_dom());
+        if !co && !cm {
+            return;
+        }
+        let ft = self.chart.panel_app.frame_theme_for_render();
+        let tt = self.chart.panel_app.toolbar_theme_for_render();
+        let co_sheet = co.then(|| self.sheet(mlc_app_layout::dom::cloud_overlay::Look::new(&ft, &tt).css()));
+        let cm_sheet = cm.then(|| self.sheet(mlc_app_layout::dom::community::Look::new(&ft, &tt).css()));
+        let now = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let mut click: Option<(String, f64, f64)> = None;
+        if let Some(sheet) = co_sheet {
+            let st = &self.chart.panel_app.cloud_overlay_state;
+            let look = mlc_app_layout::dom::cloud_overlay::Look::new(&ft, &tt);
+            let at = mlc_app_layout::dom::cloud_overlay::frame(r, chrome::CHROME_HEIGHT, st);
+            let tree = mlc_app_layout::dom::cloud_overlay::tree(st, &look, at, r, chrome::CHROME_HEIGHT);
+            let mut p = |c: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+                mlc_app_layout::dom::cloud_overlay::paint_slot(c, f.key, st, &ft, &tt, r, chrome::CHROME_HEIGHT);
+            };
+            let resp = uzor_framework::widgets::kit::dom(r, &sheet, tree).paint_slots(&mut p).build(cx);
+            if let Some(h) = resp.clicked.as_deref().and_then(mlc_app_layout::dom::cloud_overlay::app_id) {
+                if let Some((_, hr)) = resp.dom.hits().find(|(k, _)| *k == h) {
+                    click = Some((h, hr.x + hr.width / 2.0, hr.y + hr.height / 2.0));
+                }
+            }
+        }
+        if let Some(sheet) = cm_sheet {
+            let st = &self.chart.panel_app.community_state;
+            let look = mlc_app_layout::dom::community::Look::new(&ft, &tt);
+            let at = mlc_app_layout::dom::community::frame(r, chrome::CHROME_HEIGHT, st);
+            let tree = mlc_app_layout::dom::community::tree(st, &look, at, r, chrome::CHROME_HEIGHT);
+            let prov = self.chart.panel_app.messenger_provider_view();
+            let mut p = |c: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
+                mlc_app_layout::dom::community::paint_slot(c, f.key, st, &ft, &tt, now, prov, r, chrome::CHROME_HEIGHT);
+            };
+            let resp = uzor_framework::widgets::kit::dom(r, &sheet, tree).paint_slots(&mut p).build(cx);
+            if let Some(h) = resp.clicked.as_deref().and_then(mlc_app_layout::dom::community::app_id) {
+                if let Some((_, hr)) = resp.dom.hits().find(|(k, _)| *k == h) {
+                    click = Some((h, hr.x + hr.width / 2.0, hr.y + hr.height / 2.0));
+                }
+            }
+        }
+        if let Some((a, x, y)) = click {
+            self.chart.dispatch_panel_click(&a, x, y);
         }
     }
 
@@ -1156,6 +1254,8 @@ impl App for HostedApp {
         }
         cx.render.restore();
         self.dom_layer(cx);
+        #[cfg(feature = "cloud")]
+        self.cloud_overlay_layer(cx);
         self.frames += 1;
         // The app animates (live bars, spinners, the clock): it runs every frame, as the
         // winit shell's redraw loop does.

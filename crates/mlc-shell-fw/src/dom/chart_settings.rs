@@ -39,7 +39,7 @@ pub const RAIL: &str = "cs:rail";
 
 pub const W: f64 = 620.0;
 pub const H: f64 = 580.0;
-const HEADER_H: f64 = 44.0;
+pub const HEADER_H: f64 = 44.0;
 const FOOTER_H: f64 = 52.0;
 const RAIL_W: f64 = 48.0;
 const PAD: f64 = 12.0;
@@ -104,7 +104,7 @@ div.k-dialog-foot > button.k-btn {{ position: absolute; left: 14px; top: 8px; wi
   background: transparent; border: 2px solid {half}; color: {text}; text-align: center }}
 div.k-dialog-foot > button.k-btn.primary {{ position: static; margin-top: 9px; width: 70px; height: 32px; padding: 2px 0 0 0; border: none; background: {accent}; color: {on_text} }}
 div.k-dialog-foot > button.k-btn.primary:hover {{ background: {accent_hover} }}
-div.m-rail {{ width: 48px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid transparent; margin-left: -1px }}
+div.m-rail {{ width: 48px; flex-shrink: 0; display: flex; flex-direction: column; margin-left: -1px }}
 button.m-tab {{ width: 48px; height: 44px; padding: 0; background: transparent; border: none }}
 div.m-content {{ flex-grow: 1; padding: 12px 12px 0 12px; display: flex; flex-direction: column; position: relative }}
 div.m-csbody {{ position: absolute }}
@@ -221,7 +221,7 @@ pub fn content_height() -> f64 {
 
 /// The whole tree. The body is a framework-owned scroll container (build it with
 /// `dom_scroll()`); its scrollbar is the app's, in a paint slot beside it.
-pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El {
+pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect, bg: &str) -> El {
     // Rail pixels come from legacy `draw_vertical_rail` in the RAIL slot; the
     // DOM keeps transparent per-cell buttons for the click zones only.
     let rail = El::new("div.m-rail").paint_slot(RAIL).children(ChartSettingsTab::all().iter().map(|t| {
@@ -252,15 +252,25 @@ pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El 
     let template = t_settings(SettingsKey::ButtonTemplate);
     let dialog = domkit::dialog(ID, t_settings(SettingsKey::Title), body, &[ok, template], at);
     let shadow = El::new("div.m-shadow").css(format!("top: {}px; left: {}px; width: {}px; height: {}px", at.y + 4.0, at.x + 4.0, W, H));
+    // The legacy shell fills each band (head/body/foot) across the FULL frame,
+    // under its 1 px border stroke; the DOM bands stop at the dialog's padding
+    // box, so the half-alpha border ring composites over the backdrop instead of
+    // the band colour in the head/foot rows. One underlay at the legacy frame
+    // rect restores the base the stroke lands on.
+    let under = El::new("div.m-under").css(format!(
+        "position: fixed; z-index: 146; left: {}px; top: {}px; width: {}px; height: {}px; background: {bg}",
+        at.x + 1.0, at.y + 1.0, W, H
+    ));
     let grip_svg = r#"<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M7 9L9 7M4 9L9 4M1 9L9 1"/></svg>"#;
     let grip = El::new("div.m-grip").css(format!("top: {}px; left: {}px", at.y + 1.0 + H - 10.0, at.x + 1.0 + W - 10.0)).svg(grip_svg);
-    // The old shell's body drew a rail-right rule one pixel inside the rail's own
-    // hairline for the full body height, and the footer's top hairline across the
-    // FULL outer width (over the side border); the foot box border is layout-only.
+    // The footer's top hairline runs across the FULL outer width (over the side
+    // border); the foot box border is layout-only. The rail's right hairline is
+    // the rail slot's own stroke (it snaps one column inboard, exactly as the app
+    // pass's does under the panel translate) — no DOM stand-in rule for it.
     let (fx, fy) = (at.x + 1.0, at.y + 1.0);
     let rule = |l: f64, t: f64, w: f64, h: f64| El::new("div.m-rule").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
-    let rules = [rule(fx + RAIL_W - 1.0, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H), rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0)];
-    El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(dialog).child(grip).children(rules)
+    let rules = [rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0)];
+    El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(under).child(dialog).child(grip).children(rules)
 }
 
 /// What a DOM click means to the app: the id under its `chart_settings:` prefix.
