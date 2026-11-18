@@ -4954,7 +4954,7 @@ fn render_slot_toolbar_in_header(
 /// empty, draws a "Drag panels here" hint instead. Cross-container drag
 /// between Main + typed slots and real leaf rendering land in Phase 4-new
 /// together with the first real `Panel` variants.
-fn render_slot_panel(
+pub fn render_slot_panel(
     ctx: &mut dyn RenderContext,
     rect: &LayoutRect,
     content_y: f64,
