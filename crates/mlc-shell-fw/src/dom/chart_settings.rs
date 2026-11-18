@@ -102,8 +102,9 @@ div.k-dialog-foot > button.k-btn {{ position: absolute; left: 14px; top: 8px; wi
 div.k-dialog-foot > button.k-btn.primary {{ position: static; margin-top: 9px; width: 70px; height: 32px; padding: 2px 0 0 0; border: none; background: {accent}; color: {on_text} }}
 div.k-dialog-foot > button.k-btn.primary:hover {{ background: {accent_hover} }}
 div.m-rail {{ width: 48px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid {half}; margin-left: -1px }}
-button.m-tab {{ width: 47px; height: 44px; padding: 13px 14px 13px 15px; color: {muted} }}
-button.m-tab.on {{ background: {on}; border-left: 3px solid {accent}; padding-left: 12px; color: {on_text} }}
+button.m-tab {{ position: relative; width: 48px; height: 44px; padding: 13px 15px; color: {muted} }}
+button.m-tab.on {{ background: {on}; color: {on_text} }}
+div.m-tab-bar {{ position: absolute; left: 0px; top: 0px; width: 3px; height: 44px; background: {accent} }}
 div.m-content {{ flex-grow: 1; padding: 12px 12px 0 12px; display: flex; flex-direction: column; position: relative }}
 div.m-csbody {{ position: absolute }}
 div.m-title {{ height: 16px; flex-shrink: 0; margin: -3px 0 17px 0; font-size: 14px; font-weight: 700 }}
@@ -229,8 +230,17 @@ fn tab_icon(tab: ChartSettingsTab) -> &'static str {
 /// `dom_scroll()`); its scrollbar is the app's, in a paint slot beside it.
 pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El {
     let rail = El::new("div.m-rail").children(ChartSettingsTab::all().iter().map(|t| {
-        let cls = if *t == state.active_tab { "button.m-tab.on" } else { "button.m-tab" };
-        El::new(cls).id(format!("{ID}:tab:{}", t.id())).tab().name(t.label()).svg(tab_icon(*t))
+        let on = *t == state.active_tab;
+        let cls = if on { "button.m-tab.on" } else { "button.m-tab" };
+        // App marks the selected rail row with a 3 px accent bar down the left
+        // edge (draw_sidebar_active_item) + fill; replicate as an absolute child
+        // so the icon stays centred on the full 48 px cell like the app.
+        El::new(cls)
+            .id(format!("{ID}:tab:{}", t.id()))
+            .tab()
+            .name(t.label())
+            .child_if(on, || El::new("div.m-tab-bar"))
+            .svg(tab_icon(*t))
     }));
     let active = state.active_tab;
     let content = if matches!(active, ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines | ChartSettingsTab::Appearance) {
