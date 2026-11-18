@@ -110,6 +110,7 @@ button.m-tab.hov {{ background: {hover}; color: {text} }}
 div.k-dialog-head > button.k-act.hov {{ color: {text_on} }}
 div.k-dialog-foot > button.k-btn.primary.hov {{ background: {accent_hover} }}
 div.u-rule {{ position: fixed; z-index: 152; background: {half} }}
+div.k-dialog-foot {{ border-top-color: transparent }}
 div.u-under {{ position: fixed; z-index: 146; background: {bg} }}
 div.u-tab-edge {{ position: fixed; z-index: 151; background: {on} }}
 div.u-tab-edge.hov {{ background: {hover} }}",
@@ -619,11 +620,18 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     // The old active tab reached under the rail's edge rule (one more column).
     let tab_i = active_i as f64;
     let tab_edge = El::new("div.u-tab-edge").css(format!("left: {}px; top: {}px; width: 1px; height: 44px", fx + RAIL_W - 1.0, fy + HEADER_H + tab_i * 44.0));
-    let rules = [rule(fx + RAIL_W - 1.0, fy + HEADER_H + tab_i * 44.0, 1.0, 44.0), rule(fx + RAIL_W - 1.0, fy + HEADER_H, W - RAIL_W + 1.0, 1.0), rule(fx + RAIL_W, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H)];
-    // A hovered tab's fill reaches under the rail rule too.
+    // The old body drew its own rail-right rule one pixel inside the shell's
+    // hairline for the FULL body height, OVER the rail fills (active accent /
+    // hover). It is the single half-alpha column there; the active/hover fills
+    // sit below it (z-index), so no extra per-row half is needed.
+    // The footer's top hairline runs the FULL outer width (over the side border),
+    // two px tall; the foot box's own border-top is transparent (layout only).
+    let rules = [rule(fx + RAIL_W - 1.0, fy + HEADER_H, W - RAIL_W + 1.0, 1.0), rule(fx + RAIL_W, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H), rule(fx + RAIL_W - 1.0, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H), rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0)];
+    // A hovered tab's fill reaches under the rail rule too (the rule itself is
+    // the full-height inner column above).
     let hover_edge = hover.tab.filter(|&i| tabs.get(i) != Some(&active)).map(|i| {
         let y = fy + HEADER_H + i as f64 * 44.0;
-        [El::new("div.u-tab-edge.hov").css(format!("left: {}px; top: {}px; width: 1px; height: 44px", fx + RAIL_W - 1.0, y)), rule(fx + RAIL_W - 1.0, y, 1.0, 44.0)]
+        [El::new("div.u-tab-edge.hov").css(format!("left: {}px; top: {}px; width: 1px; height: 44px", fx + RAIL_W - 1.0, y))]
     });
     let shadow = El::new("div.m-shadow").css(format!("top: {}px; left: {}px; width: {}px; height: {}px", at.y + 4.0, at.x + 4.0, W, H));
     (El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(under).child(dialog).child(tab_edge).children(rules).children(hover_edge.into_iter().flatten()), content_h)
