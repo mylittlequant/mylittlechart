@@ -1212,6 +1212,31 @@ impl App for HostedApp {
             self.preset_name.is_some(),
         ))
     }
+
+    /// The WDC backend over dev-control so an HQ node can proxy it: read-only
+    /// `widgets.list` / `widgets.get` (replayable), mutating `widgets.execute`
+    /// (not replayable). Wire JSON is the `hatchery-hq-wire` contract verbatim.
+    #[cfg(feature = "dev-control")]
+    fn dev_methods(&self) -> Vec<(String, bool)> {
+        vec![("widgets.list".into(), true), ("widgets.get".into(), true), ("widgets.execute".into(), false)]
+    }
+
+    #[cfg(feature = "dev-control")]
+    fn dev_rpc(&self, method: &str, params: &serde_json::Value) -> Option<Result<serde_json::Value, String>> {
+        use hatchery_hq_wire::widget::WidgetBackend;
+        let w = crate::widget_seam::MlcWidgets { chart: &self.chart };
+        let instance = || params.get("instance").and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| "give \"instance\"".to_string());
+        match method {
+            "widgets.list" => Some(serde_json::to_value(w.list()).map_err(|e| e.to_string())),
+            "widgets.get" => Some(instance().and_then(|i| serde_json::to_value(w.get(&i)).map_err(|e| e.to_string()))),
+            "widgets.execute" => {
+                let verb = params.get("verb").and_then(|v| v.as_str()).map(str::to_string).ok_or_else(|| "give \"verb\"".to_string());
+                let payload = params.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+                Some(instance().and_then(|i| verb.and_then(|v| serde_json::to_value(w.execute(&i, &v, payload)).map_err(|e| e.to_string()))))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// `slot`'s sheet for `css`, parsed again only when the CSS or the media generation

@@ -130,6 +130,8 @@ div.m-dd {{ width: {DD_W}px; height: 28px; display: flex; border-radius: 4px; ba
 button.m-dd-text {{ flex-grow: 1; height: 28px; padding: 3px 8px 0 8px; text-align: left; font-size: 12px; color: {text}; overflow: hidden }}
 button.m-dd-chev {{ width: 21px; height: 28px; margin-left: -1px; border-left: 2px solid {half}; padding: 11px 7px 11px 6px; color: {text} }}
 div.m-scroll {{ position: absolute; top: 0; right: 0; width: {SCROLLBAR_W}px; height: {VIEW_H}px }}
+div.m-rule {{ position: fixed; z-index: 152; background: {half} }}
+div.k-dialog-foot {{ border-top-color: transparent }}
 div.m-grip {{ position: fixed; z-index: 151; width: 10px; height: 10px; color: {muted} }}"
         )
     }
@@ -252,7 +254,13 @@ pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El 
     let shadow = El::new("div.m-shadow").css(format!("top: {}px; left: {}px; width: {}px; height: {}px", at.y + 4.0, at.x + 4.0, W, H));
     let grip_svg = r#"<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><path d="M7 9L9 7M4 9L9 4M1 9L9 1"/></svg>"#;
     let grip = El::new("div.m-grip").css(format!("top: {}px; left: {}px", at.y + 1.0 + H - 10.0, at.x + 1.0 + W - 10.0)).svg(grip_svg);
-    El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(dialog).child(grip)
+    // The old shell's body drew a rail-right rule one pixel inside the rail's own
+    // hairline for the full body height, and the footer's top hairline across the
+    // FULL outer width (over the side border); the foot box border is layout-only.
+    let (fx, fy) = (at.x + 1.0, at.y + 1.0);
+    let rule = |l: f64, t: f64, w: f64, h: f64| El::new("div.m-rule").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
+    let rules = [rule(fx + RAIL_W - 1.0, fy + HEADER_H, 1.0, H - HEADER_H - FOOTER_H), rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0)];
+    El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(dialog).child(grip).children(rules)
 }
 
 /// What a DOM click means to the app: the id under its `chart_settings:` prefix.

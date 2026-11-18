@@ -143,4 +143,32 @@ mod tests {
         assert!(!w.execute("mlc:watchlist", "range", json!({})).ack, "verb not promised by list");
         assert!(!w.execute("mlc:nope", "select", json!({})).ack, "unknown instance");
     }
+
+    /// The WDC backend exposed over dev-control (`widgets.list` / `widgets.get` /
+    /// `widgets.execute`): the wire JSON an HQ node proxy would forward, plus the
+    /// replayable flags (read-only queries replayable, execute not).
+    #[cfg(feature = "dev-control")]
+    #[test]
+    fn widgets_dev_control_rpc_lists_gets_executes() {
+        use uzor_framework::App;
+        let app = crate::HostedApp::new(mlc_app::ChartApp::new("BTCUSDT"));
+        let methods = app.dev_methods();
+        assert!(methods.contains(&("widgets.list".to_string(), true)));
+        assert!(methods.contains(&("widgets.get".to_string(), true)));
+        assert!(methods.contains(&("widgets.execute".to_string(), false)));
+        let list = app.dev_rpc("widgets.list", &json!({})).unwrap().unwrap();
+        let arr = list.as_array().expect("list is an array");
+        assert!(!arr.is_empty());
+        let inst = arr[0]["instance"].as_str().unwrap().to_string();
+        let got = app.dev_rpc("widgets.get", &json!({ "instance": inst })).unwrap().unwrap();
+        assert_eq!(got["instance"], json!(inst));
+        assert!(app.dev_rpc("widgets.get", &json!({ "instance": "mlc:nope" })).unwrap().unwrap().is_null());
+        let ex = app.dev_rpc("widgets.execute", &json!({ "instance": "mlc:watchlist", "verb": "select", "payload": { "index": 2 } })).unwrap().unwrap();
+        assert_eq!(ex["ack"], json!(true));
+        assert_eq!(ex["data"]["selected"], json!(2));
+        let rejected = app.dev_rpc("widgets.execute", &json!({ "instance": "mlc:status", "verb": "noop" })).unwrap().unwrap();
+        assert_eq!(rejected["ack"], json!(false));
+        assert!(app.dev_rpc("widgets.get", &json!({})).unwrap().is_err(), "missing instance is a bad request");
+        assert!(app.dev_rpc("widgets.nope", &json!({})).is_none(), "unknown method falls through to the core");
+    }
 }
