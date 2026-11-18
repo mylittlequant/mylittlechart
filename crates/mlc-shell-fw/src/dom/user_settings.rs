@@ -33,6 +33,9 @@ pub const SCROLLBAR: &str = "us:scrollbar";
 /// Whole-body paint slot for tabs whose legacy renderer is still the paint source
 /// (Server): DOM owns the shell/title/viewport, the legacy tab body paints here.
 pub const BODY: &str = "us:body";
+/// Whole-rail paint slot: legacy `draw_vertical_rail` paints the icon column;
+/// the DOM keeps transparent per-cell buttons for clicks only.
+pub const RAIL: &str = "us:rail";
 
 pub const W: f64 = 540.0;
 pub const H: f64 = 500.0;
@@ -137,7 +140,7 @@ pub fn frame(window: Rect, chrome_h: f64, state: &UserSettingsState) -> Rect {
     Rect::new(window.x + clamp(x, W, sw) - 1.0, window.y + chrome_h + clamp(y, H, sh) - 1.0, W + 2.0, H + 2.0)
 }
 
-fn tab_icon(tab: UserSettingsTab) -> &'static str {
+pub(crate) fn tab_icon(tab: UserSettingsTab) -> &'static str {
     use mlc_app_layout::ui::Icon;
     match tab {
         UserSettingsTab::General => Icon::Settings.svg(),
@@ -533,10 +536,18 @@ pub fn tree(s: &UserSettingsState, look: &Look, hover: Hover, at: Rect, measure:
     // The app highlights `position(active).unwrap_or(0)`: a tab the rail no longer
     // shows (e.g. Sync) falls back to the first cell, not to no highlight.
     let active_i = tabs.iter().position(|t| *t == active).unwrap_or(0);
-    let rail = El::new("div.m-rail").children(tabs.iter().enumerate().map(|(i, t)| {
-        let cls = if i == active_i { "button.m-tab.on" } else { "button.m-tab" };
-        El::new(cls).id(format!("user_settings:tab:{}", t.id())).tab().svg(tab_icon(*t))
-    }));
+    // Rail pixels come from legacy `draw_vertical_rail` in the RAIL slot (the
+    // shell's own raster); the DOM keeps transparent per-cell buttons for hits.
+    // Inline css beats the shared shell sheet rules for the stand-in look.
+    let rail = El::new("div.m-rail")
+        .css("border-right: 1px solid transparent; margin-left: -1px")
+        .paint_slot(RAIL)
+        .children(tabs.iter().map(|t| {
+            El::new("button.m-tab")
+                .id(format!("user_settings:tab:{}", t.id()))
+                .tab()
+                .css("background: transparent; border: none; padding: 0; width: 48px; height: 44px")
+        }));
     let (rows, content_h) = match active {
         UserSettingsTab::Persistence => persistence_rows(s, look, measure),
         UserSettingsTab::Performance => performance_rows(s, look, measure),

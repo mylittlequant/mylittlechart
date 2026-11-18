@@ -866,6 +866,35 @@ impl HostedApp {
                     (SliderConfig::new(0.0, 50000.0).with_step(500.0), max_val, max_label)
                 };
                 render_single_slider(&mut c, &cfg, val, f.rect, label, &wt, false, None);
+            } else if f.key == us::RAIL {
+                use mlc_app_layout::ui::widgets::{draw_vertical_rail, ModalTab, ModalTheme};
+                use mlc_app_layout::ui::modal_settings::UserSettingsTab as UTab;
+                use mlc_app_layout::ui::Icon;
+                let tabs = st.visible_tabs();
+                let items: Vec<ModalTab<'_>> = tabs.iter().map(|t| {
+                    let icon = match t {
+                        UTab::General => Icon::Settings,
+                        UTab::Sync | UTab::Vault => Icon::Lock,
+                        UTab::Persistence | UTab::Shares => Icon::Pin,
+                        UTab::Performance => Icon::Grid,
+                        UTab::Server => Icon::Layers,
+                        UTab::Account | UTab::Friends => Icon::User,
+                        UTab::Admin => Icon::Shield,
+                    };
+                    ModalTab::with_icon(t.id(), t.label(), icon)
+                }).collect();
+                let active = tabs.iter().position(|t| *t == st.active_tab).unwrap_or(0);
+                let tt = self.chart.panel_app.toolbar_theme_for_render();
+                let theme = ModalTheme::from_toolbar(&ft.modal_bg, &tt.separator, &tt);
+                let mut c = ctx::ChartCtx::new(ctx);
+                let mut coord = uzor::input::InputCoordinator::new();
+                let layer = uzor::input::LayerId::new("us_rail");
+                let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
+                let (hr, hg, hb, ha) = mlc_core::parse_css_color(&tt.separator);
+                use uzor::render::{Painter, ShapeHelpers};
+                c.set_fill_color(&format!("rgba({hr},{hg},{hb},{:.3})", ha as f64 / 255.0 * 0.5));
+                c.fill_rect(r.x, r.y, r.width, 1.0);
+                draw_vertical_rail(&mut c, &mut coord, &layer, "user_settings", &items, active, r, &theme);
             } else if f.key == us::BODY {
                 // Complex tab bodies: legacy renderer paints into the slot (incl. its
                 // own scrollbar). Hits go to a throwaway coordinator — the app's
