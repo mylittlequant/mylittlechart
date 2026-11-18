@@ -5,6 +5,11 @@ use crate::ChartApp;
 use mlc_app_sidebar_content::state::RightSidebarPanel;
 use mlc_app_sidebar_content::types::WatchlistColumnConfig;
 
+// Same alias pattern as frame_lifecycle/tick.rs: on wasm / non-agents builds the
+// stub module stands in for gate4agent; on agents-native the extern crate is used.
+#[cfg(not(all(feature = "agents", not(target_arch = "wasm32"))))]
+use crate::agent as gate4agent;
+
 /// The watchlist's per-list data the sidebar renderer gets beside `sidebar_state`.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
@@ -36,14 +41,13 @@ impl ChartApp {
                 .all(|g| g.signals.len() <= 8 || s.collapsed_signal_groups.contains(&g.instance_id)),
             // Item 11: the whole panel area (header toolbar + body) is legacy-painted
             // into a slot over the DOM frame; verified at over==0 with the live freeze.
-            RightSidebarPanel::SlotTrading
+            RightSidebarPanel::Agents
+            | RightSidebarPanel::SlotTrading
             | RightSidebarPanel::SlotDom
             | RightSidebarPanel::SlotTape
             | RightSidebarPanel::SlotL2
             | RightSidebarPanel::SlotBigTrades
             | RightSidebarPanel::SlotLiq => true,
-            // Agents stays app-painted: its header CLI-picker (prompt/CLAUDE/gear)
-            // does not reproduce in the panel-area slot path yet (item 11 remainder).
             _ => false,
         }
     }
@@ -232,5 +236,24 @@ impl ChartApp {
                 wl_list.as_ref().and_then(|l| l.get_color_flag(addr)).map(|s| s.to_string())
             },
         )
+    }
+
+    /// DOM-host paint of the Agents header CLI-picker (item 11 remainder): the
+    /// composer toolbar (mode toggle + backend label + gear) that `ChartApp::render`
+    /// draws separately (lib.rs ~9669) and which goes to `PaintOff` under DOM
+    /// hosting. Mirrors that call exactly; hits stay the app's (its layout pass
+    /// registers the `tch:*` zones).
+    pub fn render_agents_header_dom(&mut self, ctx: &mut dyn mlc_core::render::RenderContext, rect: &mlc_core::LayoutRect) {
+        if !mlc_app_sidebar_content::shell_caps::agents_control_available() {
+            return;
+        }
+        let is_pty = self.sidebar_state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
+        let (bl_full, bl_short) = mlc_app_sidebar_content::render::agent_backend_labels(&self.sidebar_state.agent_selected_backend);
+        let label = if rect.width >= 220.0 { bl_full } else { bl_short };
+        let hr = mlc_core::LayoutRect::new(rect.x, rect.y, (rect.width - 36.0).max(0.0), 40.0);
+        let _ = self.panel_app.render_section_header_toolbar(
+            &self.trading_header_tb, ctx, &hr, "", "", "", None, false,
+            mlc_core::toolbar::agents_header_toolbar(is_pty, label),
+        );
     }
 }

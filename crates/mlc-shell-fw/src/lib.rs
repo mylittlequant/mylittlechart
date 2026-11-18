@@ -591,6 +591,11 @@ impl HostedApp {
             let mut coord = uzor::input::InputCoordinator::default();
             let lr = mlc_core::LayoutRect { x: o.x, y: o.y, width: o.width, height: o.height };
             let _ = self.chart.render_right_sidebar_dom(&mut c, &lr, &theme, &mut coord);
+            // Agents' header CLI-picker is a separate app call (PaintOff under DOM
+            // hosting); paint it here too so the header matches (item 11).
+            if self.chart.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Agents {
+                self.chart.render_agents_header_dom(&mut c, &lr);
+            }
             self.sidebar_scroll = None;
         } else {
             let y = match resp.scrolls.iter().find(|(k, _)| pushed.is_none() && k == sb::VIEWPORT) {

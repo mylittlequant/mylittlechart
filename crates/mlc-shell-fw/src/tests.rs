@@ -1063,6 +1063,7 @@ mod hosted {
             RightSidebarPanel::SlotLiq,
             RightSidebarPanel::SlotDom,
             RightSidebarPanel::SlotTrading,
+            RightSidebarPanel::Agents,
         ] {
             let (mut h, win) = host(); // freezes clock + live drain
             h.runtime_mut().app_mut().chart.sidebar_state.right_panel = panel;
