@@ -684,8 +684,15 @@ impl HostedApp {
         let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
         let app_scroll = st.scroll.animated_offset();
         let tree = cs::tree(st, &data.instrument, at);
+        // Slot-body tabs have no DOM viewport; don't seed/consume DOM scroll for them
+        // (that would leave Instrument unseeded after visiting one).
+        let slot_tab = matches!(
+            st.active_tab,
+            mlc_app_layout::ui::modal_settings::ChartSettingsTab::StatusLine
+                | mlc_app_layout::ui::modal_settings::ChartSettingsTab::ScalesLines
+        );
         // The body scrolls itself; it opens where the app's own offset is.
-        let seed = (!self.cs_scroll_seeded).then_some(app_scroll);
+        let seed = (!self.cs_scroll_seeded && !slot_tab).then_some(app_scroll);
         if let Some(y) = seed {
             self.cs_scroll_seeded = true;
             if y > 0.0 {
@@ -696,6 +703,8 @@ impl HostedApp {
             Some(y) => y,
             None => uzor_framework::widgets::kit::dom_scroll_top(cx, cs::VIEWPORT),
         };
+        let tt = self.chart.panel_app.toolbar_theme_for_render();
+        let ft = self.chart.panel_app.frame_theme_for_render();
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
             if f.key == cs::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
@@ -704,6 +713,15 @@ impl HostedApp {
                 let mut c = ctx::ChartCtx::new(ctx);
                 let theme = mlc_app_layout::ui::widgets::WidgetTheme::default();
                 draw_scrollbar(&mut c, &ScrollbarConfig::new(cs::content_height(), cs::VIEW_H, scroll), ScrollbarState::Active, track, &theme, None);
+            } else if f.key == cs::BODY {
+                use mlc_app_layout::layout::modals::chart_settings as csrender;
+                use mlc_app_layout::ui::modal_settings::ChartSettingsTab as CTab;
+                let mut c = ctx::ChartCtx::new(ctx);
+                let mut res = mlc_app_layout::layout::render_frame::ChartSettingsModalResult::default();
+                match st.active_tab {
+                    CTab::StatusLine => csrender::render_status_line_tab_dom(&mut c, f.rect, data, &tt, &ft, st, 0, &mut res),
+                    _ => csrender::render_scales_tab_dom(&mut c, f.rect, data, &tt, &ft, st, 0, &mut res),
+                }
             }
         };
         let resp = uzor_framework::widgets::kit::dom(cx.rect, &sheet, tree).paint_slots(&mut painter).dom_scroll().build(cx);

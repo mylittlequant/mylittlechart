@@ -447,10 +447,16 @@ impl ChartPanelApp {
     pub fn chart_settings_on_dom(&self, data: &ChartSettingsData) -> bool {
         use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
         let s = &self.chart_settings_state;
+        // Instrument is full DOM (candle-family only); StatusLine / ScalesLines are
+        // DOM shell + legacy body paint slot (chart-type independent).
+        let tab_ok = match s.active_tab {
+            ChartSettingsTab::Instrument => matches!(data.instrument.chart_type.as_str(), "candles" | "bars" | "heikin_ashi"),
+            ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines => true,
+            _ => false,
+        };
         self.dom_hosted.chart_settings
             && s.is_open
-            && s.active_tab == ChartSettingsTab::Instrument
-            && matches!(data.instrument.chart_type.as_str(), "candles" | "bars" | "heikin_ashi")
+            && tab_ok
             && s.size.is_none()
             && !s.is_color_picker_open()
             && s.active_dropdown.is_none()

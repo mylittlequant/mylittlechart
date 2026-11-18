@@ -30,6 +30,9 @@ pub const ID: &str = "cs";
 pub const SCROLLBAR: &str = "cs:scrollbar";
 /// The body viewport (its rect takes the wheel).
 pub const VIEWPORT: &str = "cs:viewport";
+/// Whole-body paint slot for tabs whose legacy renderer is still the paint source
+/// (StatusLine / ScalesLines), placed at the shell content origin.
+pub const BODY: &str = "cs:body";
 
 pub const W: f64 = 620.0;
 pub const H: f64 = 580.0;
@@ -101,7 +104,8 @@ div.k-dialog-foot > button.k-btn.primary:hover {{ background: {accent_hover} }}
 div.m-rail {{ width: 48px; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid {half}; margin-left: -1px }}
 button.m-tab {{ width: 47px; height: 44px; padding: 13px 14px 13px 15px; color: {muted} }}
 button.m-tab.on {{ background: {on}; border-left: 3px solid {accent}; padding-left: 12px; color: {on_text} }}
-div.m-content {{ flex-grow: 1; padding: 12px 12px 0 12px; display: flex; flex-direction: column }}
+div.m-content {{ flex-grow: 1; padding: 12px 12px 0 12px; display: flex; flex-direction: column; position: relative }}
+div.m-csbody {{ position: absolute }}
 div.m-title {{ height: 16px; flex-shrink: 0; margin: -3px 0 17px 0; font-size: 14px; font-weight: 700 }}
 div.m-viewbox {{ flex-shrink: 0; width: {VIEW_W}px; height: {VIEW_H}px; position: relative }}
 div.m-view {{ width: {VIEW_W}px; height: {VIEW_H}px; overflow: auto; scrollbar-width: none }}
@@ -229,11 +233,22 @@ pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect) -> El 
         El::new(cls).id(format!("{ID}:tab:{}", t.id())).tab().name(t.label()).svg(tab_icon(*t))
     }));
     let active = state.active_tab;
-    let rows = El::new("div.m-rows").children(instrument_rows(s));
-    let view = El::new("div.m-viewbox")
-        .child(El::new("div.m-view").id(VIEWPORT).child(rows))
-        .child_if(content_height() > VIEW_H, || El::new("div.m-scroll").paint_slot(SCROLLBAR));
-    let content = El::new("div.m-content").child(El::new("div.m-title").text(active.label())).child(view);
+    let content = if matches!(active, ChartSettingsTab::StatusLine | ChartSettingsTab::ScalesLines) {
+        // Legacy body paints into the BODY slot (no DOM viewport/scrollbar here);
+        // the slot sits at the shell content origin (padding + title band).
+        El::new("div.m-content")
+            .child(El::new("div.m-title").text(active.label()))
+            .child(El::new("div.m-csbody").paint_slot(BODY).css(format!(
+                "left: {PAD}px; top: {}px; width: {VIEW_W}px; height: {VIEW_H}px",
+                PAD + 30.0
+            )))
+    } else {
+        let rows = El::new("div.m-rows").children(instrument_rows(s));
+        let view = El::new("div.m-viewbox")
+            .child(El::new("div.m-view").id(VIEWPORT).child(rows))
+            .child_if(content_height() > VIEW_H, || El::new("div.m-scroll").paint_slot(SCROLLBAR));
+        El::new("div.m-content").child(El::new("div.m-title").text(active.label())).child(view)
+    };
     let body = El::new("div.m-body-row").css("display: flex; flex-direction: row; flex-grow: 1").child(rail).child(content);
     let ok = "OK";
     let template = t_settings(SettingsKey::ButtonTemplate);

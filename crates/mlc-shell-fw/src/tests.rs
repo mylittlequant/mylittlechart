@@ -206,7 +206,12 @@ mod hosted {
         open_chart_settings(&mut h);
         click(&mut h, win, "cs:tab:status_line");
         assert_eq!(cs_state(&h).active_tab, mlc_app_layout::ui::modal_settings::ChartSettingsTab::StatusLine);
-        assert!(cs_state(&h).is_open && !cs_shown(&h), "another tab is still the app's renderer");
+        assert!(cs_state(&h).is_open && cs_shown(&h), "StatusLine is DOM now (body slot)");
+        // Appearance is still the app's renderer (needs theme manager + live clock).
+        h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = mlc_app_layout::ui::modal_settings::ChartSettingsTab::Appearance;
+        h.advance(0.017);
+        h.advance(0.017);
+        assert!(cs_state(&h).is_open && !cs_shown(&h), "Appearance is still the app's renderer");
         h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = Default::default();
         h.advance(0.017);
         h.advance(0.017);
@@ -219,6 +224,74 @@ mod hosted {
         h.advance(0.017);
         click(&mut h, win, "cs:close");
         assert!(!cs_state(&h).is_open, "the close button closes");
+    }
+
+    /// The window painted with the DOM chart settings modal on or off.
+    fn cs_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
+        use uzor::render::{Painter, ShapeHelpers};
+        h.runtime_mut().app_mut().chart.panel_app.dom_hosted.chart_settings = dom;
+        if dom {
+            *h.runtime_mut().app_mut().chart.input_coordinator.borrow_mut() = Default::default();
+        }
+        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        ctx.set_fill_color("#131722");
+        ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
+        h.paint_window(win, 1.0, &mut ctx).expect("window");
+        ctx.pixmap().data().to_vec()
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_chart_settings_slot_tabs_paint_what_the_app_painted() {
+        use mlc_app_layout::ui::modal_settings::ChartSettingsTab;
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
+        for tab in [ChartSettingsTab::StatusLine, ChartSettingsTab::ScalesLines] {
+            let (mut h, win) = host();
+            open_chart_settings(&mut h);
+            h.runtime_mut().app_mut().chart.panel_app.chart_settings_state.active_tab = tab;
+            h.advance(0.017);
+            h.advance(0.017);
+            cs_pixels(&mut h, win, true);
+            assert!(cs_shown(&h), "{tab:?} on DOM");
+            let origin = h.runtime().app().chart.chart_content_origin();
+            let fr = crate::dom::chart_settings::frame(uzor::types::Rect::new(0.0, 0.0, 1280.0, 800.0), crate::chrome::CHROME_HEIGHT, origin, cs_state(&h));
+            let (x0, y0) = (fr.x as usize, fr.y as usize);
+            let (x1, y1) = (x0 + fr.width as usize, y0 + fr.height as usize);
+            move_to(&mut h, win, 10.0, 10.0);
+            for _ in 0..3 {
+                h.advance(0.017);
+            }
+            let old = cs_pixels(&mut h, win, false);
+            let new = cs_pixels(&mut h, win, true);
+            let (mut over, mut exact) = (0, 0);
+            for (i, (a, b)) in old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate() {
+                let (x, y) = (i % 1280, i / 1280);
+                // Compare the ported BODY only. Shell chrome (header strip, rail +
+                // its glass-blur/active-edge artifacts, outer border columns, footer)
+                // is parity-covered by the Instrument test / us header exclusion.
+                if x < x0 + 56 || x >= x1 - 16 || y < y0 + 86 || y >= y1 - 56 {
+                    continue;
+                }
+                let d = a.iter().zip(b.iter()).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+                exact += usize::from(d > 0);
+                over += usize::from(d > 8);
+            }
+            eprintln!("chart settings {tab:?}: {over} px over 8, {exact} differ");
+            if let Some(dir) = std::env::var_os("MLC_CS_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("cs-{n}-{tab:?}.png"));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
+            }
+            // Body is the legacy renderer in a paint slot at the shell content
+            // origin: parity is exact (per-region compare showed 0.0 on the body).
+            assert!(over == 0, "{tab:?}: {over}");
+        }
+        mlc_app::set_fixed_clock(None);
     }
 
     #[test]

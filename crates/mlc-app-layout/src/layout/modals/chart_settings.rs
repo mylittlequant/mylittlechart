@@ -2952,3 +2952,34 @@ pub fn chart_type_param_spec(chart_type: &str) -> Option<ChartTypeParamSpec> {
         default_label: def.default_param_label().map(str::to_string),
     })
 }
+
+/// DOM-host paint-slot entry for the StatusLine tab body: the legacy renderer
+/// paints into `rect` (the slot, placed at the app shell's exact content rect);
+/// hits land in the caller's throwaway result so the app's layout pass remains
+/// the single source of live hit zones.
+pub fn render_status_line_tab_dom(
+    ctx: &mut dyn RenderContext,
+    rect: uzor::types::Rect,
+    data: &ChartSettingsData,
+    theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    chart_settings_state: &ChartSettingsState,
+    current_time_ms: u64,
+    result: &mut ChartSettingsModalResult,
+) {
+    render_status_line_settings(ctx, rect.x, rect.y, rect.width, rect.height, &data.status_line, theme, frame_theme, chart_settings_state, result, current_time_ms);
+}
+
+/// DOM-host paint-slot entry for the ScalesLines tab body (see [`render_status_line_tab_dom`]).
+pub fn render_scales_tab_dom(
+    ctx: &mut dyn RenderContext,
+    rect: uzor::types::Rect,
+    data: &ChartSettingsData,
+    theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    chart_settings_state: &ChartSettingsState,
+    current_time_ms: u64,
+    result: &mut ChartSettingsModalResult,
+) {
+    render_scales_settings(ctx, rect.x, rect.y, rect.width, rect.height, &data.scales, theme, frame_theme, chart_settings_state, result, current_time_ms);
+}
