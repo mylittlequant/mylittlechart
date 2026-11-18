@@ -28,10 +28,13 @@ serde_json = "1"
 web-time = "1"
 
 [dev-dependencies]
+# us parity stays tiny-skia transitionally (URX us-primitive raster unify
+# pending); cs/strip/toolbars/sidebar/bottom-bar parity run on URX CPU.
 uzor-render-tiny-skia = "=1.5.50"
 uzor-render-urx = "=1.5.50"
 uzor-urx-cpu = { version = "=1.5.50", features = ["glyph"] }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
+mlc-app-render-context-urx = { path = "../mlc-app-render-context-urx", package = "mylittlechart-app-render-context-urx" }
 png = "0.17"
 
 [features]

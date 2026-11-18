@@ -436,11 +436,16 @@ mod hosted {
     fn strip_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
         use uzor::render::{Painter, ShapeHelpers};
         h.runtime_mut().app_mut().chrome_on_dom = dom;
-        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        // URX CPU (same raster source of truth as cs_pixels): the tiny-skia
+        // hairline AA path debug-asserts on the strip's off-canvas blits.
+        let mut ctx = uzor_render_urx::UrxRenderContext::new(1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
         h.paint_window(win, 1.0, &mut ctx).expect("window");
-        ctx.pixmap().data()[..1280 * 32 * 4].to_vec()
+        let scene = ctx.take_scene();
+        let mut pm = uzor_urx_cpu::pixmap::Pixmap::new(1280, 800);
+        uzor_urx_cpu::backend::CpuBackend::new().render(&scene, &mut pm).expect("urx cpu render");
+        pm.pixels()[..1280 * 32 * 4].to_vec()
     }
 
     #[test]
@@ -506,11 +511,15 @@ mod hosted {
     fn window_pixels(h: &mut Host, win: WindowId, dom: bool) -> Vec<u8> {
         use uzor::render::{Painter, ShapeHelpers};
         h.runtime_mut().app_mut().toolbars_on_dom = dom;
-        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        // URX CPU (same raster source of truth as cs_pixels).
+        let mut ctx = uzor_render_urx::UrxRenderContext::new(1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
         h.paint_window(win, 1.0, &mut ctx).expect("window");
-        ctx.pixmap().data().to_vec()
+        let scene = ctx.take_scene();
+        let mut pm = uzor_urx_cpu::pixmap::Pixmap::new(1280, 800);
+        uzor_urx_cpu::backend::CpuBackend::new().render(&scene, &mut pm).expect("urx cpu render");
+        pm.pixels().to_vec()
     }
 
     #[test]
@@ -1187,16 +1196,20 @@ mod hosted {
         use uzor::render::{Painter, ShapeHelpers};
         h.runtime_mut().app_mut().chart.panel_app.dom_hosted.sidebar = dom;
         h.advance(0.017);
-        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        // URX CPU (same raster source of truth as cs_pixels).
+        let mut ctx = uzor_render_urx::UrxRenderContext::new(1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
         h.paint_window(win, 1.0, &mut ctx).expect("window");
         // Hover is the DOM's from the frame before: paint once more.
-        let mut ctx2 = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        let mut ctx2 = uzor_render_urx::UrxRenderContext::new(1.0);
         ctx2.set_fill_color("#131722");
         ctx2.fill_rect(0.0, 0.0, 1280.0, 800.0);
         h.paint_window(win, 1.0, &mut ctx2).expect("window");
-        ctx2.pixmap().data().to_vec()
+        let scene = ctx2.take_scene();
+        let mut pm = uzor_urx_cpu::pixmap::Pixmap::new(1280, 800);
+        uzor_urx_cpu::backend::CpuBackend::new().render(&scene, &mut pm).expect("urx cpu render");
+        pm.pixels().to_vec()
     }
 
     fn sb_hit(h: &Host, id: &str) -> uzor::types::Rect {

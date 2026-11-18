@@ -1,0 +1,23 @@
+[package]
+name = "mylittlechart-app-render-context-urx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "UrxChartRenderContext, a chart-aware wrapper over the uzor-urx CPU rasteriser (deterministic headless/offscreen path of the URX family)."
+
+[lib]
+name = "mlc_app_render_context_urx"
+
+[dependencies]
+uzor = "=1.5.50"
+uzor-render-urx = "=1.5.50"
+uzor-urx-cpu = { version = "=1.5.50", features = ["glyph"] }
+# Opt-in CJK face (Noto Sans CJK SC, fetched at build time): the us
+# language list's 中文/日本語/한국어 shape with their own face on the URX
+# glyph-id text path (feature unification also enables it for the shaper).
+uzor-fonts = { version = "=1.5.50", features = ["cjk"] }
+mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
+
+[lints]
+workspace = true

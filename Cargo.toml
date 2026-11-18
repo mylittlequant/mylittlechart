@@ -21,6 +21,7 @@ members = [
     "crates/mlc-app-render-context-vello-cpu",
     "crates/mlc-app-render-context-vello-hybrid",
     "crates/mlc-app-render-context-tiny-skia",
+    "crates/mlc-app-render-context-urx",
     "crates/mlc-shell-diagnostics",
     "crates/mlc-backend-trading-engine",
     "crates/mlc-app-test-harness",
