@@ -583,16 +583,27 @@ impl HostedApp {
             }
         };
         let resp = uzor_framework::widgets::kit::dom(sb::frame(o), &sheet, tree).paint_slots(&mut painter).dom_scroll().build(cx);
-        let y = match resp.scrolls.iter().find(|(k, _)| pushed.is_none() && k == sb::VIEWPORT) {
-            Some((_, y)) => *y,
-            None => scroll,
-        };
-        let s = self.chart.sidebar_state.current_right_scroll_mut();
-        if (s.offset - y).abs() >= 0.01 && !s.is_dragging {
-            s.offset = y;
-            s.target = y;
+        let slot = sb::is_slot_panel(self.chart.sidebar_state.right_panel);
+        if slot {
+            // Legacy paints header toolbar + body + its own scrollbar over the DOM
+            // frame/backdrop; hits stay the app's (throwaway coordinator here).
+            let mut c = ctx::ChartCtx::new(cx.render);
+            let mut coord = uzor::input::InputCoordinator::default();
+            let lr = mlc_core::LayoutRect { x: o.x, y: o.y, width: o.width, height: o.height };
+            let _ = self.chart.render_right_sidebar_dom(&mut c, &lr, &theme, &mut coord);
+            self.sidebar_scroll = None;
+        } else {
+            let y = match resp.scrolls.iter().find(|(k, _)| pushed.is_none() && k == sb::VIEWPORT) {
+                Some((_, y)) => *y,
+                None => scroll,
+            };
+            let s = self.chart.sidebar_state.current_right_scroll_mut();
+            if (s.offset - y).abs() >= 0.01 && !s.is_dragging {
+                s.offset = y;
+                s.target = y;
+            }
+            self.sidebar_scroll = Some(self.chart.sidebar_state.current_right_scroll().offset);
         }
-        self.sidebar_scroll = Some(self.chart.sidebar_state.current_right_scroll().offset);
         self.sidebar_hits = resp.dom.hits().map(|(k, r)| (k.to_string(), r)).collect();
         let pressed = self.sidebar_hits.iter().find(|(id, _)| cx.view.is_pressed(&uzor::WidgetId::from(id.as_str()))).map(|(id, _)| id.clone());
         self.sidebar_hover = resp.hovered.clone();

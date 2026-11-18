@@ -34,6 +34,9 @@ impl ChartApp {
                 .groups
                 .iter()
                 .all(|g| g.signals.len() <= 8 || s.collapsed_signal_groups.contains(&g.instance_id)),
+            // Item 11: the whole panel area (header toolbar + body) is legacy-painted
+            // into a slot over the DOM frame; verified at over==0 with the live freeze.
+            RightSidebarPanel::SlotTape => true,
             _ => false,
         }
     }
@@ -136,6 +139,90 @@ impl ChartApp {
                     Panel::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![s.column_config.show_time, s.column_config.show_side, s.column_config.show_price, s.column_config.show_size, s.column_config.show_notional]),
                     _ => None,
                 }
+            },
+        )
+    }
+
+    /// DOM-host paint-slot entry for a whole slot panel area (header toolbar +
+    /// body + its own scrollbar), item 11 step 2: same closure binding as
+    /// [`Self::render_slot_panel_dom`] plus the watchlist params, calling
+    /// `render_right_sidebar` so the legacy slot header is reproduced exactly.
+    /// Hits go to the caller's throwaway coordinator (the app's layout pass keeps
+    /// the live zones).
+    pub fn render_right_sidebar_dom(
+        &mut self,
+        ctx: &mut dyn mlc_core::render::RenderContext,
+        rect: &mlc_core::LayoutRect,
+        theme: &mlc_app_layout::ui::toolbar_theme::ToolbarTheme,
+        coordinator: &mut uzor::input::InputCoordinator,
+    ) -> mlc_app_sidebar_content::render::RightSidebarResult {
+        let (color_map, sync_map): (
+            std::collections::HashMap<u64, [f32; 4]>,
+            std::collections::HashMap<u64, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot>,
+        ) = {
+            use mlc_core::ids::SyncMemberId;
+            let bubbles = self.core.bubbles();
+            let tags = self.core.tags();
+            let mut colors = std::collections::HashMap::new();
+            let mut flags = std::collections::HashMap::new();
+            for (tag_id, tag) in tags.iter() {
+                let bubble_default = bubbles.sync_flags(*tag_id).unwrap_or_default();
+                for &member in &tag.members {
+                    if let SyncMemberId::Panel(pid) = member {
+                        if !tag.auto_created {
+                            colors.insert(pid, tag.color);
+                        }
+                        flags.insert(pid, mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot {
+                            sync_symbol: tag.effective_sync_symbol(member, bubble_default.sync_symbol),
+                            sync_crosshair: tag.effective_sync_crosshair(member, bubble_default.sync_crosshair),
+                        });
+                    }
+                }
+            }
+            (colors, flags)
+        };
+        let wl_cfg = self.watchlist_ui.column_config(self.watchlist_ui.active_list_id);
+        let wl_list = self.core.watchlists().find(self.watchlist_ui.active_list_id).cloned();
+        let panel_theme = crate::panels_render::panel_theme_from_runtime(self.panel_app.theme_manager.current());
+        let panels_store = &self.panels_store;
+        mlc_app_sidebar_content::render::render_right_sidebar(
+            ctx, rect, &mut self.sidebar_state, theme, coordinator,
+            &mut |item, r, c, coord, prefix| {
+                crate::panels_render::render_free_item(panels_store, item, r.0, r.1, r.2, r.3, c, &panel_theme, coord, prefix);
+            },
+            &|item: &mlc_core::state::Panel| -> Option<(bool, f64, f64, bool)> {
+                match item {
+                    mlc_core::state::Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.auto_center, s.tick_size, s.min_volume_filter, s.multi_mode)),
+                    _ => None,
+                }
+            },
+            &|item: &mlc_core::state::Panel| -> Option<[f32; 4]> { color_map.get(&item.panel_id().0).copied() },
+            &|item: &mlc_core::state::Panel| -> Option<mlc_app_sidebar_content::render::PanelSyncFlagsSnapshot> { sync_map.get(&item.panel_id().0).cloned() },
+            &|item: &mlc_core::state::Panel| -> Option<(String, String, String, String)> {
+                use mlc_core::state::Panel;
+                match item {
+                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::BigTrades(id) => panels_store.big_trades.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::LiqTape(id) => panels_store.liq_tape.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), String::new())),
+                    Panel::TradingContainer(id) => panels_store.trading_container.get(id).map(|s| (s.symbol.clone(), s.exchange.clone(), s.account_type.clone(), s.timeframe.clone())),
+                    _ => None,
+                }
+            },
+            &|item: &mlc_core::state::Panel| -> Option<Vec<bool>> {
+                use mlc_core::state::Panel;
+                match item {
+                    Panel::Dom(id) => panels_store.dom.get(id).map(|s| vec![s.column_config.show_bid_orders, s.column_config.show_sell_trades, s.column_config.show_buy_trades, s.column_config.show_ask_orders]),
+                    Panel::L2Tape(id) => panels_store.l2_tape.get(id).map(|s| vec![s.column_config.show_time, s.column_config.show_type, s.column_config.show_side, s.column_config.show_price, s.column_config.show_qty]),
+                    Panel::TradeTape(id) => panels_store.trade_tape.get(id).map(|s| vec![s.column_config.show_time, s.column_config.show_price, s.column_config.show_size]),
+                    Panel::BigTrades(id) => panels_store.big_trades.get(id).map(|s| vec![s.column_config.show_time, s.column_config.show_side, s.column_config.show_price, s.column_config.show_size, s.column_config.show_notional]),
+                    _ => None,
+                }
+            },
+            &wl_cfg,
+            &|addr: &mlc_core::InstrumentAddress| -> Option<String> {
+                wl_list.as_ref().and_then(|l| l.get_color_flag(addr)).map(|s| s.to_string())
             },
         )
     }

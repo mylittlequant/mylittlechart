@@ -1052,6 +1052,50 @@ mod hosted {
         assert!(over == 0, "live freeze: {over} backdrop px moved across 10 advances");
     }
 
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_slottape_panel_paints_what_the_app_painted() {
+        use mlc_app_sidebar_content::state::RightSidebarPanel;
+        let (mut h, win) = host(); // freezes clock + live drain
+        h.runtime_mut().app_mut().chart.sidebar_state.right_panel = RightSidebarPanel::SlotTape;
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        sidebar_pixels(&mut h, win, true);
+        assert!(h.runtime().app().chart.sidebar_on_dom(), "SlotTape on DOM");
+        let sr = h.runtime().app().chart.last_sidebar_result.as_ref().expect("sidebar result").sidebar_rect;
+        let (x0, y0) = (sr.x as usize, (sr.y + crate::chrome::CHROME_HEIGHT) as usize);
+        let (x1, y1) = (x0 + sr.width as usize, y0 + sr.height as usize);
+        move_to(&mut h, win, 10.0, 10.0);
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        let old = sidebar_pixels(&mut h, win, false);
+        let new = sidebar_pixels(&mut h, win, true);
+        let (mut over, mut exact) = (0, 0);
+        for (i, (a, b)) in old.chunks_exact(4).zip(new.chunks_exact(4)).enumerate() {
+            let (x, y) = (i % 1280, i / 1280);
+            if x < x0 || x >= x1 || y < y0 || y >= y1 {
+                continue;
+            }
+            let d = a.iter().zip(b.iter()).map(|(p, q)| p.abs_diff(*q)).max().unwrap_or(0);
+            exact += usize::from(d > 0);
+            over += usize::from(d > 8);
+        }
+        eprintln!("slottape: {over} px over 8, {exact} differ");
+        if let Some(dir) = std::env::var_os("MLC_SB_DUMP") {
+            for (n, px) in [("old", &old), ("new", &new)] {
+                let path = std::path::Path::new(&dir).join(format!("sb-{n}-slottape.png"));
+                let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                let mut enc = png::Encoder::new(f, 1280, 800);
+                enc.set_color(png::ColorType::Rgba);
+                enc.set_depth(png::BitDepth::Eight);
+                enc.write_header().unwrap().write_image_data(px).unwrap();
+            }
+        }
+        assert!(over <= 300, "{over}");
+    }
+
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {
         let pos = uzor_framework::Point { x, y };
         let b = uzor::input::MouseButton::Left;

@@ -318,12 +318,32 @@ pub fn tree(w: &Sidebar<'_>, measure: &mut dyn FnMut(&str, &str) -> f64) -> El {
 
     // Left border: the app's 1 px stroke on the edge, which lands on the pixel left of it.
     root = root.child(fill(-1.0, 0.0, 1.0, rh, &t.separator));
-    root = header(root, w, measure);
-    root = match w.state.right_panel {
-        RightSidebarPanel::Watchlist => watchlist(root, w, measure),
-        _ => panels::body(root, w, measure),
-    };
+    // Slot panels: the legacy renderer paints header toolbar + body + its own
+    // scrollbar into the panel area after build (item 11); DOM keeps only the
+    // frame/backdrop here so nothing is double-drawn.
+    if !is_slot_panel(w.state.right_panel) {
+        root = header(root, w, measure);
+        root = match w.state.right_panel {
+            RightSidebarPanel::Watchlist => watchlist(root, w, measure),
+            _ => panels::body(root, w, measure),
+        };
+    }
     framed(root, w)
+}
+
+/// The per-instrument docking slots (+ Agents): their header is a toolbar, not the
+/// generic title/close header, so the whole panel area is legacy-painted (item 11).
+pub fn is_slot_panel(p: RightSidebarPanel) -> bool {
+    matches!(
+        p,
+        RightSidebarPanel::Agents
+            | RightSidebarPanel::SlotTrading
+            | RightSidebarPanel::SlotDom
+            | RightSidebarPanel::SlotTape
+            | RightSidebarPanel::SlotL2
+            | RightSidebarPanel::SlotBigTrades
+            | RightSidebarPanel::SlotLiq
+    )
 }
 
 /// The panel's title and icon, as the app names them.
