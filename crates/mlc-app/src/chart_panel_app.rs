@@ -67,6 +67,9 @@ pub struct DomHosted {
     /// `ChartPanelApp::user_settings_on_dom`); the app still lays it out, registers
     /// its hit zones and handles its input, and paints it in any other state.
     pub user_settings: bool,
+    /// The cloud News/Links/Download overlay (cloud builds): the DOM host paints it
+    /// via a whole-window slot; the app still lays it out and registers its hits.
+    pub cloud_overlay: bool,
 }
 
 pub struct ChartPanelApp {

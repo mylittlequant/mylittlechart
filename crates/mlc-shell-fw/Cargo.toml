@@ -36,6 +36,9 @@ png = "0.17"
 default = []
 native = ["uzor-framework/native"]
 dev-control = ["native", "uzor-framework/dev-control"]
+# Dev/test: assemble the cloud surfaces (News/Links/Download overlay, Forum+Messages
+# community modal) active so they can be ported to DOM and parity-checked headless.
+cloud = ["mlc-app/cloud", "mlc-app-layout/cloud"]
 
 [lints]
 workspace = true
