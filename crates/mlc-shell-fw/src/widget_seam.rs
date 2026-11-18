@@ -59,10 +59,26 @@ impl WidgetBackend for MlcWidgets<'_> {
         self.list().into_iter().find(|d| d.instance == instance)
     }
 
-    fn execute(&self, _instance: &str, _verb: &str, _payload: serde_json::Value) -> ExecResult {
-        // Verbs are applied to mlc's own state by the dispatcher; the seam acks
-        // and may return fresh fill data. Placeholder ack until wired per-verb.
-        ExecResult { ack: true, data: None }
+    fn execute(&self, instance: &str, verb: &str, payload: serde_json::Value) -> ExecResult {
+        // Per-verb: only verbs the descriptor promises are honoured; the seam acks
+        // and returns fresh fill data. State mutation itself runs in the shell
+        // dispatcher (the backend's own credential), never in HQ.
+        let d = match self.get(instance) {
+            Some(d) => d,
+            None => return ExecResult { ack: false, data: None },
+        };
+        if !d.actions.iter().any(|a| a == verb) {
+            return ExecResult { ack: false, data: None };
+        }
+        let data = match (d.preset.as_str(), verb) {
+            ("list", "select") => {
+                let sel = payload.get("index").and_then(|v| v.as_u64()).unwrap_or(0);
+                json!({ "items": d.data.get("items").cloned().unwrap_or(json!([])), "selected": sel })
+            }
+            ("chart.candles", "range") | ("chart.candles", "crosshair") => d.data.clone(),
+            _ => d.data.clone(),
+        };
+        ExecResult { ack: true, data: Some(data) }
     }
 }
 
@@ -81,6 +97,14 @@ mod tests {
             assert!(uzor::ui::domkit::preset(&d.preset, &d.data).is_some(), "preset {} renders", d.preset);
             assert!(w.get(&d.instance).is_some());
         }
-        assert!(w.execute("mlc:status", "noop", json!({})).ack);
+        // Per-verb execute: promised verbs ack with fresh fill; unknown verbs and
+        // unknown instances are rejected (HQ only forwards what the backend promises).
+        let sel = w.execute("mlc:watchlist", "select", json!({ "index": 2 }));
+        assert!(sel.ack);
+        assert_eq!(sel.data.unwrap()["selected"], json!(2));
+        assert!(w.execute("mlc:BTCUSDT:1h", "range", json!({})).ack);
+        assert!(!w.execute("mlc:status", "noop", json!({})).ack, "status promises no verbs");
+        assert!(!w.execute("mlc:watchlist", "range", json!({})).ack, "verb not promised by list");
+        assert!(!w.execute("mlc:nope", "select", json!({})).ack, "unknown instance");
     }
 }
