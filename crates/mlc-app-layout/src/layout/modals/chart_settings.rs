@@ -193,11 +193,9 @@ pub fn render_settings_modal(
             );
         }
         ChartSettingsTab::Appearance => {
-            let current_time_ms = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-
+            // Use the frame's current_time_ms (like every other tab), not a fresh
+            // wall-clock read: two renders of the same frame must agree, which is
+            // what makes this tab parity-comparable / slot-portable.
             render_appearance_settings(
                 ctx,
                 content_x + content_padding,
