@@ -92,7 +92,9 @@ impl ChartApp {
     /// drain the shared broadcast channel N times, each window only seeing
     /// its own fraction of the events.
     pub fn tick(&mut self, current_time_ms: u64) {
-        let events = self.core.tick_writers(current_time_ms);
+        // Parity freeze (item 19b): skip the live drain so repeated renders of the
+        // same session see identical market data. Upkeep reactions still run.
+        let events = if crate::live_paused() { Vec::new() } else { self.core.tick_writers(current_time_ms) };
         self.react_to_events(&events, current_time_ms);
         // Upkeep of the outside messenger provider, if the shell handed one
         // over (a no-op otherwise) — see `messenger_bridge`.

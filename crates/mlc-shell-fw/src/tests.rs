@@ -85,6 +85,10 @@ mod hosted {
         // and DOM renders of a pixel compare. Behaviour tests that depend on the
         // clock (sort debounce) unfreeze themselves at their start.
         mlc_app::set_fixed_clock(Some(1_700_000_000));
+        // Freeze the live drain too (item 19b): the headless live producer is a
+        // background connector task, so pinning the clock alone does not stop it.
+        // Behaviour tests that need live ticks unfreeze with set_live_paused(false).
+        mlc_app::set_live_paused(true);
         let app = HostedApp::with_dom(mlc_app::ChartApp::new("BTCUSDT"));
         let (mut h, _) = HeadlessHost::new(app, HostedApp::runtime_config(1280, 800));
         for _ in 0..3 {
@@ -1019,6 +1023,33 @@ mod hosted {
         }
         assert!(over <= 300, "{over}");
         mlc_app::set_fixed_clock(None);
+    }
+
+    #[test]
+    #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
+    fn the_live_freeze_holds_the_backdrop_still() {
+        // host() pins the clock AND pauses the live drain (item 19b). Advancing
+        // frames must not move the chart backdrop: the wall-clock candle builder
+        // is event-driven, so an empty drain leaves the seeded bars untouched.
+        let (mut h, win) = host();
+        for _ in 0..3 {
+            h.advance(0.017);
+        }
+        let a = window_pixels(&mut h, win, false);
+        for _ in 0..10 {
+            h.advance(0.05);
+        }
+        let b = window_pixels(&mut h, win, false);
+        let mut over = 0;
+        for (i, (p, q)) in a.chunks_exact(4).zip(b.chunks_exact(4)).enumerate() {
+            let (x, y) = (i % 1280, i / 1280);
+            if x < 60 || x >= 1200 || y < 90 || y >= 700 {
+                continue;
+            }
+            let d = p.iter().zip(q.iter()).map(|(u, v)| u.abs_diff(*v)).max().unwrap_or(0);
+            over += usize::from(d > 8);
+        }
+        assert!(over == 0, "live freeze: {over} backdrop px moved across 10 advances");
     }
 
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {

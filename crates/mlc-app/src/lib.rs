@@ -1810,6 +1810,21 @@ fn clock_is_fixed() -> bool {
     FIXED_CLOCK_SECS.load(std::sync::atomic::Ordering::Relaxed) != i64::MIN
 }
 
+/// Parity freeze (item 19b): when true, `ChartApp::tick` skips draining the live
+/// broadcast so two renders of the same session see identical market data. The
+/// headless live producer is a background connector task, so pinning the clock
+/// alone does not stop it; this gates the drain instead. Default off.
+static LIVE_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Freeze/unfreeze live-update delivery for parity compares (default off).
+pub fn set_live_paused(paused: bool) {
+    LIVE_PAUSED.store(paused, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn live_paused() -> bool {
+    LIVE_PAUSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The toolbar animations' time: `live`, or the pinned clock.
 fn clock_anim_secs(live: f64) -> f64 {
     let fixed = FIXED_CLOCK_SECS.load(std::sync::atomic::Ordering::Relaxed);
