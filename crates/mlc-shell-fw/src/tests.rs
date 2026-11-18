@@ -242,11 +242,17 @@ mod hosted {
         if dom {
             *h.runtime_mut().app_mut().chart.input_coordinator.borrow_mut() = Default::default();
         }
-        let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
+        // URX CPU backend (uzor-urx family): the tiny-skia hairline AA path
+        // drops thin icon strokes and debug-asserts off-canvas; URX owns its
+        // stroker and is the port's raster source of truth.
+        let mut ctx = uzor_render_urx::UrxRenderContext::new(1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
         h.paint_window(win, 1.0, &mut ctx).expect("window");
-        ctx.pixmap().data().to_vec()
+        let scene = ctx.take_scene();
+        let mut pm = uzor_urx_cpu::pixmap::Pixmap::new(1280, 800);
+        uzor_urx_cpu::backend::CpuBackend::new().render(&scene, &mut pm).expect("urx cpu render");
+        pm.pixels().to_vec()
     }
 
     #[test]

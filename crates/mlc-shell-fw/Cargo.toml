@@ -29,6 +29,8 @@ web-time = "1"
 
 [dev-dependencies]
 uzor-render-tiny-skia = "=1.5.50"
+uzor-render-urx = "=1.5.50"
+uzor-urx-cpu = { version = "=1.5.50", features = ["glyph"] }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 png = "0.17"
 
