@@ -1054,15 +1054,23 @@ mod hosted {
 
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
-    fn the_slottape_panel_paints_what_the_app_painted() {
+    fn the_slot_panels_paint_what_the_app_painted() {
         use mlc_app_sidebar_content::state::RightSidebarPanel;
-        let (mut h, win) = host(); // freezes clock + live drain
-        h.runtime_mut().app_mut().chart.sidebar_state.right_panel = RightSidebarPanel::SlotTape;
-        for _ in 0..3 {
-            h.advance(0.017);
-        }
-        sidebar_pixels(&mut h, win, true);
-        assert!(h.runtime().app().chart.sidebar_on_dom(), "SlotTape on DOM");
+        for panel in [
+            RightSidebarPanel::SlotTape,
+            RightSidebarPanel::SlotL2,
+            RightSidebarPanel::SlotBigTrades,
+            RightSidebarPanel::SlotLiq,
+            RightSidebarPanel::SlotDom,
+            RightSidebarPanel::SlotTrading,
+        ] {
+            let (mut h, win) = host(); // freezes clock + live drain
+            h.runtime_mut().app_mut().chart.sidebar_state.right_panel = panel;
+            for _ in 0..3 {
+                h.advance(0.017);
+            }
+            sidebar_pixels(&mut h, win, true);
+            assert!(h.runtime().app().chart.sidebar_on_dom(), "{panel:?} on DOM");
         let sr = h.runtime().app().chart.last_sidebar_result.as_ref().expect("sidebar result").sidebar_rect;
         let (x0, y0) = (sr.x as usize, (sr.y + crate::chrome::CHROME_HEIGHT) as usize);
         let (x1, y1) = (x0 + sr.width as usize, y0 + sr.height as usize);
@@ -1082,18 +1090,19 @@ mod hosted {
             exact += usize::from(d > 0);
             over += usize::from(d > 8);
         }
-        eprintln!("slottape: {over} px over 8, {exact} differ");
-        if let Some(dir) = std::env::var_os("MLC_SB_DUMP") {
-            for (n, px) in [("old", &old), ("new", &new)] {
-                let path = std::path::Path::new(&dir).join(format!("sb-{n}-slottape.png"));
-                let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
-                let mut enc = png::Encoder::new(f, 1280, 800);
-                enc.set_color(png::ColorType::Rgba);
-                enc.set_depth(png::BitDepth::Eight);
-                enc.write_header().unwrap().write_image_data(px).unwrap();
+            eprintln!("{panel:?}: {over} px over 8, {exact} differ");
+            if let Some(dir) = std::env::var_os("MLC_SB_DUMP") {
+                for (n, px) in [("old", &old), ("new", &new)] {
+                    let path = std::path::Path::new(&dir).join(format!("sb-{n}-{panel:?}.png"));
+                    let f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
+                    let mut enc = png::Encoder::new(f, 1280, 800);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(px).unwrap();
+                }
             }
+            assert!(over <= 300, "{panel:?}: {over}");
         }
-        assert!(over <= 300, "{over}");
     }
 
     fn press_at(h: &mut Host, win: WindowId, x: f64, y: f64) {

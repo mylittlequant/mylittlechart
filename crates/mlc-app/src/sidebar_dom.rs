@@ -36,7 +36,14 @@ impl ChartApp {
                 .all(|g| g.signals.len() <= 8 || s.collapsed_signal_groups.contains(&g.instance_id)),
             // Item 11: the whole panel area (header toolbar + body) is legacy-painted
             // into a slot over the DOM frame; verified at over==0 with the live freeze.
-            RightSidebarPanel::SlotTape => true,
+            RightSidebarPanel::SlotTrading
+            | RightSidebarPanel::SlotDom
+            | RightSidebarPanel::SlotTape
+            | RightSidebarPanel::SlotL2
+            | RightSidebarPanel::SlotBigTrades
+            | RightSidebarPanel::SlotLiq => true,
+            // Agents stays app-painted: its header CLI-picker (prompt/CLAUDE/gear)
+            // does not reproduce in the panel-area slot path yet (item 11 remainder).
             _ => false,
         }
     }
