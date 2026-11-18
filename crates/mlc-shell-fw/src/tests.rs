@@ -501,6 +501,10 @@ mod hosted {
     #[test]
     #[ignore = "a real ChartApp: run with --ignored and HOME at a scratch dir"]
     fn the_dom_toolbars_paint_what_the_old_ones_painted_under_the_pointer() {
+        // Pin the clock so the rail mascot / toolbar animations stand still: the
+        // old and DOM passes must render the SAME animation frame, else the rails
+        // differ by a few px between the two paints (live-clock flake).
+        mlc_app::set_fixed_clock(Some(1_700_000_000));
         let (mut h, win) = host();
         // Top: symbol dropdown, timeframe button, an icon button; left: the active
         // crosshair, a split tool, a plain tool; right: two rail buttons, the mascot.
@@ -537,6 +541,7 @@ mod hosted {
                 panic!("hover at {x},{y}: {} pixels differ in x {x0}..={x1}, y {y0}..={y1}", off.len());
             }
         }
+        mlc_app::set_fixed_clock(None);
     }
 
     #[test]
