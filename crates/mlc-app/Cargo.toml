@@ -15,7 +15,7 @@ mlc-backend = { version = "0.5.656", path = "../mlc-backend", package = "mylittl
 mlc-core = { version = "0.5.656", path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { version = "0.5.656", path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-backend-indicator-engine = { version = "0.1.0", path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
-uzor = "=1.5.50"
+uzor = "=1.5.51"
 mlc-app-sidebar-content = { version = "0.1.0", path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content", default-features = false }
 mlc-app-panels = { version = "0.5.656", path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
 mlc-alert-delivery = { version = "0.5.656", path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
@@ -74,6 +74,16 @@ web-sys = { version = "0.3", features = ["console"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 futures-util = "0.3"
+# Item 15 cloud-surface parity (tests/cloud_dom_parity.rs): the real DOM host
+# (mlc-shell-fw's HostedApp) over a headless uzor-framework window, rastered on
+# the URX CPU backend — the port's source of truth. A dev-dependency cycle
+# (mlc-shell-fw depends on mlc-app) is legal: it exists only for the tests.
+mlc-shell-fw = { path = "../mlc-shell-fw", features = ["cloud"] }
+mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
+uzor-framework = { version = "=1.5.51", default-features = false }
+uzor-render-urx = "=1.5.51"
+uzor-urx-cpu = { version = "=1.5.51", features = ["glyph"] }
+png = "0.17"
 
 [lints]
 workspace = true

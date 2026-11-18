@@ -21,8 +21,8 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
-uzor = { version = "=1.5.50", default-features = false, features = ["flow-flex"] }
-uzor-framework = { version = "=1.5.50", default-features = false }
+uzor = { version = "=1.5.51", default-features = false, features = ["flow-flex"] }
+uzor-framework = { version = "=1.5.51", default-features = false }
 hatchery-hq-wire = { path = "../../../hatchery/crates/hatchery-hq-wire" }
 serde_json = "1"
 web-time = "1"
@@ -30,9 +30,9 @@ web-time = "1"
 [dev-dependencies]
 # us parity stays tiny-skia transitionally (URX us-primitive raster unify
 # pending); cs/strip/toolbars/sidebar/bottom-bar parity run on URX CPU.
-uzor-render-tiny-skia = "=1.5.50"
-uzor-render-urx = "=1.5.50"
-uzor-urx-cpu = { version = "=1.5.50", features = ["glyph"] }
+uzor-render-tiny-skia = "=1.5.51"
+uzor-render-urx = "=1.5.51"
+uzor-urx-cpu = { version = "=1.5.51", features = ["glyph"] }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 mlc-app-render-context-urx = { path = "../mlc-app-render-context-urx", package = "mylittlechart-app-render-context-urx" }
 png = "0.17"
