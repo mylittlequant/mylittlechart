@@ -695,7 +695,15 @@ impl HostedApp {
     fn chart_settings_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>, data: &mlc_app_layout::layout::modals::chart_settings::ChartSettingsData) {
         use dom::chart_settings as cs;
         let look = cs::Look::of(&self.chart);
-        let sheet = self.sheet(look.css());
+        // The legacy cs frame's right border rasters one column inboard of the
+        // us shell's; a 1px right border (vs the shared 2px) lands it on the
+        // legacy column without widening the fill band. The narrower border
+        // moves the content box's right edge +1, so add 1 to the head/foot right
+        // padding to keep the close/Template buttons on legacy columns.
+        let sheet = self.sheet(format!(
+            "{} div.k-dialog {{ border-right-width: 1px }} div.k-dialog-head {{ padding-right: 7px }} div.k-dialog-foot {{ padding-right: 16px }}",
+            look.css()
+        ));
         let st = &self.chart.panel_app.chart_settings_state;
         let at = cs::frame(cx.rect, chrome::CHROME_HEIGHT, self.chart.chart_content_origin(), st);
         let app_scroll = st.scroll.animated_offset();

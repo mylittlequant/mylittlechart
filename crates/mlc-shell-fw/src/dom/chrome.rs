@@ -228,8 +228,8 @@ pub fn tree(state: &ChromeState, hov: ChromeHit, width: f64, text_w: &[f64]) -> 
         .id(id("new_tab"))
         .child(El::new("div.c-sep"))
         .child(El::new("div.c-patch"))
-        .child(bar(plus_cx - 5.0, plus_cy - 0.75, 10.0, 1.5))
-        .child(bar(plus_cx - 0.75, plus_cy - 5.0, 1.5, 10.0));
+        .child(bar(plus_cx - 5.5, plus_cy - 0.75, 11.0, 1.5))
+        .child(bar(plus_cx - 0.75, plus_cy - 5.5, 1.5, 11.0));
     tabs = tabs.child(new_tab);
 
     let is_max = state.is_maximized;

@@ -95,7 +95,7 @@ div.k-dialog {{ border-radius: 0; background: transparent; border: 2px solid {ha
 div.k-dialog-head, div.k-dialog-body, div.k-dialog-foot {{ background: {bg} }}
 div.m-shadow {{ position: fixed; z-index: 145; background: rgba(0,0,0,0.4) }}
 div.k-dialog-head {{ height: 43px; flex-shrink: 0; padding: 0 6px 0 15px; font-size: 13px; font-weight: 400; color: {text}; border-bottom: 1px solid {half} }}
-div.k-dialog-head > div.k-dialog-title {{ padding-top: 0.8px }}
+div.k-dialog-head > div.k-dialog-title {{ padding-top: 1.8px }}
 div.k-dialog-head > button.k-act {{ color: {text} }}
 div.k-dialog-head > button.k-act:hover {{ background: transparent }}
 div.k-dialog-body {{ min-height: 0; flex-shrink: 1; padding: 0; gap: 0; flex-direction: row; align-items: stretch; justify-content: flex-start; color: {text} }}
