@@ -616,6 +616,8 @@ mod hosted {
         // No advance here: old and DOM passes must render the SAME state snapshot,
         // else live-feed/hover ticks between them make the compare flaky. The DOM
         // tree is rebuilt on every paint, so the mode switch needs no extra frame.
+        // Still tiny-skia: URX raster of the us kit primitives diverges from the
+        // legacy rounded-rect aa (uzor batch item); cs already runs on URX.
         let mut ctx = uzor_render_tiny_skia::TinySkiaCpuRenderContext::new(1280, 800, 1.0);
         ctx.set_fill_color("#131722");
         ctx.fill_rect(0.0, 0.0, 1280.0, 800.0);
