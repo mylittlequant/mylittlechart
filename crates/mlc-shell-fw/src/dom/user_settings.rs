@@ -99,7 +99,7 @@ impl Look {
         format!(
             "{}
 div.u-content {{ flex-grow: 1; position: relative }}
-div.u-view {{ position: absolute; left: {vl}px; top: {vt}px; width: {ROWS_W}px; height: {VIEW_H}px; overflow: hidden }}
+div.u-view {{ position: absolute; left: {vl}px; top: {vt}px; width: {ROWS_W}px; height: {}px; overflow: hidden }}
 div.u-rows {{ position: absolute; left: 0px; width: {ROWS_W}px }}
 div.u-scroll {{ position: absolute }}
 div.u-body {{ position: absolute }}
@@ -115,6 +115,10 @@ div.u-under {{ position: fixed; z-index: 146; background: {bg} }}
 div.u-tab-edge {{ position: fixed; z-index: 151; background: {on} }}
 div.u-tab-edge.hov {{ background: {hover} }}",
             self.shell.css(),
+            // Two rows of clip bleed: the app's ScrollableContainer clip reaches
+            // two rows past the DOM viewport's, so a ring straddling the bottom
+            // edge keeps its top arc in both passes.
+            VIEW_H + 2.0,
             vl = VIEW_X - RAIL_W,
             vt = VIEW_Y - HEADER_H,
             bg = self.shell.bg,

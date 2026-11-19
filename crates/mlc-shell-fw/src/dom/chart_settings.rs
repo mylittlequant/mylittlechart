@@ -269,7 +269,14 @@ pub fn tree(state: &ChartSettingsState, s: &InstrumentSettings, at: Rect, bg: &s
     // pass's does under the panel translate) — no DOM stand-in rule for it.
     let (fx, fy) = (at.x + 1.0, at.y + 1.0);
     let rule = |l: f64, t: f64, w: f64, h: f64| El::new("div.m-rule").css(format!("left: {l}px; top: {t}px; width: {w}px; height: {h}px"));
-    let rules = [rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0)];
+    // The head and foot bands' right border straddles two columns in the app
+    // pass (their boxes end one pixel inboard of the frame border, which snaps
+    // there for the body); the DOM ring only covers the outer one.
+    let rules = [
+        rule(fx - 1.0, fy + H - FOOTER_H - 1.0, W + 2.0, 2.0),
+        rule(fx + W - 1.0, fy, 1.0, HEADER_H),
+        rule(fx + W - 1.0, fy + H - FOOTER_H, 1.0, FOOTER_H),
+    ];
     El::new("div.k-root.m-root").css("height: 100%").child(shadow).child(under).child(dialog).child(grip).children(rules)
 }
 

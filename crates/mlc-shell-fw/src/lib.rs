@@ -205,6 +205,11 @@ pub struct HostedApp {
     pub chrome_on_dom: bool,
     /// The toolbars are drawn as uzor DOM ([`dom::toolbar`]) where they can be.
     pub toolbars_on_dom: bool,
+    /// The cloud overlay / Community modal DOM layer paints inside `panel` (the
+    /// `with_dom` takeover). A wrapping host that paints those surfaces itself
+    /// (the cloud parity harness's blocked-experiment modes) turns it off so the
+    /// surface is not painted twice.
+    pub cloud_dom_layer: bool,
     toolbar_sheets: Vec<(&'static str, Option<(u64, String, uzor::ui::style::Sheet)>)>,
     /// The DOM tree's hit rects of the last frame, by id (tests click them).
     pub last_hits: Vec<(String, uzor::types::Rect)>,
@@ -311,6 +316,7 @@ impl HostedApp {
             chrome_sheet: None,
             chrome_on_dom: false,
             toolbars_on_dom: false,
+            cloud_dom_layer: false,
             toolbar_sheets: Vec::new(),
             last_hits: Vec::new(),
             chrome_hits: Vec::new(),
@@ -345,6 +351,7 @@ impl HostedApp {
         let mut host = Self::new(chart);
         host.chrome_on_dom = true;
         host.toolbars_on_dom = true;
+        host.cloud_dom_layer = true;
         host
     }
 
@@ -899,9 +906,18 @@ impl HostedApp {
         let ft = self.chart.panel_app.frame_theme_for_render();
         let cred = &self.chart.panel_app.credentials_state;
         let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
-            // The us bodies/scrollbars/sliders paint in window space at identity
-            // in the app pass too; only the sidebar and the cs rail carry the
-            // panel translate (see their slots).
+            // The us bodies/scrollbars/sliders/rail paint in window space at
+            // identity in the app pass too; only the cs rail and the sidebar
+            // carry the panel translate (see their slots).
+            // The app pass reaches these renderers with the pen its rail icons
+            // left set (round cap/join, solid, opaque); the DOM pass reaches the
+            // slot with whatever the DOM paint left. Unify the pen so the same
+            // calls rasterise identically in both invocations.
+            use uzor::render::Painter;
+            ctx.set_line_cap("round");
+            ctx.set_line_join("round");
+            ctx.set_line_dash(&[]);
+            ctx.set_global_alpha(1.0);
             if f.key == us::SCROLLBAR {
                 use mlc_app_layout::ui::scroll_widget::{draw_scrollbar, ScrollbarConfig, ScrollbarState};
                 let mut c = ctx::ChartCtx::new(ctx);
@@ -944,6 +960,13 @@ impl HostedApp {
                 let layer = uzor::input::LayerId::new("us_rail");
                 let r = uzor::types::Rect::new(f.rect.x, f.rect.y, f.rect.width + 1.0, f.rect.height + 1.0);
                 draw_vertical_rail(&mut c, &mut coord, &layer, "user_settings", &items, active, r, &theme);
+                // The legacy head border-bottom hairline runs across the rail
+                // columns one row below the DOM head box's own border; repaint it
+                // here over the rail (as the cs rail slot does).
+                let (hr, hg, hb, ha) = mlc_core::parse_css_color(&tt.separator);
+                use uzor::render::{Painter, ShapeHelpers};
+                c.set_fill_color(&format!("rgba({hr},{hg},{hb},{:.3})", ha as f64 / 255.0 * 0.5));
+                c.fill_rect(r.x, r.y, r.width, 1.0);
             } else if f.key == us::BODY {
                 // Complex tab bodies: legacy renderer paints into the slot (incl. its
                 // own scrollbar). Hits go to a throwaway coordinator — the app's
@@ -1064,6 +1087,9 @@ impl HostedApp {
     /// paint into the body slots ([`mlc_app_layout::dom`]).
     #[cfg(feature = "cloud")]
     fn cloud_overlay_layer(&mut self, cx: &mut PanelCx<'_, HostSpec>) {
+        if !self.cloud_dom_layer {
+            return;
+        }
         let r = cx.rect;
         let (co, cm) = (self.chart.panel_app.cloud_overlay_on_dom(), self.chart.panel_app.community_on_dom());
         if !co && !cm {

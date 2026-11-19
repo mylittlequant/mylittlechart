@@ -81,6 +81,10 @@ impl App for CloudHost {
         let p = &mut self.inner.chart.panel_app;
         p.dom_hosted.cloud_overlay = self.mode != Mode::App;
         p.dom_hosted.community = self.mode != Mode::App;
+        // The shell's own cloud DOM layer paints the takeover in `panel`; only
+        // the Dom mode wants it. The blocked-experiment modes paint the surface
+        // themselves below and must not get a second (DOM) paint from the shell.
+        self.inner.cloud_dom_layer = self.mode == Mode::Dom;
         self.inner.panel(cx);
         let r = cx.rect;
         let chart = &self.inner.chart;
@@ -172,45 +176,11 @@ impl App for CloudHost {
                 let _ = uzor_framework::widgets::kit::dom(r, &sheet, tree).paint_slots(&mut painter).build(cx);
             }
             Mode::Dom => {
-                // The takeover tree itself (mlc-app-layout::dom). Wired here
-                // exactly as the shell's cloud_overlay_layer arm will wire it.
-                if co_open {
-                    let st = chart.panel_app.cloud_overlay_state.clone();
-                    let look = mlc_app_layout::dom::cloud_overlay::Look::new(&ft, &tt);
-                    let at = mlc_app_layout::dom::cloud_overlay::frame(r, CHROME_H, &st);
-                    let tree = mlc_app_layout::dom::cloud_overlay::tree(&st, &look, at, r, CHROME_H);
-                    let sheet = uzor::ui::domkit::sheet_with(&look.css()).expect("cloud css");
-                    let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
-                        mlc_app_layout::dom::cloud_overlay::paint_slot(ctx, f.key, &st, &ft, &tt, r, CHROME_H);
-                    };
-                    let resp = uzor_framework::widgets::kit::dom(r, &sheet, tree).paint_slots(&mut painter).build(cx);
-                    if let Some(hit) = resp.clicked.as_deref() {
-                        if let Some(action) = mlc_app_layout::dom::cloud_overlay::app_id(hit) {
-                            if let Some((_, hr)) = resp.dom.hits().find(|(k, _)| *k == hit) {
-                                click = Some((action, hr.x + hr.width / 2.0, hr.y + hr.height / 2.0));
-                            }
-                        }
-                    }
-                }
-                if cm_open {
-                    let st = chart.panel_app.community_state.clone();
-                    let look = mlc_app_layout::dom::community::Look::new(&ft, &tt);
-                    let at = mlc_app_layout::dom::community::frame(r, CHROME_H, &st);
-                    let tree = mlc_app_layout::dom::community::tree(&st, &look, at, r, CHROME_H);
-                    let sheet = uzor::ui::domkit::sheet_with(&look.css()).expect("community css");
-                    let provider = chart.panel_app.messenger_provider_view();
-                    let mut painter = |ctx: &mut dyn uzor::render::RenderContext, f: &uzor_framework::widgets::kit::SlotFrame<'_>| {
-                        mlc_app_layout::dom::community::paint_slot(ctx, f.key, &st, &ft, &tt, now, provider, r, CHROME_H);
-                    };
-                    let resp = uzor_framework::widgets::kit::dom(r, &sheet, tree).paint_slots(&mut painter).build(cx);
-                    if let Some(hit) = resp.clicked.as_deref() {
-                        if let Some(action) = mlc_app_layout::dom::community::app_id(hit) {
-                            if let Some((_, hr)) = resp.dom.hits().find(|(k, _)| *k == hit) {
-                                click = Some((action, hr.x + hr.width / 2.0, hr.y + hr.height / 2.0));
-                            }
-                        }
-                    }
-                }
+                // The takeover tree (mlc-app-layout::dom) is painted by the
+                // shell's own `cloud_overlay_layer` inside `inner.panel` above —
+                // this mode exercises that production wiring, including its click
+                // dispatch. Painting the tree again here would double the dim
+                // veil and the dialog shell.
             }
             Mode::App => unreachable!(),
         }
